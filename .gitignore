@@ -1,0 +1,47 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+postman/*
+
+# Build outputs
+build/
+out/
+target/
+*.jar
+*.class
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+postgres_data/
+ollama/
+
+# Sensitive files
+*.pem
+*.key
+*.crt
+*.env
+secrets/
+deploylive/
+
+# Firebase
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+
+#Gradle
+.gradle

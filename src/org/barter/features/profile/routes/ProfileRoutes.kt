@@ -1,0 +1,234 @@
+package org.barter.features.profile.routes
+
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import kotlinx.serialization.json.Json
+import org.barter.features.authentication.dao.AuthenticationDaoImpl
+import org.barter.features.authentication.model.UserRegistrationDataDto
+import org.barter.features.profile.dao.UserProfileDaoImpl
+import org.barter.features.profile.model.UserProfile
+import org.barter.features.profile.model.UserProfileUpdateRequest
+import org.barter.features.authentication.utils.verifyRequestSignature
+import org.koin.java.KoinJavaComponent.inject
+import kotlin.getValue
+
+fun Route.getProfilesNearbyRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    // Un-authenticated route to get nearby profiles
+    get("/api/v1/profiles/nearby") {
+
+        // --- Authentication using signature verification ---
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            // Error response has already been sent by verifyRequestSignature
+            return@get
+        }
+
+        val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
+        val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
+        val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
+        val excludeUserId =
+            call.request.queryParameters["excludeUserId"] // Optional: exclude this user from results
+
+        if (lat == null || lon == null) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                "Missing or invalid 'lat' and 'lon' query parameters."
+            )
+            return@get
+        }
+
+        val allProfiles =
+            userProfileDao.getNearbyProfiles(lat, lon, radius ?: 10000.0, excludeUserId)
+
+        val sortedProfiles = allProfiles.sortedBy { it.distanceKm }.take(20)
+
+        println("@@@@@@@@@@ Send $sortedProfiles nearby profiles")
+
+        call.respond(sortedProfiles)
+    }
+}
+
+fun Route.getProfileInfoRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    // Route to get the current user's profile
+    post("/api/v1/profile-info") {
+        val userId = call.receive<String>()
+
+        val profile = userProfileDao.getProfile(userId)
+        if (profile != null) {
+            call.respond(profile)
+        } else {
+            call.respond(HttpStatusCode.NotFound, "Profile not found")
+        }
+    }
+
+}
+
+fun Route.createProfileRoute() {
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    post("/api/v1/profile-create") {
+        val user = call.receive<UserRegistrationDataDto>()
+        userProfileDao.createProfile(user)
+        println("@@@@@@@@@@ User inserted into db: ${user.id}")
+        call.respond(HttpStatusCode.OK, "")
+    }
+
+}
+
+fun Route.updateProfileRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    // Route to update the current user's profile
+    post("/api/v1/profile-update") {
+
+        // --- Authentication using signature verification ---
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            // Error response has already been sent by verifyRequestSignature
+            return@post
+        }
+
+        try {
+            val request = Json.decodeFromString<UserProfile>(requestBody)
+
+            // Verify that the authenticated user matches the user being updated
+            if (authenticatedUserId != request.userId) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    "You are not authorized to update this profile."
+                )
+            }
+
+            val userName = userProfileDao.updateProfile(
+                request.userId,
+                UserProfileUpdateRequest(
+                    request.name,
+                    request.latitude,
+                    request.longitude,
+                    request.attributes,
+                    request.profileKeywordDataMap
+                )
+            )
+
+            call.respond(userName)
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(HttpStatusCode.BadRequest, "Invalid request body: ${e.message}")
+        }
+    }
+
+}
+
+fun Route.searchProfilesByKeywordRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    // Route to search for user profiles by keyword
+    get("/api/v1/profiles/search") {
+        // Get search text from query parameters
+        val searchText = call.request.queryParameters["q"]
+            ?: call.request.queryParameters["query"]
+            ?: call.request.queryParameters["searchText"]
+
+        if (searchText.isNullOrBlank()) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Missing required parameter 'q', 'query', or 'searchText'")
+            )
+            return@get
+        }
+
+        // Optional location parameters for filtering
+        val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
+        val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
+        val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
+        val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
+        val userId = call.request.queryParameters["userId"] ?: ""
+        val customWeight = call.request.queryParameters["weight"]?.toIntOrNull() ?: 50
+
+        // Validate limit
+        if (limit !in 1..100) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Limit must be between 1 and 100")
+            )
+            return@get
+        }
+
+        // Validate custom weight
+        if (customWeight !in 10..100) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Weight must be between 10 and 100")
+            )
+            return@get
+        }
+
+        // Validate location parameters if provided
+        if ((lat != null && lon == null) || (lat == null && lon != null)) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Both 'lat' and 'lon' must be provided together")
+            )
+            return@get
+        }
+
+        try {
+            val matchingProfiles = userProfileDao.searchProfilesByKeyword(
+                userId = userId,
+                searchText = searchText,
+                latitude = lat,
+                longitude = lon,
+                radiusMeters = radius,
+                limit = limit,
+                customWeight = customWeight
+            )
+
+            println("@@@@@@@@@@ Returning ${matchingProfiles.size} profiles for search: '$searchText' (weight: $customWeight)")
+
+            call.respond(HttpStatusCode.OK, matchingProfiles)
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "An error occurred while searching profiles")
+            )
+        }
+    }
+
+}
+
+fun Route.similarProfilesRoute() {
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    post("/api/v1/similar-profiles") {
+        val user = call.receive<String>()
+        val profiles = userProfileDao.getSimilarProfiles(user)
+        call.respond(HttpStatusCode.OK, profiles)
+    }
+
+}
+
+fun Route.complementaryProfilesRoute() {
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    post("/api/v1/complementary-profiles") {
+        val user = call.receive<String>()
+        val profiles = userProfileDao.getHelpfulProfiles(user)
+        call.respond(HttpStatusCode.OK, profiles)
+    }
+
+}

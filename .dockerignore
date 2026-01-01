@@ -1,0 +1,54 @@
+# Git files
+.git
+.gitignore
+
+# Build outputs
+build/
+out/
+*.jar
+*.class
+.gradle/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+
+# Docker files
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test/
+testresources/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Postgres and Ollama data
+postgres_data/
+ollama/
+
+# Deployment files
+deploy/
+deploylive/

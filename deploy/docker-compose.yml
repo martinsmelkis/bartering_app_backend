@@ -1,0 +1,77 @@
+services:
+  postgres:
+    build:
+      context: ./postgres
+    container_name: postgresql_server
+    network_mode: host
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Test1234}
+      POSTGRES_DB: ${POSTGRES_DB:-mainDatabase}
+      OLLAMA_URL: ${OLLAMA_HOST:-http://localhost:11434}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mainDatabase}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ollama_server
+    network_mode: host
+    pull_policy: always
+    tty: true
+    restart: always
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: /bin/sh
+    command: -c "ollama serve & sleep 5 && ollama pull ${OLLAMA_EMBED_MODEL:-mxbai-embed-large} && wait"
+
+  barter_app_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: barter_app_server
+    network_mode: host
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://localhost:11434}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Test1234}
+      POSTGRES_DB: ${POSTGRES_DB:-mainDatabase}
+      IMAGE_UPLOAD_DIR: /uploads/images
+      IMAGE_BASE_URL: /api/v1/images
+      IMAGE_STORAGE_TYPE: local
+      # Firebase Push Notifications
+      FIREBASE_CREDENTIALS_PATH: /app
+      FIREBASE_CREDENTIALS_FILE: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json
+      PUSH_PROVIDER: firebase
+    volumes:
+      - ./uploads:/uploads
+    restart: always
+
+volumes:
+  postgres_data:
+    driver: local
+  ollama_data:
+    driver: local

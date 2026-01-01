@@ -1,0 +1,107 @@
+############# Windows local/dev build
+
+networks:
+  barter-net:
+    driver: bridge
+
+services:
+
+  postgres:
+    build:
+      context: ./postgres
+    container_name: postgresql_server
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=Test1234
+      - POSTGRES_DB=mainDatabase
+      - OLLAMA_URL=http://0.0.0.0:11434
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mainDatabase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - barter-net
+
+  adminer:
+    image: adminer
+    container_name: adminer
+    restart: always
+    ports:
+      - "8082:8080"
+    volumes:
+      - .:/var/lib/adminer/data
+    networks:
+      - barter-net
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    ports:
+      - "0.0.0.0:11434:11434"
+    volumes:
+      - .:/code
+      - ./ollama/ollama:/root/.ollama
+    container_name: ollama_server
+    pull_policy: always
+    tty: true
+    restart: always
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    entrypoint: /bin/sh
+    command: -c "ollama serve & \
+      sleep 5 && \
+      ollama pull ${OLLAMA_EMBED_MODEL:-mxbai-embed-large} && wait"
+
+    networks:
+      - barter-net
+
+    # Optional: Add GPU support for better performance if you have an NVIDIA GPU.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all # Use all available GPUs
+    #           capabilities: [gpu]
+
+  barter_app_server:
+    build: .
+    ports:
+      - "0.0.0.0:8081:8081"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    environment:
+      - IMAGE_UPLOAD_DIR=/uploads/images
+      - IMAGE_BASE_URL=/api/v1/images
+      - IMAGE_STORAGE_TYPE=local
+      # Firebase Push Notifications
+      - FIREBASE_CREDENTIALS_PATH=/app
+      - FIREBASE_CREDENTIALS_FILE=barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json
+      - PUSH_PROVIDER=firebase
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/uploads
+    networks:
+      - barter-net
+
+volumes:
+  postgres_data:

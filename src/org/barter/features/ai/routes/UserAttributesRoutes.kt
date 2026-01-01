@@ -1,0 +1,257 @@
+package org.barter.features.ai.routes
+
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.Application
+import io.ktor.server.application.log
+import io.ktor.server.response.* 
+import io.ktor.server.routing.*
+import kotlinx.serialization.json.Json
+import org.barter.extensions.DatabaseFactory.dbQuery
+import org.barter.features.authentication.dao.AuthenticationDaoImpl
+import org.barter.features.attributes.dao.AttributesDaoImpl
+import org.barter.features.attributes.dao.UserAttributesDaoImpl
+import org.barter.features.attributes.model.AttributesRequest
+import org.barter.features.attributes.model.UserAttributeType
+import org.barter.features.categories.dao.CategoriesDaoImpl
+import org.barter.features.profile.dao.UserProfileDaoImpl
+import org.barter.features.profile.model.OnboardingDataRequest
+import org.barter.features.profile.model.UserProfileUpdateRequest
+import org.barter.features.authentication.utils.verifyRequestSignature
+import org.koin.java.KoinJavaComponent.inject
+import java.math.BigDecimal
+import kotlin.collections.component1
+import kotlin.collections.component2
+import kotlin.collections.iterator
+
+fun Route.getInterestsFromOnboardingData() {
+
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/ai/parse-onboarding") {
+        // --- Authentication and Data Reception ---
+        val userId = call.request.headers["X-User-ID"]
+
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            // Error response has already been sent by the helper
+            return@post
+        }
+        val request = Json.decodeFromString<OnboardingDataRequest>(requestBody)
+
+        if (userId != request.userId) {
+            return@post call.respond(HttpStatusCode.Forbidden, "User ID mismatch.")
+        }
+
+        val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
+        val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+        val categoriesDao: CategoriesDaoImpl by inject(CategoriesDaoImpl::class.java)
+
+        // Fetch main categories from the database, ordered by ID to maintain consistent order
+        val mainCategories = categoriesDao.findAllMainCategoriesWithDescriptions()
+            .sortedBy { it.id } // Sort by ID to maintain the order they were inserted
+
+        val extendedMap: HashMap<String, Double> = hashMapOf()
+        request.onboardingKeyNamesToWeights.values.onEachIndexed { index, value ->
+            try {
+                // Use the category description from the database (maintains order by ID)
+                if (index < mainCategories.size) {
+                    extendedMap[mainCategories[index].description] = value
+                } else {
+                    application.log.warn("Onboarding index $index exceeds available categories (${mainCategories.size})")
+                }
+            } catch (t: Throwable) {
+                application.log.error("Failed to process onboarding keyword at index $index", t)
+            }
+        }
+        // --- AI Processing ---
+        userProfileDao.updateProfile(request.userId, UserProfileUpdateRequest(
+            profileKeywordDataMap = extendedMap))
+
+        userProfileDao.updateSemanticProfile(userId, UserAttributeType.PROFILE)
+
+        // TODO also give interest/interaction/popularity/search frequency a weight in suggestions
+        val parsedOfferingsSuggestions = attributesDao.findComplementaryInterests(
+            extendedMap,
+            userId = userId,
+            limit = 20
+        )
+
+        // --- Return a Success Response ---
+        call.respond(HttpStatusCode.OK, parsedOfferingsSuggestions)
+    }
+}
+
+fun Route.getOfferingsFromInterestsData() {
+
+    val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
+    val userAttributesDao: UserAttributesDaoImpl by inject(UserAttributesDaoImpl::class.java)
+    val usersDB: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/ai/parse-interests") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, usersDB)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val requestObj = Json.decodeFromString<AttributesRequest>(requestBody)
+
+            if (authenticatedUserId != requestObj.userId) {
+                return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
+            }
+
+            // TODO accept-language header
+            val languageCode = call.request.headers["Accept-Language"] ?: "en"
+
+            // --- Persist the Parsed Offerings to the Database ---
+            try {
+                updateUserAttributesFromMap(
+                    userId = requestObj.userId,
+                    attributesDao = attributesDao,
+                    userAttributesDao = userAttributesDao,
+                    attributesMap = requestObj.attributesRelevancyData,
+                    type = UserAttributeType.SEEKING, // Offerings are what a user is PROVIDING
+                    application = application
+                )
+            } catch (e: Exception) {
+                application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
+                return@post call.respond(HttpStatusCode.InternalServerError, "Could not save offerings to profile.")
+            }
+
+            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+            userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.SEEKING)
+
+            val parsedInterestSuggestions = attributesDao.findSimilarInterestsForProfile(
+                requestObj.attributesRelevancyData,
+                20,
+                requestObj.userId
+            )
+
+            println("@@@@@@@@ getOfferingsFromInterestsData $parsedInterestSuggestions")
+            call.respond(parsedInterestSuggestions)
+
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+        }
+    }
+
+}
+
+fun Route.parseOfferingsAndUpdateProfile() {
+
+    val usersDB: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/ai/parse-offerings") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, usersDB)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val requestObj = Json.decodeFromString<AttributesRequest>(requestBody)
+
+            if (authenticatedUserId != requestObj.userId) {
+                return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
+            }
+
+            val languageCode = call.request.headers["Accept-Language"] ?: "en"
+
+            val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
+            val userAttributesDao: UserAttributesDaoImpl by inject(UserAttributesDaoImpl::class.java)
+
+            // --- Persist the Parsed Offerings to the Database ---
+            try {
+                updateUserAttributesFromMap(
+                    userId = requestObj.userId,
+                    attributesDao = attributesDao,
+                    userAttributesDao = userAttributesDao,
+                    attributesMap = requestObj.attributesRelevancyData,
+                    type = UserAttributeType.PROVIDING, // Offerings are what a user is PROVIDING
+                    application = application
+                )
+            } catch (e: Exception) {
+                application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
+                return@post call.respond(HttpStatusCode.InternalServerError, "Could not save offerings to profile.")
+            }
+
+            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+            userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.PROVIDING)
+
+            call.respond("")
+
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+        }
+    }
+
+}
+
+/**
+ * A reusable helper function to clear and update a user's attributes of a specific type from a map.
+ *
+ * IMPORTANT: This function ensures attributes are created BEFORE linking them to users.
+ * Each attribute creation happens in its own transaction to avoid batch insert conflicts.
+ */
+private suspend fun updateUserAttributesFromMap(
+    userId: String,
+    attributesDao: AttributesDaoImpl,
+    userAttributesDao: UserAttributesDaoImpl,
+    attributesMap: Map<String, Double>,
+    type: UserAttributeType,
+    application: Application
+) {
+    // Step 1: Clear previous attributes in a separate transaction
+    dbQuery {
+        userAttributesDao.deleteUserAttributesByType(userId, type)
+    }
+
+    // Step 2: Ensure all attributes exist FIRST (separate transactions for each)
+    val validAttributes = mutableListOf<Pair<String, Double>>()
+
+    for ((attributeNameKey, relevancy) in attributesMap) {
+        try {
+            // Each findOrCreate gets its own transaction and is committed before continuing
+            val attribute = attributesDao.findOrCreate(attributeNameKey)
+
+            if (attribute == null) {
+                application.log.warn("Could not find or create attribute for key: $attributeNameKey")
+                continue
+            }
+
+            println("@@@@@@@@@@@ Validated attribute exists: ${attribute.attributeNameKey}")
+            validAttributes.add(attribute.attributeNameKey to relevancy)
+
+        } catch (e: Exception) {
+            application.log.error(
+                "Error creating attribute '$attributeNameKey' for user $userId",
+                e
+            )
+            // Continue to the next attribute even if one fails.
+        }
+    }
+
+    // Step 3: Now batch insert all user_attribute links (all attributes are guaranteed to exist)
+    dbQuery {
+        for ((attributeKey, relevancy) in validAttributes) {
+            try {
+                val relevancyBigDecimal = try {
+                    relevancy.toBigDecimal()
+                } catch (_: Throwable) {
+                    BigDecimal(0.0)
+                }
+
+                // Create the link between the user and this attribute
+                userAttributesDao.create(
+                    userId = userId,
+                    attributeId = attributeKey,
+                    type = type,
+                    relevancy = relevancyBigDecimal,
+                    description = ""
+                )
+            } catch (e: Exception) {
+                application.log.error("Error linking attribute '$attributeKey' to user $userId", e)
+                // Continue to the next attribute even if one fails.
+            }
+        }
+    }
+}
