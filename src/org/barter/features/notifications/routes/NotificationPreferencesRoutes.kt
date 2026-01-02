@@ -259,7 +259,7 @@ fun Application.notificationPreferencesRoutes() {
                     //  to user_profile, check header and save - on notify check localization file
                     for (attributeId in batchRequest.attributeIds) {
                         val request = CreateAttributeNotificationPreferenceRequest(
-                            attributeId = attributeId,//.normalizeAttributeForDBProcessing(),
+                            attributeId = attributeId.normalizeAttributeForDBProcessing(),
                             notificationsEnabled = batchRequest.preferences.notificationsEnabled,
                             notificationFrequency = batchRequest.preferences.notificationFrequency,
                             minMatchScore = batchRequest.preferences.minMatchScore,

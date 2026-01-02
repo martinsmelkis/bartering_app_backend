@@ -5,6 +5,8 @@ Built with Kotlin and Ktor, this application enables users to discover, connect,
 services, and items within their local communities through AI-powered matching, semantic search, 
 and intelligent match notifications.
 
+Use together with [bartering_app](https://github.com/martinsmelkis/bartering_app).
+
 ## 🎯 Use Cases
 
 ### Primary Use Cases
