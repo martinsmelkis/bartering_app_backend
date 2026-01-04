@@ -40,6 +40,7 @@ import org.barter.features.postings.tasks.PostingExpirationTask
 import org.barter.features.profile.di.profilesModule
 import org.barter.features.relationships.di.relationshipsModule
 import org.barter.features.notifications.di.notificationsModule
+import org.barter.features.reviews.di.reviewsModule
 import org.barter.features.notifications.jobs.DigestNotificationJobManager
 import org.barter.config.configureRateLimiting
 import org.bouncycastle.jce.provider.BouncyCastleProvider
@@ -130,7 +131,8 @@ fun Application.module(testing: Boolean = false) {
             healthCheckModule,
             relationshipsModule,
             postingsModule,
-            notificationsModule
+            notificationsModule,
+            reviewsModule
         )
     }
 

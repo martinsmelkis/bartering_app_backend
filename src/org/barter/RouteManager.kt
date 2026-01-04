@@ -14,6 +14,7 @@ import org.barter.features.profile.routes.profileManagementRoutes
 import org.barter.features.relationships.routes.relationshipsRoutes
 import org.barter.features.notifications.routes.notificationPreferencesRoutes
 import org.barter.features.notifications.routes.pushNotificationRoutes
+import org.barter.features.reviews.routes.*
 import io.ktor.server.routing.*
 
 // Shared ConnectionManager instance for both WebSocket and file transfer routes
@@ -33,5 +34,16 @@ fun Application.routes() {
         postingsRoutes()
         postingImageUploadRoutes()
         imageServeRoutes() // Serves local images
+        
+        // Reviews and Reputation System
+        createTransactionRoute()
+        updateTransactionStatusRoute()
+        getUserTransactionsRoute()
+        checkReviewEligibilityRoute()
+        submitReviewRoute()
+        getUserReviewsRoute()
+        getTransactionReviewsRoute()
+        getReputationRoute()
+        getUserBadgesRoute()
     }
 }
