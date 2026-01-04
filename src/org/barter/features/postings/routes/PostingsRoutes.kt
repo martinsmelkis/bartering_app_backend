@@ -5,6 +5,7 @@ import io.ktor.http.content.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.utils.io.toByteArray
 import kotlinx.serialization.json.Json
 import org.barter.features.authentication.dao.AuthenticationDaoImpl
 import org.barter.features.postings.dao.UserPostingDao
@@ -75,7 +76,7 @@ fun Route.postingsRoutes() {
 
                             is PartData.FileItem -> {
                                 if (part.name == "images") {
-                                    val bytes = part.streamProvider().readBytes()
+                                    val bytes = part.provider().toByteArray()
                                     val contentType = part.contentType?.toString() ?: "image/jpeg"
 
                                     // Validate file size (10MB limit)
@@ -112,7 +113,7 @@ fun Route.postingsRoutes() {
                         try {
                             val url = imageStorage.uploadImage(
                                 imageData = bytes,
-                                userId = userId!!,
+                                userId = userId,
                                 fileName = "image_${System.currentTimeMillis()}_$index.jpg",
                                 contentType = contentType
                             )
@@ -125,9 +126,9 @@ fun Route.postingsRoutes() {
 
                     // Create posting request
                     val postingRequest = UserPostingRequest(
-                        title = title!!,
-                        description = description!!,
-                        isOffer = isOffer!!,
+                        title = title,
+                        description = description,
+                        isOffer = isOffer,
                         value = value,
                         expiresAt = expiresAt,
                         imageUrls = imageUrls,
@@ -314,7 +315,7 @@ fun Route.postingsRoutes() {
 
                             is PartData.FileItem -> {
                                 if (part.name == "images") {
-                                    val bytes = part.streamProvider().readBytes()
+                                    val bytes = part.provider().toByteArray()
                                     val contentType = part.contentType?.toString() ?: "image/jpeg"
 
                                     // Validate file size (10MB limit)
@@ -367,7 +368,7 @@ fun Route.postingsRoutes() {
                     }
 
                     // Use new images if uploaded, otherwise keep old ones
-                    val finalImageUrls = if (newImageUrls.isNotEmpty()) newImageUrls else oldImageUrls
+                    val finalImageUrls = newImageUrls.ifEmpty { oldImageUrls }
 
                     // Create update request
                     val updateRequest = UserPostingRequest(
@@ -445,7 +446,7 @@ fun Route.postingsRoutes() {
 
         // Delete a posting
         delete("/{postingId}") {
-            val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+            val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
             if (authenticatedUserId == null) {
                 return@delete
             }
@@ -485,7 +486,7 @@ fun Route.postingsRoutes() {
 
         // Get user's own postings
         post("/user/me") {
-            val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+            val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
             if (authenticatedUserId == null) {
                 return@post
             }
@@ -572,7 +573,7 @@ fun Route.postingsRoutes() {
 
         // Get matching postings based on user's profile
         post("/matches") {
-            val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+            val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
             if (authenticatedUserId == null) {
                 return@post
             }

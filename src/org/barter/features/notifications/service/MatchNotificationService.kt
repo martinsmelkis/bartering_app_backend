@@ -3,13 +3,11 @@ package org.barter.features.notifications.service
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.barter.extensions.normalizeAttributeForDBProcessing
-import org.barter.features.attributes.dao.UserAttributesDao
 import org.barter.features.notifications.dao.NotificationPreferencesDao
 import org.barter.features.notifications.model.*
 import org.barter.features.notifications.utils.NotificationDataBuilder
 import org.barter.features.postings.dao.UserPostingDao
 import org.barter.features.postings.model.UserPosting
-import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import java.time.Instant
 import java.util.UUID
@@ -231,6 +229,146 @@ class MatchNotificationService(
     }
     
     /**
+     * Check when a user adds a PROVIDING/OFFERING attribute
+     * Find all existing SEEKING postings that match this attribute
+     * Notify the posting owners about the match
+     */
+    suspend fun checkOfferingAgainstSeekingPostings(userId: String, attributeId: String): List<MatchHistoryEntry> {
+        val matches = mutableListOf<MatchHistoryEntry>()
+        
+        // Search for SEEKING postings (isOffer = false) that match this offering
+        val matchingPostings = postingDao.searchPostings(
+            searchText = attributeId,
+            limit = 20
+        )
+        
+        for (postingWithDistance in matchingPostings) {
+            val posting = postingWithDistance.posting
+            
+            // Only match SEEKING postings (not offers)
+            if (posting.isOffer) continue
+            
+            // Don't match user's own postings
+            if (posting.userId == userId) continue
+            
+            val matchScore = postingWithDistance.similarityScore ?: 0.5
+            
+            // Get the posting owner's preferences
+            val postingOwnerPreference = preferencesDao.getPostingPreference(posting.id)
+            if (postingOwnerPreference == null || !postingOwnerPreference.notificationsEnabled) {
+                continue
+            }
+            
+            if (matchScore >= postingOwnerPreference.minMatchScore) {
+                // Check if match already exists for the posting owner
+                val existingMatch = preferencesDao.findExistingMatch(
+                    userId = posting.userId, // Match is for the posting owner
+                    sourceType = SourceType.POSTING,
+                    sourceId = posting.id,
+                    targetType = TargetType.USER,
+                    targetId = userId
+                )
+                
+                if (existingMatch == null) {
+                    val match = MatchHistoryEntry(
+                        id = UUID.randomUUID().toString(),
+                        userId = posting.userId, // Notify the posting owner
+                        matchType = MatchType.POSTING_MATCH,
+                        sourceType = SourceType.POSTING,
+                        sourceId = posting.id,
+                        targetType = TargetType.USER,
+                        targetId = userId, // The user who added the offering
+                        matchScore = matchScore,
+                        matchReason = "User offering '$attributeId' matches your posting '${posting.title}'",
+                        matchedAt = Instant.now()
+                    )
+                    
+                    preferencesDao.createMatch(match)
+                    matches.add(match)
+                    
+                    // Send notification to posting owner based on their frequency
+                    if (postingOwnerPreference.notificationFrequency == NotificationFrequency.INSTANT) {
+                        println("🔔 Notifying ${posting.userId} about match: ${match.matchReason}")
+                        sendMatchNotification(match, posting)
+                    }
+                }
+            }
+        }
+        
+        return matches
+    }
+    
+    /**
+     * Check when a user adds a SEEKING attribute
+     * Find all existing OFFERING postings that match this attribute
+     * Notify the posting owners about the match
+     */
+    suspend fun checkSeekingAgainstOfferingPostings(userId: String, attributeId: String): List<MatchHistoryEntry> {
+        val matches = mutableListOf<MatchHistoryEntry>()
+        
+        // Search for OFFERING postings (isOffer = true) that match this seeking
+        val matchingPostings = postingDao.searchPostings(
+            searchText = attributeId,
+            limit = 20
+        )
+        
+        for (postingWithDistance in matchingPostings) {
+            val posting = postingWithDistance.posting
+            
+            // Only match OFFERING postings (not seeking/interest postings)
+            if (!posting.isOffer) continue
+            
+            // Don't match user's own postings
+            if (posting.userId == userId) continue
+            
+            val matchScore = postingWithDistance.similarityScore ?: 0.5
+            
+            // Get the posting owner's preferences
+            val postingOwnerPreference = preferencesDao.getPostingPreference(posting.id)
+            if (postingOwnerPreference == null || !postingOwnerPreference.notificationsEnabled) {
+                continue
+            }
+            
+            if (matchScore >= postingOwnerPreference.minMatchScore) {
+                // Check if match already exists for the posting owner
+                val existingMatch = preferencesDao.findExistingMatch(
+                    userId = posting.userId, // Match is for the posting owner
+                    sourceType = SourceType.POSTING,
+                    sourceId = posting.id,
+                    targetType = TargetType.USER,
+                    targetId = userId
+                )
+                
+                if (existingMatch == null) {
+                    val match = MatchHistoryEntry(
+                        id = UUID.randomUUID().toString(),
+                        userId = posting.userId, // Notify the posting owner
+                        matchType = MatchType.POSTING_MATCH,
+                        sourceType = SourceType.POSTING,
+                        sourceId = posting.id,
+                        targetType = TargetType.USER,
+                        targetId = userId, // The user who added the seeking attribute
+                        matchScore = matchScore,
+                        matchReason = "User seeking '$attributeId' matches your posting '${posting.title}'",
+                        matchedAt = Instant.now()
+                    )
+                    
+                    preferencesDao.createMatch(match)
+                    matches.add(match)
+                    
+                    // Send notification to posting owner based on their frequency
+                    if (postingOwnerPreference.notificationFrequency == NotificationFrequency.INSTANT) {
+                        println("🔔 Notifying ${posting.userId} about match: ${match.matchReason}")
+                        sendMatchNotification(match, posting)
+                    }
+                }
+            }
+        }
+        
+        return matches
+    }
+    
+    /**
      * Calculate match score between an attribute and a posting
      * Uses simple text matching - in production would use vector embeddings
      */
@@ -368,7 +506,7 @@ class MatchNotificationService(
                 .split(",")
                 .map { it.trim().toFloat() }
                 .toFloatArray()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -464,7 +602,7 @@ class MatchNotificationService(
             currentHour in quietHoursStart until quietHoursEnd
         } else {
             // Handles cases like 22:00 to 07:00 (overnight)
-            currentHour >= quietHoursStart || currentHour < quietHoursEnd
+            currentHour !in quietHoursEnd..<quietHoursStart
         }
     }
     
@@ -478,7 +616,7 @@ class MatchNotificationService(
             .filter { it.notificationFrequency == frequency }
             .groupBy { it.userId }
         
-        for ((userId, preferences) in allPreferences) {
+        for ((userId, _) in allPreferences) {
             try {
                 // Get unnotified matches for this user
                 val since = when (frequency) {

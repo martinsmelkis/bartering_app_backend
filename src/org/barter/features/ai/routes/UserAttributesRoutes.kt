@@ -100,9 +100,6 @@ fun Route.getOfferingsFromInterestsData() {
                 return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
             }
 
-            // TODO accept-language header
-            val languageCode = call.request.headers["Accept-Language"] ?: "en"
-
             // --- Persist the Parsed Offerings to the Database ---
             try {
                 updateUserAttributesFromMap(
@@ -120,6 +117,21 @@ fun Route.getOfferingsFromInterestsData() {
 
             val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
             userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.SEEKING)
+
+            // Check for matching postings for each new SEEKING attribute
+            val matchNotificationService: org.barter.features.notifications.service.MatchNotificationService by inject(org.barter.features.notifications.service.MatchNotificationService::class.java)
+            for ((attributeKey, _) in requestObj.attributesRelevancyData) {
+                try {
+                    // 1. Check existing postings that match this SEEKING attribute (user gets notified)
+                    matchNotificationService.checkAttributeAgainstPostings(requestObj.userId, attributeKey)
+                    
+                    // 2. Check existing OFFERING postings and notify their owners
+                    matchNotificationService.checkSeekingAgainstOfferingPostings(requestObj.userId, attributeKey)
+                } catch (e: Exception) {
+                    application.log.error("Failed to check attribute '$attributeKey' against postings for user ${requestObj.userId}", e)
+                    // Continue with other attributes even if one fails
+                }
+            }
 
             val parsedInterestSuggestions = attributesDao.findSimilarInterestsForProfile(
                 requestObj.attributesRelevancyData,
@@ -154,8 +166,6 @@ fun Route.parseOfferingsAndUpdateProfile() {
                 return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
             }
 
-            val languageCode = call.request.headers["Accept-Language"] ?: "en"
-
             val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
             val userAttributesDao: UserAttributesDaoImpl by inject(UserAttributesDaoImpl::class.java)
 
@@ -176,6 +186,18 @@ fun Route.parseOfferingsAndUpdateProfile() {
 
             val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
             userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.PROVIDING)
+
+            // Check for matching postings for each new PROVIDING/OFFERING attribute
+            val matchNotificationService: org.barter.features.notifications.service.MatchNotificationService by inject(org.barter.features.notifications.service.MatchNotificationService::class.java)
+            for ((attributeKey, _) in requestObj.attributesRelevancyData) {
+                try {
+                    // Check existing SEEKING postings and notify their owners
+                    matchNotificationService.checkOfferingAgainstSeekingPostings(requestObj.userId, attributeKey)
+                } catch (e: Exception) {
+                    application.log.error("Failed to check offering attribute '$attributeKey' against postings for user ${requestObj.userId}", e)
+                    // Continue with other attributes even if one fails
+                }
+            }
 
             call.respond("")
 

@@ -184,7 +184,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 table[location] = Point(request.longitude, request.latitude)
                     .also { p -> p.srid = 4326 }
             }
-            request.profileKeywordDataMap?.let { map ->
+            request.profileKeywordDataMap?.let { _ ->
                 table[UserProfilesTable.profileKeywordDataMap] = request.profileKeywordDataMap
             }
         }
@@ -276,7 +276,7 @@ class UserProfileDaoImpl : UserProfileDao {
         TransactionManager.current().connection.prepareStatement(nearbyQuery, false)
             .also { statement ->
                 // Set all parameters at once with proper types
-                statement.fillParameters(queryParams.mapIndexed { index, (columnType, value) ->
+                statement.fillParameters(queryParams.mapIndexed { _, (columnType, value) ->
                     columnType to value
                 })
 

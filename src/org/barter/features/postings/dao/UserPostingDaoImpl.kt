@@ -5,7 +5,6 @@ import org.barter.extensions.DatabaseFactory.dbQuery
 import org.barter.features.postings.db.PostingAttributesLinkTable
 import org.barter.features.postings.db.UserPostingsTable
 import org.barter.features.postings.model.*
-import org.barter.features.profile.model.UserProfilesTable
 import org.barter.utils.SecurityUtils
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -706,7 +705,7 @@ class UserPostingDaoImpl : UserPostingDao {
             println("❌ Error in toUserPosting: ${e.message}\n${e.stackTraceToString()}")
             println("postingRow: $postingRow")
             println("attributeRows: $attributeRows")
-            null as UserPosting  // force a crash (& log) if not caught
+            throw e
         }
     }
 
