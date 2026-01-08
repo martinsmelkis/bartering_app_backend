@@ -15,9 +15,17 @@ val reviewsModule = module {
     single<ReputationDao> { ReputationDaoImpl() }
     single { ReputationDaoImpl() }
     
-    // Services
+    single<RiskPatternDao> { RiskPatternDaoImpl() }
+    single { RiskPatternDaoImpl() }
+    
+    // Risk Analysis Services
+    single { DevicePatternDetectionService(get()) }
+    single { IpPatternDetectionService(get()) }
+    single { LocationPatternDetectionService(get()) }
+    
+    // Core Services
     single { ReviewEligibilityService() }
-    single { RiskAnalysisService() }
+    single { RiskAnalysisService(get(), get(), get()) }
     single { ReviewWeightService() }
     single { ReputationCalculationService(get()) }
     single { BlindReviewService() }

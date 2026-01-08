@@ -30,13 +30,19 @@ reputation scores accurately reflect user trustworthiness.
   - Account age (new accounts have reduced weight)
 
 ### 4. **Risk Analysis & Fraud Detection**
-- Multi-factor Sybil attack detection:
+- Multi-factor Sybil attack detection via `RiskAnalysisService`:
   - Same device/IP address detection
   - GPS location proximity analysis
   - Account age correlation
   - Trade diversity scoring (prevents wash trading)
   - Contact information matching
-- Automatic flagging of suspicious transactions
+- Comprehensive `RiskAnalysisReport` provides:
+  - Overall risk score (0.0-1.0) with 5-tier classification
+  - Individual component scores (device, IP, location, behavior)
+  - Detected suspicious patterns with severity levels
+  - Actionable recommendations based on risk level
+  - Automatic manual review flags for high-risk transactions
+- Automatic flagging and blocking of suspicious transactions
 
 ### 5. **Review Appeals & Moderation**
 - Users can contest unfair reviews
@@ -193,7 +199,7 @@ CREATE TABLE pending_reviews (
 - `review_appeals` - Disputed reviews awaiting moderation
 - `review_audit_log` - Complete audit trail for abuse detection
 - `reputation_badges` - Earned achievement badges
-- `moderation_queue` - Reviews flagged for human review
+- `review_moderation_queue` - Reviews flagged for human review
 
 ## API Flow Example
 
@@ -212,11 +218,13 @@ if (!eligibility.canReview) {
     return BadRequest(eligibility.reason)
 }
 
-// 2. Calculate risk score
-val riskScore = riskAnalysisService.calculateTransactionRisk(
+// 2. Perform comprehensive risk analysis
+val riskReport = riskAnalysisService.analyzeTransactionRisk(
+    transactionId = transactionId,
     user1Id = currentUserId,
     user2Id = otherUserId,
-    // ... other params
+    getAccountAge = { userId -> profileDao.getUserCreatedAt(userId) },
+    getTradingPartners = { userId -> transactionDao.getTradingPartners(userId) }
 )
 
 // 3. Calculate review weight
@@ -302,11 +310,15 @@ const val BLIND_REVIEW_DEADLINE_DAYS = 14
 
 ### Risk Thresholds
 
-```kotlin
-const val LOW_RISK_THRESHOLD = 0.3
-const val MEDIUM_RISK_THRESHOLD = 0.6
-const val HIGH_RISK_THRESHOLD = 0.9
-```
+Risk levels are determined by the overall risk score (0.0-1.0):
+
+| Risk Level | Score Range | Action |
+|------------|-------------|--------|
+| **MINIMAL** | 0.0 - 0.2 | Standard processing |
+| **LOW** | 0.2 - 0.4 | Standard processing |
+| **MEDIUM** | 0.4 - 0.6 | Reduced review weight (25%) |
+| **HIGH** | 0.6 - 0.8 | Reduced review weight (50%), manual review required |
+| **CRITICAL** | 0.8 - 1.0 | Transaction blocked, accounts flagged |
 
 ### Weight Limits
 

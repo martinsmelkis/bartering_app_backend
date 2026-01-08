@@ -1,15 +1,18 @@
 package org.barter.features.reviews.routes
 
 import io.ktor.http.*
+import io.ktor.server.plugins.origin
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import org.barter.features.authentication.dao.AuthenticationDaoImpl
 import org.barter.features.authentication.utils.verifyRequestSignature
+import org.barter.features.profile.dao.UserProfileDao
+import org.barter.features.profile.dao.UserProfileDaoImpl
 import org.barter.features.reviews.dao.*
 import org.barter.features.reviews.model.*
-import org.barter.features.reviews.service.ReviewEligibilityService
-import org.barter.features.reviews.service.ReviewWeightService
+import org.barter.features.reviews.service.*
 import org.koin.java.KoinJavaComponent.inject
 import java.time.Duration
 import java.time.Instant
@@ -23,8 +26,13 @@ fun Route.submitReviewRoute() {
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     val reputationDao: ReputationDao by inject(ReputationDao::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val profileDao: UserProfileDao by inject(UserProfileDaoImpl::class.java)
     val eligibilityService: ReviewEligibilityService by inject(ReviewEligibilityService::class.java)
     val weightService: ReviewWeightService by inject(ReviewWeightService::class.java)
+    val riskAnalysisService: RiskAnalysisService by inject(RiskAnalysisService::class.java)
+    val locationService: LocationPatternDetectionService by inject(LocationPatternDetectionService::class.java)
+    val deviceService: DevicePatternDetectionService by inject(DevicePatternDetectionService::class.java)
+    val ipService: IpPatternDetectionService by inject(IpPatternDetectionService::class.java)
 
     post("/api/v1/reviews/submit") {
         val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
@@ -61,8 +69,15 @@ fun Route.submitReviewRoute() {
                     reviewDao.hasAlreadyReviewed(reviewerId, targetUserId, transactionId)
                 },
                 getAccountAge = { userId ->
-                    // TODO: Get actual account age from user registration
-                    Duration.ofDays(30) // Placeholder
+                    val createdAt = profileDao.getUserCreatedAt(userId)
+                    if (createdAt != null) {
+                        Duration.between(createdAt, Instant.now())
+                    } else {
+                        // If user registration date not found, assume account is old enough
+                        // This handles legacy accounts or accounts created before this tracking
+                        println("WARNING: Could not find registration date for user $userId, assuming account is old enough")
+                        Duration.ofDays(30)
+                    }
                 },
                 getReviewsInLastDays = { userId, days ->
                     reviewDao.getReviewsInLastDays(userId, days)
@@ -70,27 +85,97 @@ fun Route.submitReviewRoute() {
             )
 
             if (!eligibility.canReview) {
+                println("Review eligibility failed for reviewer ${request.reviewerId}: ${eligibility.reason}")
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to eligibility.reason)
                 )
             }
 
-            // Parse transaction status
-            val transactionStatus = TransactionStatus.fromString(request.transactionStatus)
-            if (transactionStatus == null) {
-                return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Invalid transaction status")
+            // Extract request metadata for risk analysis
+            val deviceFingerprint = call.request.headers["X-Device-Fingerprint"]
+            val ipAddress = call.request.origin.remoteAddress
+            val userAgent = call.request.headers["User-Agent"]
+
+            // Track patterns for risk analysis (device and IP only, no GPS)
+            if (deviceFingerprint != null) {
+                deviceService.trackDeviceUsage(
+                    userId = request.reviewerId,
+                    deviceFingerprint = deviceFingerprint,
+                    ipAddress = ipAddress,
+                    userAgent = userAgent,
+                    action = "review_submit"
                 )
             }
+
+            ipService.trackIpUsage(
+                userId = request.reviewerId,
+                ipAddress = ipAddress,
+                action = "review_submit"
+            )
+
+            // Location tracking is now done via profile location changes only
+            // No real-time GPS tracking during review submission
+            
+            // Perform risk analysis on the transaction
+            val riskReport = riskAnalysisService.analyzeTransactionRisk(
+                transactionId = request.transactionId,
+                user1Id = request.reviewerId,
+                user2Id = request.targetUserId,
+                getAccountAge = { userId ->
+                    val createdAt = profileDao.getUserCreatedAt(userId)
+                    if (createdAt != null) {
+                        Duration.between(createdAt, Instant.now())
+                    } else {
+                        Duration.ofDays(30) // Default for legacy accounts
+                    }
+                },
+                getTradingPartners = { userId ->
+                    transactionDao.getTradingPartners(userId)
+                }
+            )
+            
+            // Apply risk-based policies
+            when (riskReport.riskLevel) {
+                "CRITICAL" -> {
+                    println("CRITICAL risk detected for transaction ${request.transactionId}: ${riskReport.detectedPatterns}")
+                    return@post call.respond(
+                        HttpStatusCode.Forbidden,
+                        mapOf(
+                            "error" to "Review blocked due to suspicious activity",
+                            "reason" to "Multiple high-risk patterns detected"
+                        )
+                    )
+                }
+                "HIGH" -> {
+                    println("HIGH risk detected for transaction ${request.transactionId}: ${riskReport.detectedPatterns}")
+                    // Flag for manual review but allow submission
+                    // Weight will be reduced below
+                }
+                else -> {
+                    // MEDIUM, LOW, MINIMAL - proceed normally
+                }
+            }
+            
+            // Update transaction risk score
+            transactionDao.updateRiskScore(request.transactionId, riskReport.overallRiskScore)
+
+            // Parse transaction status
+            val transactionStatus =
+                TransactionStatus.fromString(request.transactionStatus) ?: run {
+                    println("Invalid transaction status: ${request.transactionStatus}")
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Invalid transaction status: ${request.transactionStatus}")
+                    )
+                }
 
             // Calculate review weight
             val transaction = transactionDao.getTransaction(request.transactionId)
             val reviewerReputation = reputationDao.getReputation(request.reviewerId)
             
             val weight = weightService.calculateReviewWeight(
-                review = org.barter.features.reviews.model.ReviewSubmission(
+                review = ReviewSubmission(
                     barterTransactionId = request.transactionId,
                     reviewerId = request.reviewerId,
                     targetUserId = request.targetUserId,
@@ -98,7 +183,7 @@ fun Route.submitReviewRoute() {
                     reviewText = request.reviewText,
                     transactionStatus = transactionStatus
                 ),
-                reviewerAccountType = org.barter.features.reviews.model.AccountType.INDIVIDUAL, // TODO: Get actual type
+                reviewerAccountType = AccountType.INDIVIDUAL,
                 transactionValue = transaction?.estimatedValue,
                 reviewerReputation = reviewerReputation?.let {
                     ReviewWeightService.ReviewerReputation(
@@ -108,6 +193,21 @@ fun Route.submitReviewRoute() {
                 },
                 isVerifiedTransaction = transaction?.locationConfirmed ?: false
             )
+            
+            // Adjust weight based on risk analysis
+            val adjustedWeight = when (riskReport.riskLevel) {
+                "HIGH" -> weight.baseWeight * 0.5 // Reduce weight by 50% for high risk
+                "MEDIUM" -> weight.baseWeight * 0.75 // Reduce weight by 25% for medium risk
+                else -> weight.baseWeight // No adjustment for low/minimal risk
+            }
+
+            // Determine moderation status
+            val moderationStatus = when {
+                transactionStatus == TransactionStatus.SCAM -> "pending"
+                riskReport.requiresManualReview -> "pending"
+                riskReport.riskLevel == "HIGH" -> "pending"
+                else -> null
+            }
 
             // Create review
             val reviewId = UUID.randomUUID().toString()
@@ -119,24 +219,50 @@ fun Route.submitReviewRoute() {
                 rating = request.rating,
                 reviewText = request.reviewText,
                 transactionStatus = transactionStatus,
-                reviewWeight = weight.baseWeight,
+                reviewWeight = adjustedWeight,
                 isVisible = false, // Hidden until blind review period ends
                 submittedAt = Instant.now(),
                 revealedAt = null,
                 isVerified = false,
-                moderationStatus = if (transactionStatus == TransactionStatus.SCAM) "pending" else null
+                moderationStatus = moderationStatus
             )
 
             val success = reviewDao.createReview(review)
 
             if (success) {
-                // TODO: Check if both parties have submitted, reveal if ready
+                // Check if both parties have submitted, reveal if ready
+                if (transaction != null) {
+                    val bothSubmitted = reviewDao.haveBothPartiesSubmitted(
+                        transactionId = request.transactionId,
+                        user1Id = transaction.user1Id,
+                        user2Id = transaction.user2Id
+                    )
+                    
+                    if (bothSubmitted) {
+                        // Both parties have submitted, reveal reviews immediately
+                        reviewDao.makeReviewsVisible(request.transactionId)
+                    }
+                }
+
+                val responseMessage = when {
+                    riskReport.requiresManualReview -> 
+                        "Review submitted and flagged for manual review due to risk patterns. It will be visible after both parties submit reviews or 14-day deadline."
+                    riskReport.riskLevel == "HIGH" ->
+                        "Review submitted with reduced weight due to detected risk patterns. It will be visible after both parties submit reviews or 14-day deadline."
+                    else ->
+                        "Review submitted. It will be visible after both parties submit reviews or 14-day deadline."
+                }
+                
+                // Include risk analysis in response if there are any risk concerns
+                val includeRiskAnalysis = riskReport.riskLevel != "MINIMAL" && riskReport.riskLevel != "LOW"
+                
                 call.respond(
                     HttpStatusCode.Created,
                     SubmitReviewResponse(
                         success = true,
                         reviewId = reviewId,
-                        message = "Review submitted. It will be visible after both parties submit reviews or 14-day deadline."
+                        message = responseMessage,
+                        riskAnalysis = if (includeRiskAnalysis) riskReport else null
                     )
                 )
             } else {
@@ -147,6 +273,7 @@ fun Route.submitReviewRoute() {
             }
 
         } catch (e: Exception) {
+            println("Error submitting review: ${e.message}")
             e.printStackTrace()
             call.respond(
                 HttpStatusCode.BadRequest,
@@ -160,7 +287,7 @@ fun Route.submitReviewRoute() {
  * Get reviews for a user
  */
 fun Route.getUserReviewsRoute() {
-    val reviewDao: ReviewDao by inject(ReviewDao::class.java)
+    val reviewDao: ReviewDao by inject(ReviewDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
 
     get("/api/v1/reviews/user/{userId}") {
@@ -244,13 +371,11 @@ fun Route.getTransactionReviewsRoute() {
 
         try {
             // Verify user is a party to the transaction
-            val transaction = transactionDao.getTransaction(transactionId)
-            if (transaction == null) {
-                return@get call.respond(
+            val transaction =
+                transactionDao.getTransaction(transactionId) ?: return@get call.respond(
                     HttpStatusCode.NotFound,
                     mapOf("error" to "Transaction not found")
                 )
-            }
 
             if (authenticatedUserId != transaction.user1Id && authenticatedUserId != transaction.user2Id) {
                 return@get call.respond(
@@ -322,8 +447,7 @@ fun Route.checkReviewEligibilityRoute() {
                 return@get call.respond(HttpStatusCode.OK, ReviewEligibilityResponse(
                     eligible = false,
                     transactionId = null,
-                    reason = "No completed transaction found",
-                    otherUserName = "User" // TODO: Get from profile
+                    reason = "No completed transaction found"
                 ))
             }
 
@@ -338,8 +462,7 @@ fun Route.checkReviewEligibilityRoute() {
                 return@get call.respond(HttpStatusCode.OK, ReviewEligibilityResponse(
                     eligible = false,
                     transactionId = completedTransaction.id,
-                    reason = "You have already reviewed this transaction",
-                    otherUserName = "User" // TODO: Get from profile
+                    reason = "You have already reviewed this transaction"
                 ))
             }
 
@@ -347,7 +470,6 @@ fun Route.checkReviewEligibilityRoute() {
                 eligible = true,
                 transactionId = completedTransaction.id,
                 reason = null,
-                otherUserName = "User", // TODO: Get from profile
                 transactionCompletedAt = completedTransaction.completedAt?.toEpochMilli()
             ))
 
@@ -359,6 +481,5 @@ fun Route.checkReviewEligibilityRoute() {
             )
         }
     }
-}
 
-// Request/Response models moved to ApiModels.kt
+}

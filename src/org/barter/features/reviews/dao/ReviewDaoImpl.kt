@@ -83,6 +83,34 @@ class ReviewDaoImpl : ReviewDao {
             .toInt()
     }
 
+    override suspend fun haveBothPartiesSubmitted(
+        transactionId: String,
+        user1Id: String,
+        user2Id: String
+    ): Boolean = dbQuery {
+        // Check if user1 has submitted a review for user2
+        val user1Reviewed = ReviewsTable
+            .selectAll()
+            .where {
+                (ReviewsTable.transactionId eq transactionId) and
+                (ReviewsTable.reviewerId eq user1Id) and
+                (ReviewsTable.targetUserId eq user2Id)
+            }
+            .count() > 0
+
+        // Check if user2 has submitted a review for user1
+        val user2Reviewed = ReviewsTable
+            .selectAll()
+            .where {
+                (ReviewsTable.transactionId eq transactionId) and
+                (ReviewsTable.reviewerId eq user2Id) and
+                (ReviewsTable.targetUserId eq user1Id)
+            }
+            .count() > 0
+
+        user1Reviewed && user2Reviewed
+    }
+
     override suspend fun makeReviewsVisible(transactionId: String): Boolean = dbQuery {
         try {
             val now = Instant.now()

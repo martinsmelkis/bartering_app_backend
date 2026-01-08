@@ -57,7 +57,8 @@ data class SubmitReviewRequest(
 data class SubmitReviewResponse(
     val success: Boolean,
     val reviewId: String,
-    val message: String
+    val message: String,
+    val riskAnalysis: RiskAnalysisReport? = null
 )
 
 @Serializable
@@ -71,7 +72,6 @@ data class ReviewEligibilityResponse(
     val eligible: Boolean,
     val transactionId: String?,
     val reason: String?,
-    val otherUserName: String,
     val otherUserAvatarUrl: String? = null,
     val transactionCompletedAt: Long? = null
 )

@@ -21,7 +21,7 @@ features/reviews/
 
 ### ✅ Completed Components
 
-#### Models (15 files)
+#### Models (14 files)
 - ✅ `TransactionStatus.kt` - Transaction outcome statuses
 - ✅ `AccountType.kt` - User account types
 - ✅ `TrustLevel.kt` - Progressive trust levels
@@ -32,7 +32,6 @@ features/reviews/
 - ✅ `ReputationBadge.kt` - Achievement badges
 - ✅ `ReviewEligibility.kt` - Eligibility check results
 - ✅ `ReviewSubmission.kt` - Review submission data
-- ✅ `TransactionRiskScore.kt` - Risk assessment results
 - ✅ `ReviewWeight.kt` - Calculated review weights
 - ✅ `ReputationScore.kt` - User reputation data
 - ✅ `ReviewAppeal.kt` - Appeal/dispute data
@@ -184,7 +183,7 @@ CREATE TABLE review_responses (...);
 CREATE TABLE review_appeals (...);
 CREATE TABLE review_audit_log (...);
 CREATE TABLE reputation_badges (...);
-CREATE TABLE moderation_queue (...);
+CREATE TABLE review_moderation_queue (...);
 
 -- Create indexes
 CREATE INDEX idx_transaction_reviewer ON reviews(transaction_id, reviewer_id);

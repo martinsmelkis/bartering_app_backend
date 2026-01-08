@@ -29,10 +29,10 @@ class ReviewEligibilityService {
         }
 
         // Check if transaction exists and is completed
-        val transaction = getTransaction(transactionId)
-        if (transaction == null) {
-            return ReviewEligibility(false, "Transaction not found")
-        }
+        val transaction = getTransaction(transactionId) ?: return ReviewEligibility(
+            false,
+            "Transaction not found"
+        )
 
         if (transaction.status != TransactionStatus.DONE && transaction.status != TransactionStatus.SCAM) {
             return ReviewEligibility(false, "Transaction not completed - status: ${transaction.status}")
@@ -51,10 +51,10 @@ class ReviewEligibilityService {
             }
         }
 
-        // Check account age (must be at least 14 days old)
+        // Check account age (must be at least 7 days old)
         val accountAge = getAccountAge(reviewerId)
-        if (accountAge < Duration.ofDays(14)) {
-            return ReviewEligibility(false, "Account too new to review (must be 14+ days old)")
+        if (accountAge < Duration.ofDays(7)) {
+            return ReviewEligibility(false, "Account too new to review (must be 7+ days old)")
         }
 
         // Check review velocity (max 5 reviews per day)

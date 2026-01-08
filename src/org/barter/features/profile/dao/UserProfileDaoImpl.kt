@@ -150,17 +150,37 @@ class UserProfileDaoImpl : UserProfileDao {
         return publicKey
     }
 
+    override suspend fun getUserCreatedAt(userId: String): java.time.Instant? {
+        return dbQuery {
+            try {
+                val selectRow = UserRegistrationDataTable.select(
+                    UserRegistrationDataTable.id,
+                    UserRegistrationDataTable.createdAt
+                ).where(UserRegistrationDataTable.id eq userId).first()
+                selectRow[UserRegistrationDataTable.createdAt]
+            } catch (e: NoSuchElementException) {
+                e.printStackTrace()
+                null
+            }
+        }
+    }
+
     override suspend fun updateProfile(userId: String, request: UserProfileUpdateRequest):
             String = dbQuery {
 
         // Check if this is a new user profile (doesn't exist yet)
         val existingProfile = UserProfilesTable
-            .select(UserProfilesTable.userId, UserProfilesTable.name)
+            .select(UserProfilesTable.userId, UserProfilesTable.name, UserProfilesTable.location)
             .where { UserProfilesTable.userId eq userId }
             .singleOrNull()
 
         val isNewProfile = existingProfile == null
         val existingName = existingProfile?.getOrNull(UserProfilesTable.name)
+        val existingLocation = existingProfile?.getOrNull(UserProfilesTable.location)
+
+        // Track old location for change detection
+        val oldLatitude = existingLocation?.y // y is latitude in PostGIS
+        val oldLongitude = existingLocation?.x // x is longitude in PostGIS
 
         // Generate default username if needed (new user with no name provided)
         val finalName = when {

@@ -45,4 +45,6 @@ interface UserProfileDao {
         limit: Int = 20,
         customWeight: Int = 50
     ): List<UserProfileWithDistance>
+
+    suspend fun getUserCreatedAt(userId: String): java.time.Instant?
 }

@@ -11,6 +11,7 @@ import org.barter.features.profile.dao.UserProfileDaoImpl
 import org.barter.features.profile.model.UserProfile
 import org.barter.features.profile.model.UserProfileUpdateRequest
 import org.barter.features.authentication.utils.verifyRequestSignature
+import org.barter.features.reviews.service.LocationPatternDetectionService
 import org.koin.java.KoinJavaComponent.inject
 import kotlin.getValue
 
@@ -88,6 +89,7 @@ fun Route.updateProfileRoute() {
 
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val locationService: LocationPatternDetectionService by inject(LocationPatternDetectionService::class.java)
 
     // Route to update the current user's profile
     post("/api/v1/profile-update") {
@@ -110,16 +112,49 @@ fun Route.updateProfileRoute() {
                 )
             }
 
+            // Get current profile to check if location is changing
+            val currentProfile = userProfileDao.getProfile(request.userId)
+            val oldLatitude = currentProfile?.latitude
+            val oldLongitude = currentProfile?.longitude
+
+            // Copy to local variables to avoid smart cast issues with mutable properties
+            val newLatitude = request.latitude
+            val newLongitude = request.longitude
+
             val userName = userProfileDao.updateProfile(
                 request.userId,
                 UserProfileUpdateRequest(
                     request.name,
-                    request.latitude,
-                    request.longitude,
+                    newLatitude,
+                    newLongitude,
                     request.attributes,
                     request.profileKeywordDataMap
                 )
             )
+
+            // Track location change if it's a genuine change
+            if (newLatitude != null && newLongitude != null) {
+                val locationChanged = (oldLatitude != newLatitude || oldLongitude != newLongitude)
+
+                if (locationChanged) {
+                    locationService.trackLocationChange(
+                        userId = request.userId,
+                        oldLatitude = oldLatitude,
+                        oldLongitude = oldLongitude,
+                        newLatitude = newLatitude,
+                        newLongitude = newLongitude
+                    )
+                } else if (oldLatitude == null && oldLongitude == null) {
+                    // First time setting location
+                    locationService.trackLocationChange(
+                        userId = request.userId,
+                        oldLatitude = null,
+                        oldLongitude = null,
+                        newLatitude = newLatitude,
+                        newLongitude = newLongitude
+                    )
+                }
+            }
 
             call.respond(userName)
 

@@ -89,13 +89,11 @@ fun Route.updateTransactionStatusRoute() {
             val request = Json.decodeFromString<UpdateTransactionStatusRequest>(requestBody)
 
             // Verify the authenticated user is a party to the transaction
-            val transaction = transactionDao.getTransaction(transactionId)
-            if (transaction == null) {
-                return@put call.respond(
+            val transaction =
+                transactionDao.getTransaction(transactionId) ?: return@put call.respond(
                     HttpStatusCode.NotFound,
                     mapOf("error" to "Transaction not found")
                 )
-            }
 
             if (authenticatedUserId != transaction.user1Id && authenticatedUserId != transaction.user2Id) {
                 return@put call.respond(
@@ -105,13 +103,10 @@ fun Route.updateTransactionStatusRoute() {
             }
 
             // Parse status
-            val status = TransactionStatus.fromString(request.status)
-            if (status == null) {
-                return@put call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Invalid status: ${request.status}")
-                )
-            }
+            val status = TransactionStatus.fromString(request.status) ?: return@put call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid status: ${request.status}")
+            )
 
             // Update status
             val completedAt = if (status == TransactionStatus.DONE) Instant.now() else null

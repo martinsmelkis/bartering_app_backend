@@ -10,7 +10,7 @@ import java.time.Instant
  * Queue of reviews requiring manual moderation.
  * Reviews flagged as scam or with high risk scores are placed here.
  */
-object ModerationQueueTable : Table("moderation_queue") {
+object ModerationQueueTable : Table("review_moderation_queue") {
     val id = varchar("id", 36)
     val reviewId = reference("review_id", ReviewsTable.id).index()
     val transactionId = reference("transaction_id", BarterTransactionsTable.id).index()

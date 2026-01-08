@@ -8,7 +8,7 @@ import java.time.Instant
  * Reviews table storing all user reviews.
  * Reviews are initially hidden until both parties submit (blind review period).
  */
-object ReviewsTable : Table("reviews") {
+object ReviewsTable : Table("user_reviews") {
     val id = varchar("id", 36)
     val transactionId = reference("transaction_id", BarterTransactionsTable.id).index()
     val reviewerId = varchar("reviewer_id", 255).index()

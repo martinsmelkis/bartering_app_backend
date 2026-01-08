@@ -34,6 +34,11 @@ interface ReviewDao {
     suspend fun getReviewsInLastDays(userId: String, days: Int): Int
 
     /**
+     * Checks if both parties in a transaction have submitted reviews
+     */
+    suspend fun haveBothPartiesSubmitted(transactionId: String, user1Id: String, user2Id: String): Boolean
+
+    /**
      * Makes reviews visible (after blind review period)
      */
     suspend fun makeReviewsVisible(transactionId: String): Boolean

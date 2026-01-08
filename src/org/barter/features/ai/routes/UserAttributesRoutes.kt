@@ -17,6 +17,7 @@ import org.barter.features.profile.dao.UserProfileDaoImpl
 import org.barter.features.profile.model.OnboardingDataRequest
 import org.barter.features.profile.model.UserProfileUpdateRequest
 import org.barter.features.authentication.utils.verifyRequestSignature
+import org.barter.features.notifications.service.MatchNotificationService
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
 import kotlin.collections.component1
@@ -188,7 +189,7 @@ fun Route.parseOfferingsAndUpdateProfile() {
             userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.PROVIDING)
 
             // Check for matching postings for each new PROVIDING/OFFERING attribute
-            val matchNotificationService: org.barter.features.notifications.service.MatchNotificationService by inject(org.barter.features.notifications.service.MatchNotificationService::class.java)
+            val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
             for ((attributeKey, _) in requestObj.attributesRelevancyData) {
                 try {
                     // Check existing SEEKING postings and notify their owners

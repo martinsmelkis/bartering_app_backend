@@ -52,7 +52,7 @@ if (transaction?.status != TransactionStatus.DONE) {
 
 ```kotlin
 val accountAge = getAccountAge(reviewerId)
-if (accountAge < Duration.ofDays(14)) {
+if (accountAge < Duration.ofDays(7)) {
     return ReviewEligibility(false, "Account too new")
 }
 ```

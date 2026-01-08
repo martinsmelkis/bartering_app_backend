@@ -50,11 +50,11 @@ CREATE INDEX idx_reputations_rating ON user_reputations(average_rating DESC);
 CREATE INDEX idx_reputations_trust_level ON user_reputations(trust_level);
 
 -- ============================================================================
--- REVIEWS TABLE
+-- USER REVIEWS TABLE
 -- ============================================================================
 -- Stores all user reviews
 -- Reviews are initially hidden until both parties submit (blind review period)
-CREATE TABLE IF NOT EXISTS reviews (
+CREATE TABLE IF NOT EXISTS user_reviews (
     id VARCHAR(36) PRIMARY KEY,
     transaction_id VARCHAR(36) NOT NULL REFERENCES barter_transactions(id) ON DELETE CASCADE,
     reviewer_id VARCHAR(255) NOT NULL REFERENCES user_registration_data(id) ON DELETE CASCADE,
@@ -76,12 +76,12 @@ CREATE TABLE IF NOT EXISTS reviews (
     CONSTRAINT unique_review_per_transaction UNIQUE (transaction_id, reviewer_id, target_user_id)
 );
 
-CREATE INDEX idx_reviews_transaction ON reviews(transaction_id);
-CREATE INDEX idx_reviews_reviewer ON reviews(reviewer_id);
-CREATE INDEX idx_reviews_target ON reviews(target_user_id);
-CREATE INDEX idx_reviews_visible ON reviews(target_user_id, is_visible);
-CREATE INDEX idx_reviews_submitted ON reviews(submitted_at);
-CREATE INDEX idx_reviews_transaction_reviewer ON reviews(transaction_id, reviewer_id);
+CREATE INDEX idx_reviews_transaction ON user_reviews(transaction_id);
+CREATE INDEX idx_reviews_reviewer ON user_reviews(reviewer_id);
+CREATE INDEX idx_reviews_target ON user_reviews(target_user_id);
+CREATE INDEX idx_reviews_visible ON user_reviews(target_user_id, is_visible);
+CREATE INDEX idx_reviews_submitted ON user_reviews(submitted_at);
+CREATE INDEX idx_reviews_transaction_reviewer ON user_reviews(transaction_id, reviewer_id);
 
 -- ============================================================================
 -- PENDING REVIEWS TABLE
@@ -108,7 +108,7 @@ CREATE INDEX idx_pending_reveal_deadline ON pending_reviews(reveal_deadline, rev
 -- Allows users to respond to reviews they've received
 -- Provides a defense mechanism against unfair reviews
 CREATE TABLE IF NOT EXISTS review_responses (
-    review_id VARCHAR(36) PRIMARY KEY REFERENCES reviews(id) ON DELETE CASCADE,
+    review_id VARCHAR(36) PRIMARY KEY REFERENCES user_reviews(id) ON DELETE CASCADE,
     response_text TEXT NOT NULL,
     responded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS review_responses (
 -- Review appeals/disputes for moderation
 CREATE TABLE IF NOT EXISTS review_appeals (
     id VARCHAR(36) PRIMARY KEY,
-    review_id VARCHAR(36) NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    review_id VARCHAR(36) NOT NULL REFERENCES user_reviews(id) ON DELETE CASCADE,
     appealed_by VARCHAR(255) NOT NULL REFERENCES user_registration_data(id) ON DELETE CASCADE,
     reason TEXT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending', -- pending, under_review, approved, rejected, evidence_requested
@@ -175,9 +175,9 @@ CREATE INDEX idx_badges_type ON reputation_badges(badge_type);
 -- ============================================================================
 -- Queue of reviews requiring manual moderation
 -- Reviews flagged as scam or with high risk scores are placed here
-CREATE TABLE IF NOT EXISTS moderation_queue (
+CREATE TABLE IF NOT EXISTS review_moderation_queue (
     id VARCHAR(36) PRIMARY KEY,
-    review_id VARCHAR(36) NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    review_id VARCHAR(36) NOT NULL REFERENCES user_reviews(id) ON DELETE CASCADE,
     transaction_id VARCHAR(36) NOT NULL REFERENCES barter_transactions(id) ON DELETE CASCADE,
     flag_reason VARCHAR(50) NOT NULL, -- scam, disputed, high_risk, etc.
     risk_factors JSONB,
@@ -190,23 +190,23 @@ CREATE TABLE IF NOT EXISTS moderation_queue (
     resolved_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_moderation_review ON moderation_queue(review_id);
-CREATE INDEX idx_moderation_transaction ON moderation_queue(transaction_id);
-CREATE INDEX idx_moderation_submitted ON moderation_queue(submitted_at);
-CREATE INDEX idx_moderation_status ON moderation_queue(status, priority, submitted_at);
+CREATE INDEX idx_moderation_review ON review_moderation_queue(review_id);
+CREATE INDEX idx_moderation_transaction ON review_moderation_queue(transaction_id);
+CREATE INDEX idx_moderation_submitted ON review_moderation_queue(submitted_at);
+CREATE INDEX idx_moderation_status ON review_moderation_queue(status, priority, submitted_at);
 
 -- ============================================================================
 -- COMMENTS
 -- ============================================================================
 COMMENT ON TABLE barter_transactions IS 'Tracks all barter transactions between users - required for reviews';
 COMMENT ON TABLE user_reputations IS 'Aggregated reputation scores updated when reviews are submitted';
-COMMENT ON TABLE reviews IS 'All user reviews - hidden initially for blind review period';
+COMMENT ON TABLE user_reviews IS 'All user reviews - hidden initially for blind review period';
 COMMENT ON TABLE pending_reviews IS 'Encrypted reviews awaiting reveal (14-day deadline or both submitted)';
 COMMENT ON TABLE review_responses IS 'User responses to received reviews for reputation defense';
 COMMENT ON TABLE review_appeals IS 'Disputed reviews requiring moderation';
 COMMENT ON TABLE review_audit_log IS 'Complete audit trail for abuse detection';
 COMMENT ON TABLE reputation_badges IS 'Achievement badges earned by users';
-COMMENT ON TABLE moderation_queue IS 'Reviews flagged for human review';
+COMMENT ON TABLE review_moderation_queue IS 'Reviews flagged for human review';
 
 -- ============================================================================
 -- SUCCESS MESSAGE
@@ -214,7 +214,7 @@ COMMENT ON TABLE moderation_queue IS 'Reviews flagged for human review';
 DO $$
 BEGIN
     RAISE NOTICE '✅ Reviews system migration completed successfully!';
-    RAISE NOTICE '📊 Created 9 tables: transactions, reputations, reviews, pending_reviews, responses, appeals, audit_log, badges, moderation_queue';
+    RAISE NOTICE '📊 Created 9 tables: transactions, reputations, user_reviews, pending_reviews, responses, appeals, audit_log, badges, review_moderation_queue';
     RAISE NOTICE '🔒 All anti-abuse mechanisms are in place';
     RAISE NOTICE '🚀 System is ready for use!';
 END $$;
