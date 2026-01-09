@@ -317,12 +317,13 @@ if (recipientConnection != null && recipientConnection.session.isActive) {
     // ... existing message relay code ...
 } else {
     println("Recipient ${clientMessage.data.recipientId} not found or inactive.")
-    
+
     // Store message for offline delivery
     val offlineMessage = OfflineMessageDto(
         id = UUID.randomUUID().toString(),
         senderId = currentUserId,
         recipientId = clientMessage.data.recipientId,
+        senderName = clientMessage.data.senderName,
         encryptedPayload = clientMessage.data.encryptedPayload ?: "",
         timestamp = System.currentTimeMillis()
     )

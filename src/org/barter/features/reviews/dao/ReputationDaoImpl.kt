@@ -62,6 +62,22 @@ class ReputationDaoImpl : ReputationDao {
             }
     }
 
+    override suspend fun getUserBadgesWithTimestamps(userId: String): List<BadgeWithTimestamp> = dbQuery {
+        ReputationBadgesTable
+            .selectAll()
+            .where { ReputationBadgesTable.userId eq userId }
+            .mapNotNull { row ->
+                val badge = ReputationBadge.fromString(row[ReputationBadgesTable.badgeType])
+                if (badge != null) {
+                    BadgeWithTimestamp(
+                        badge = badge,
+                        earnedAt = row[ReputationBadgesTable.earnedAt],
+                        expiresAt = row[ReputationBadgesTable.expiresAt]
+                    )
+                } else null
+            }
+    }
+
     override suspend fun addBadge(userId: String, badge: ReputationBadge): Boolean = dbQuery {
         try {
             ReputationBadgesTable.insertIgnore {

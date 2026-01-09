@@ -89,6 +89,7 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
                         row[BarterTransactionsTable.user2Id] 
                     else 
                         row[BarterTransactionsTable.user1Id],
+                    initiatedAt = row[BarterTransactionsTable.initiatedAt],
                     completedAt = row[BarterTransactionsTable.completedAt] ?: row[BarterTransactionsTable.initiatedAt]
                 )
             }
@@ -134,6 +135,34 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
             }
         
         partners
+    }
+
+    override suspend fun getAverageTradeCompletionTime(userId: String): Long? = dbQuery {
+        val completedTrades = BarterTransactionsTable
+            .selectAll()
+            .where {
+                ((BarterTransactionsTable.user1Id eq userId) or (BarterTransactionsTable.user2Id eq userId)) and
+                (BarterTransactionsTable.status eq TransactionStatus.DONE.value) and
+                (BarterTransactionsTable.completedAt.isNotNull())
+            }
+            .mapNotNull { row ->
+                val initiatedAt = row[BarterTransactionsTable.initiatedAt]
+                val completedAt = row[BarterTransactionsTable.completedAt]
+                
+                if (completedAt != null) {
+                    val durationMillis = completedAt.toEpochMilli() - initiatedAt.toEpochMilli()
+                    val durationHours = durationMillis / (1000 * 60 * 60) // Convert to hours
+                    durationHours
+                } else {
+                    null
+                }
+            }
+        
+        if (completedTrades.isEmpty()) {
+            null
+        } else {
+            completedTrades.average().toLong()
+        }
     }
 
     private fun rowToDto(row: ResultRow): BarterTransactionDto {

@@ -20,9 +20,14 @@ interface ReputationDao {
     suspend fun updateReputation(reputation: ReputationDto): Boolean
 
     /**
-     * Gets badges for a user
+     * Gets badges for a user (badge types only)
      */
     suspend fun getUserBadges(userId: String): List<ReputationBadge>
+    
+    /**
+     * Gets badges for a user with earned timestamps
+     */
+    suspend fun getUserBadgesWithTimestamps(userId: String): List<BadgeWithTimestamp>
 
     /**
      * Adds a badge to a user
@@ -51,4 +56,13 @@ data class ReputationDto(
     val tradeDiversityScore: Double,
     val trustLevel: TrustLevel,
     val lastUpdated: Instant
+)
+
+/**
+ * DTO for badge with earned timestamp
+ */
+data class BadgeWithTimestamp(
+    val badge: ReputationBadge,
+    val earnedAt: Instant,
+    val expiresAt: Instant? = null
 )

@@ -10,6 +10,7 @@ data class OfflineMessageDto(
     val id: String,
     val senderId: String,
     val recipientId: String,
+    val senderName: String,
     val encryptedPayload: String,
     val timestamp: Long,
     val delivered: Boolean = false

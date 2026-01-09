@@ -61,6 +61,12 @@ interface BarterTransactionDao {
      * Gets all trading partners for a user
      */
     suspend fun getTradingPartners(userId: String): Set<String>
+
+    /**
+     * Calculates the average time (in hours) to complete trades for a user
+     * Returns null if user has no completed trades
+     */
+    suspend fun getAverageTradeCompletionTime(userId: String): Long?
 }
 
 /**
@@ -84,5 +90,6 @@ data class BarterTransactionDto(
 data class CompletedTradeDto(
     val transactionId: String,
     val otherUserId: String,
+    val initiatedAt: Instant,
     val completedAt: Instant
 )

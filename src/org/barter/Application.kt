@@ -33,15 +33,20 @@ import org.barter.features.attributes.dao.AttributesDao
 import org.barter.features.attributes.dao.AttributesDaoImpl
 import org.barter.features.authentication.di.authenticationModule
 import org.barter.features.categories.di.categoriesModule
+import org.barter.features.chat.di.chatModule
 import org.barter.features.healthcheck.di.healthCheckModule
 import org.barter.features.postings.dao.UserPostingDao
 import org.barter.features.postings.di.postingsModule
 import org.barter.features.postings.tasks.PostingExpirationTask
 import org.barter.features.profile.di.profilesModule
+import org.barter.features.reviews.dao.RiskPatternDao
+import org.barter.features.reviews.tasks.ReviewRiskTrackingCleanupTask
 import org.barter.features.relationships.di.relationshipsModule
 import org.barter.features.notifications.di.notificationsModule
 import org.barter.features.reviews.di.reviewsModule
 import org.barter.features.notifications.jobs.DigestNotificationJobManager
+import org.barter.features.profile.cache.UserActivityCache
+import org.barter.middleware.installActivityTracking
 import org.barter.config.configureRateLimiting
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
@@ -50,8 +55,6 @@ import org.koin.logger.SLF4JLogger
 import org.slf4j.event.Level
 import java.security.Security
 import java.text.DateFormat
-import org.barter.tests.TestRandom100UsersGenAndSimilarity
-import org.barter.tests.TestArchetypeUsersGenAndSimilarity
 
 fun main(args: Array<String>): Unit {
 
@@ -106,9 +109,16 @@ fun Application.module(testing: Boolean = false) {
     Security.addProvider(BouncyCastleProvider())
 
     DatabaseFactory.init()
+    
+    // Initialize user activity cache for presence tracking
+    UserActivityCache.init()
+    println("✅ User activity tracking initialized")
 
     // Install rate limiting (application-level protection)
     configureRateLimiting()
+    
+    // Install activity tracking middleware (tracks user presence)
+    installActivityTracking()
 
     install(WebSockets) {
         pingPeriodMillis = 15_000
@@ -128,6 +138,7 @@ fun Application.module(testing: Boolean = false) {
             authenticationModule,
             profilesModule,
             categoriesModule,
+            chatModule,
             healthCheckModule,
             relationshipsModule,
             postingsModule,
@@ -151,6 +162,12 @@ fun Application.module(testing: Boolean = false) {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
     val expirationTask = PostingExpirationTask(postingDao)
     expirationTask.start(GlobalScope)
+    
+    // Start risk tracking data cleanup task
+    val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)
+    val riskCleanupTask = ReviewRiskTrackingCleanupTask(riskPatternDao)
+    riskCleanupTask.start(GlobalScope)
+    println("✅ Risk tracking cleanup task started")
     
     // Start digest notification jobs
     DigestNotificationJobManager.startJobs()

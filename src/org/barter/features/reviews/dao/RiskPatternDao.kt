@@ -157,4 +157,40 @@ interface RiskPatternDao {
      * Gets contact information overlap between users.
      */
     suspend fun shareContactInfo(user1Id: String, user2Id: String): Boolean
+    
+    // ========== Data Cleanup & Maintenance ==========
+    
+    /**
+     * Deletes device tracking records older than the specified number of days.
+     * Helps maintain database performance and comply with data retention policies.
+     * 
+     * @param olderThanDays Delete records older than this many days
+     * @return Number of records deleted
+     */
+    suspend fun cleanupOldDeviceTracking(olderThanDays: Int): Int
+    
+    /**
+     * Deletes IP tracking records older than the specified number of days.
+     * 
+     * @param olderThanDays Delete records older than this many days
+     * @return Number of records deleted
+     */
+    suspend fun cleanupOldIpTracking(olderThanDays: Int): Int
+    
+    /**
+     * Deletes location change records older than the specified number of days.
+     * 
+     * @param olderThanDays Delete records older than this many days
+     * @return Number of records deleted
+     */
+    suspend fun cleanupOldLocationChanges(olderThanDays: Int): Int
+    
+    /**
+     * Deletes risk pattern records older than the specified number of days.
+     * Risk patterns can be kept longer for trend analysis.
+     * 
+     * @param olderThanDays Delete records older than this many days
+     * @return Number of records deleted
+     */
+    suspend fun cleanupOldRiskPatterns(olderThanDays: Int): Int
 }

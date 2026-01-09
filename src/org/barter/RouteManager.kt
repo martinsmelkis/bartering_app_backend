@@ -11,6 +11,7 @@ import org.barter.features.postings.routes.imageServeRoutes
 import org.barter.features.postings.routes.postingImageUploadRoutes
 import org.barter.features.postings.routes.postingsRoutes
 import org.barter.features.profile.routes.profileManagementRoutes
+import org.barter.features.profile.routes.*
 import org.barter.features.relationships.routes.relationshipsRoutes
 import org.barter.features.notifications.routes.notificationPreferencesRoutes
 import org.barter.features.notifications.routes.pushNotificationRoutes
@@ -35,10 +36,16 @@ fun Application.routes() {
         postingImageUploadRoutes()
         imageServeRoutes() // Serves local images
         
+        // User Presence/Online Status
+        getUserOnlineStatusRoute()
+        batchUserOnlineStatusRoute()
+        getPresenceCacheStatsRoute()
+        
         // Reviews and Reputation System
         createTransactionRoute()
         updateTransactionStatusRoute()
         getUserTransactionsRoute()
+        getTransactionWithPartnerRoute()
         checkReviewEligibilityRoute()
         submitReviewRoute()
         getUserReviewsRoute()

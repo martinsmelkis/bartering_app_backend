@@ -12,14 +12,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import org.barter.features.chat.cache.PublicKeyCache
+import org.barter.features.chat.dao.ChatAnalyticsDao
 import org.barter.features.encryptedfiles.dao.EncryptedFileDaoImpl
 import org.barter.features.chat.dao.OfflineMessageDaoImpl
 import org.barter.features.chat.manager.ConnectionManager
 import org.barter.features.chat.model.*
 import org.barter.features.encryptedfiles.tasks.FileCleanupTask
+import org.barter.features.chat.tasks.ChatAnalyticsCleanupTask
 import org.barter.features.chat.tasks.MessageCleanupTask
 import org.barter.features.profile.dao.UserProfileDaoImpl
 import org.barter.features.notifications.service.PushNotificationService
+import org.barter.features.reviews.dao.BarterTransactionDao
 import org.barter.features.notifications.model.PushNotification
 import org.barter.features.notifications.model.NotificationPriority
 import org.barter.features.notifications.utils.NotificationDataBuilder
@@ -51,6 +54,21 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     // Push notification service for offline message notifications
     val pushNotificationService: PushNotificationService by inject(PushNotificationService::class.java)
 
+    // Chat analytics DAO for tracking response times
+    val chatAnalyticsDao: ChatAnalyticsDao by inject(ChatAnalyticsDao::class.java)
+    
+    // Transaction DAO for creating trades when users chat
+    val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
+    
+    // Shared conversation state for tracking when users receive messages
+    // Maps "userId:partnerId" -> timestamp when message was received
+    // In production with multiple servers, use Redis for distributed state
+    val conversationState = java.util.concurrent.ConcurrentHashMap<String, java.time.Instant>()
+    
+    // Track conversation message counts for transaction creation
+    // Maps "userId:partnerId" -> message count
+    val conversationMessageCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     // Background task for cleaning up old delivered messages
     val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val messageCleanupTask =
@@ -60,6 +78,10 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     // Background task for cleaning up expired/downloaded files
     val fileCleanupTask = FileCleanupTask(encryptedFileDao, intervalHours = 1)
     fileCleanupTask.start(cleanupScope)
+
+    // Background task for cleaning up old chat analytics data
+    val analyticsCleanupTask = ChatAnalyticsCleanupTask(chatAnalyticsDao, intervalHours = 24, retentionDays = 90)
+    analyticsCleanupTask.start(cleanupScope)
 
     val socketSerializer: KSerializer<SocketMessage> = SocketMessage.serializer()
 
@@ -215,6 +237,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
 
                             // 5. Authentication successful!
                             currentConnection.userId = authRequest.userId
+                            currentConnection.userName = authRequest.userName
                             currentConnection.userPublicKey = authRequest.publicKey
 
                             val isNewConnection = connectionManager.getConnection(authRequest.userId) == null
@@ -304,7 +327,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 text = offlineMsg.encryptedPayload,
                                 timestamp = offlineMsg.timestamp,
                                 recipientId = currentUserId,
-                                serverMessageId = offlineMsg.id
+                                serverMessageId = offlineMsg.id,
+                                senderName = offlineMsg.senderName
                             )
                             outgoing.send(
                                 Frame.Text(
@@ -316,6 +340,12 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             )
                             // Mark as delivered
                             offlineMessageDao.markAsDelivered(offlineMsg.id)
+                            
+                            // Track message received for response time analytics
+                            // Use the original message timestamp (when it was sent to us while offline)
+                            val stateKey = "$currentUserId:${offlineMsg.senderId}"
+                            conversationState[stateKey] = java.time.Instant.ofEpochMilli(offlineMsg.timestamp)
+                            println("📊 Tracked offline message from ${offlineMsg.senderId} to $currentUserId")
                         } catch (e: Exception) {
                             println("Failed to deliver offline message ${offlineMsg.id}: ${e.message}")
                         }
@@ -372,7 +402,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                         text = clientMessage.data.encryptedPayload ?: "",
                                         timestamp = System.currentTimeMillis(),
                                         recipientId = clientMessage.data.recipientId,
-                                        serverMessageId = UUID.randomUUID().toString()
+                                        serverMessageId = UUID.randomUUID().toString(),
+                                        senderName = clientMessage.data.senderName
                                     )
                                     println("Relaying message from $currentUserId to ${clientMessage.data.recipientId}")
                                     recipientConnection.session.send(
@@ -383,6 +414,105 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                             )
                                         )
                                     )
+                                    
+                                    // Track when recipient receives this message (for their response time)
+                                    val recipientStateKey = "${clientMessage.data.recipientId}:$currentUserId"
+                                    conversationState[recipientStateKey] = java.time.Instant.now()
+                                    println("📊 Tracked message from $currentUserId to ${clientMessage.data.recipientId}")
+                                    
+                                    // Track message count for transaction creation
+                                    val conversationKey = listOf(currentUserId, clientMessage.data.recipientId).sorted().joinToString(":")
+                                    val senderKey = "$currentUserId:${clientMessage.data.recipientId}"
+                                    val currentSenderCount = conversationMessageCounts.getOrDefault(senderKey, 0) + 1
+                                    conversationMessageCounts[senderKey] = currentSenderCount
+                                    
+                                    // Check if both users have sent at least 1 message (2-way conversation)
+                                    val recipientKey = "${clientMessage.data.recipientId}:$currentUserId"
+                                    val recipientCount = conversationMessageCounts.getOrDefault(recipientKey, 0)
+                                    
+                                    if (currentSenderCount >= 1 && recipientCount >= 1) {
+                                        // Both users have participated - create transaction if it doesn't exist
+                                        cleanupScope.launch {
+                                            try {
+                                                // Check if transaction already exists
+                                                val existingTransactions = transactionDao.getTransactionsBetweenUsers(
+                                                    currentUserId,
+                                                    clientMessage.data.recipientId
+                                                )
+                                                
+                                                if (existingTransactions.isEmpty()) {
+                                                    // Create new transaction
+                                                    val transactionId = transactionDao.createTransaction(
+                                                        user1Id = currentUserId,
+                                                        user2Id = clientMessage.data.recipientId,
+                                                        estimatedValue = null
+                                                    )
+                                                    println("✅ Created transaction $transactionId for conversation between $currentUserId and ${clientMessage.data.recipientId}")
+                                                    
+                                                    // Notify both users about the transaction
+                                                    val timestamp = System.currentTimeMillis()
+                                                    // Notify current user
+                                                    try {
+                                                        val notificationToSender = TransactionCreatedMessage(
+                                                            transactionId = transactionId,
+                                                            partnerId = clientMessage.data.recipientId,
+                                                            partnerName = clientMessage.data.senderName, // Will be recipient's name
+                                                            initiatedAt = timestamp
+                                                        )
+                                                        currentConnection.session.send(
+                                                            Frame.Text(Json.encodeToString(socketSerializer, notificationToSender))
+                                                        )
+                                                    } catch (e: Exception) {
+                                                        println("⚠️ Failed to notify sender: ${e.message}")
+                                                    }
+                                                    // Notify recipient (if online)
+                                                    try {
+                                                        recipientConnection?.let { conn ->
+                                                            val notificationToRecipient = TransactionCreatedMessage(
+                                                                transactionId = transactionId,
+                                                                partnerId = currentUserId,
+                                                                partnerName = currentConnection.userName ?: currentUserId,
+                                                                initiatedAt = timestamp
+                                                            )
+                                                            conn.session.send(
+                                                                Frame.Text(Json.encodeToString(socketSerializer, notificationToRecipient))
+                                                            )
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        println("⚠️ Failed to notify recipient: ${e.message}")
+                                                    }
+                                                    
+                                                    // Reset message counts for this conversation
+                                                    conversationMessageCounts.remove(senderKey)
+                                                    conversationMessageCounts.remove(recipientKey)
+                                                }
+                                            } catch (e: Exception) {
+                                                println("⚠️ Failed to create transaction: ${e.message}")
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Check if current user is responding to a previous message from recipient
+                                    val senderStateKey = "$currentUserId:${clientMessage.data.recipientId}"
+                                    val lastReceivedAt = conversationState[senderStateKey]
+                                    if (lastReceivedAt != null) {
+                                        // This is a response - record the response time
+                                        cleanupScope.launch {
+                                            try {
+                                                chatAnalyticsDao.recordResponseTime(
+                                                    userId = currentUserId,
+                                                    conversationPartnerId = clientMessage.data.recipientId,
+                                                    messageReceivedAt = lastReceivedAt,
+                                                    responseSentAt = java.time.Instant.now()
+                                                )
+                                                println("📊 Recorded response time for $currentUserId to ${clientMessage.data.recipientId}")
+                                            } catch (e: Exception) {
+                                                println("⚠️ Failed to record response time: ${e.message}")
+                                            }
+                                        }
+                                        // Clear the tracked timestamp after recording
+                                        conversationState.remove(senderStateKey)
+                                    }
                                 }
                             } else {
                                 println("Recipient ${clientMessage.data.recipientId} not found or inactive. " +
@@ -393,6 +523,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     id = UUID.randomUUID().toString(),
                                     senderId = currentUserId,
                                     recipientId = clientMessage.data.recipientId,
+                                    senderName = clientMessage.data.senderName,
                                     encryptedPayload = clientMessage.data.encryptedPayload ?: "",
                                     timestamp = System.currentTimeMillis()
                                 )
@@ -404,11 +535,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     // Send push notification to offline recipient
                                     cleanupScope.launch {
                                         try {
-                                            val senderName = usersDao.getProfile(currentUserId)?.name ?: "Someone"
-                                            
                                             val notificationData = NotificationDataBuilder.newMessage(
                                                 senderId = currentUserId,
-                                                senderName = senderName,
+                                                senderName = clientMessage.data.senderName,
                                                 messageId = offlineMessage.id,
                                                 timestamp = offlineMessage.timestamp
                                             )
@@ -471,6 +600,19 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                 currentConnection.userId?.let { userId ->
                     // Remove connection from manager (only if it's the current connection)
                     connectionManager.removeConnection(userId, currentConnection.id)
+                    
+                    // Clean up conversation state for this user to prevent memory leaks
+                    val keysToRemove = conversationState.keys.filter { it.startsWith("$userId:") }
+                    keysToRemove.forEach { conversationState.remove(it) }
+                    
+                    // Clean up message counts for this user
+                    val messageCountKeys = conversationMessageCounts.keys.filter { it.startsWith("$userId:") }
+                    messageCountKeys.forEach { conversationMessageCounts.remove(it) }
+                    
+                    val totalKeysRemoved = keysToRemove.size + messageCountKeys.size
+                    if (totalKeysRemoved > 0) {
+                        println("🧹 Cleaned up $totalKeysRemoved conversation entries for $userId")
+                    }
                 }
                 println("Connection ID ${currentConnection.id} terminated.")
                 // No need to explicitly close session here if it's already closed by client or an error

@@ -7,6 +7,7 @@ import org.barter.features.reviews.db.RiskPatternsTable
 import org.barter.features.reviews.db.UserLocationChangesTable
 import org.barter.features.reviews.model.*
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import net.postgis.jdbc.geometry.Point
 import java.time.Instant
 import java.util.UUID
@@ -480,6 +481,68 @@ class RiskPatternDaoImpl : RiskPatternDao {
             userAgent.contains("Firefox") -> "Firefox"
             userAgent.contains("Edg") -> "Edge"
             else -> null
+        }
+    }
+    
+    // ========== Data Cleanup & Maintenance ==========
+    
+    override suspend fun cleanupOldDeviceTracking(olderThanDays: Int): Int = dbQuery {
+        try {
+            val cutoffDate = java.time.Instant.now()
+                .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
+            
+            DeviceTrackingTable.deleteWhere {
+                DeviceTrackingTable.timestamp less cutoffDate
+            }
+        } catch (e: Exception) {
+            println("Error cleaning up device tracking: ${e.message}")
+            e.printStackTrace()
+            0
+        }
+    }
+    
+    override suspend fun cleanupOldIpTracking(olderThanDays: Int): Int = dbQuery {
+        try {
+            val cutoffDate = java.time.Instant.now()
+                .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
+            
+            IpTrackingTable.deleteWhere {
+                IpTrackingTable.timestamp less cutoffDate
+            }
+        } catch (e: Exception) {
+            println("Error cleaning up IP tracking: ${e.message}")
+            e.printStackTrace()
+            0
+        }
+    }
+    
+    override suspend fun cleanupOldLocationChanges(olderThanDays: Int): Int = dbQuery {
+        try {
+            val cutoffDate = java.time.Instant.now()
+                .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
+            
+            UserLocationChangesTable.deleteWhere {
+                UserLocationChangesTable.changedAt less cutoffDate
+            }
+        } catch (e: Exception) {
+            println("Error cleaning up location changes: ${e.message}")
+            e.printStackTrace()
+            0
+        }
+    }
+    
+    override suspend fun cleanupOldRiskPatterns(olderThanDays: Int): Int = dbQuery {
+        try {
+            val cutoffDate = java.time.Instant.now()
+                .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
+            
+            RiskPatternsTable.deleteWhere {
+                RiskPatternsTable.detectedAt less cutoffDate
+            }
+        } catch (e: Exception) {
+            println("Error cleaning up risk patterns: ${e.message}")
+            e.printStackTrace()
+            0
         }
     }
 }

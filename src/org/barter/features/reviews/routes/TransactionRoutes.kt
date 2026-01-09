@@ -187,4 +187,67 @@ fun Route.getUserTransactionsRoute() {
     }
 }
 
+/**
+ * Get active transaction with a chat partner
+ * Returns the most recent transaction (especially pending/active ones) between two users
+ * Useful for chat interface to show transaction status and allow marking as done
+ */
+fun Route.getTransactionWithPartnerRoute() {
+    val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    get("/api/v1/transactions/with/{partnerId}") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) {
+            return@get
+        }
+
+        val partnerId = call.parameters["partnerId"]
+        if (partnerId.isNullOrBlank()) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Missing partnerId parameter")
+            )
+        }
+
+        try {
+            val transactions = transactionDao.getTransactionsBetweenUsers(authenticatedUserId, partnerId)
+            
+            if (transactions.isEmpty()) {
+                // No transaction exists yet
+                return@get call.respond(
+                    HttpStatusCode.OK,
+                    mapOf(
+                        "hasTransaction" to false,
+                        "message" to "No transaction exists with this user yet"
+                    )
+                )
+            }
+            
+            // Return the most recent transaction (ordered by initiatedAt DESC)
+            val mostRecent = transactions.first()
+            
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf(
+                    "hasTransaction" to true,
+                    "transactionId" to mostRecent.id,
+                    "status" to mostRecent.status.value,
+                    "initiatedAt" to mostRecent.initiatedAt.toEpochMilli(),
+                    "completedAt" to mostRecent.completedAt?.toEpochMilli(),
+                    "estimatedValue" to mostRecent.estimatedValue,
+                    "user1Id" to mostRecent.user1Id,
+                    "user2Id" to mostRecent.user2Id
+                )
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "Failed to retrieve transaction: ${e.message}")
+            )
+        }
+    }
+}
+
 // Request/Response models moved to ApiModels.kt

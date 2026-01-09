@@ -81,7 +81,8 @@ class ReputationCalculationService(
         hasIdentityVerified: suspend (String) -> Boolean,
         hasBusinessVerified: suspend (String) -> Boolean,
         getAverageResponseTime: suspend (String) -> Long?, // in hours
-        hasDisputedTransactions: suspend (String) -> Boolean
+        hasDisputedTransactions: suspend (String) -> Boolean,
+        getAverageTradeCompletionTime: suspend (String) -> Long? // in hours
     ): Boolean {
         return when (badge) {
             ReputationBadge.IDENTITY_VERIFIED -> hasIdentityVerified(userId)
@@ -95,10 +96,28 @@ class ReputationCalculationService(
             ReputationBadge.VERIFIED_BUSINESS -> hasBusinessVerified(userId)
             ReputationBadge.DISPUTE_FREE -> !hasDisputedTransactions(userId) && reputation.totalReviews >= 10
             ReputationBadge.FAST_TRADER -> {
-                // TODO: Implement based on average time to complete trades
-                false
+                val avgCompletionTime = getAverageTradeCompletionTime(userId)
+                // Fast trader: completes trades in 48 hours or less on average, with at least 10 completed trades
+                avgCompletionTime != null && avgCompletionTime <= 48 && reputation.totalReviews >= 10
             }
         }
+    }
+
+    /**
+     * Calculates average trade completion time in hours from a list of completed trades.
+     * Returns null if no trades with timing data are available.
+     */
+    fun calculateAverageCompletionTime(trades: List<RiskAnalysisService.CompletedTrade>): Long? {
+        val durations = trades.mapNotNull { trade ->
+            if (trade.initiatedAt != null && trade.completedAt != null) {
+                val durationMillis = trade.completedAt - trade.initiatedAt
+                durationMillis / (1000 * 60 * 60) // Convert to hours
+            } else {
+                null
+            }
+        }
+        
+        return if (durations.isEmpty()) null else durations.average().toLong()
     }
 
     /**

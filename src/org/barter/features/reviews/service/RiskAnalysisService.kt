@@ -272,6 +272,8 @@ class RiskAnalysisService(
      */
     data class CompletedTrade(
         val transactionId: String,
-        val otherUserId: String
+        val otherUserId: String,
+        val initiatedAt: Long? = null,  // Epoch millis - optional for backward compatibility
+        val completedAt: Long? = null   // Epoch millis - optional for backward compatibility
     )
 }

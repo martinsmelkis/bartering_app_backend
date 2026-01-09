@@ -92,7 +92,7 @@ class AttributesDaoImpl : AttributesDao {
                 it[AttributesMasterTable.attributeNameKey] = attributeKey
                 it[AttributesMasterTable.localizationKey] = localizationKey
                 it[AttributesMasterTable.customUserAttrText] = customUserAttrText
-                it[isApproved] = false // New user-generated attributes require approval.
+                it[isApproved] = true // New user-generated attributes require approval.
             }?.value ?: return@dbQuery null // Exit if the attribute already existed.
 
             // Step 2: Use pgai to generate and save the embedding for the new attribute.
