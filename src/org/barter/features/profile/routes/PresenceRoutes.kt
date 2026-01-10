@@ -168,9 +168,7 @@ fun Route.getPresenceCacheStatsRoute() {
         if (authenticatedUserId == null) {
             return@get
         }
-        
-        // TODO: Add admin role check here if you have role-based access control
-        
+
         try {
             val stats = UserActivityCache.getStats()
             

@@ -112,6 +112,16 @@ data class MessageRelayResponse(
 )
 
 /**
+ * Response to posting search request.
+ */
+@Serializable
+data class PostingSearchResponse(
+    val postings: List<FederatedPostingData>,
+    val count: Int,
+    val hasMore: Boolean = false // Indicates if there are more results available
+)
+
+/**
  * Generic federation API response wrapper.
  */
 @Serializable

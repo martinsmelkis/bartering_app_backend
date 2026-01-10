@@ -2,6 +2,8 @@ package org.barter.features.federation.di
 
 import org.barter.features.federation.dao.FederationDao
 import org.barter.features.federation.dao.FederationDaoImpl
+import org.barter.features.federation.dao.FederatedUserDao
+import org.barter.features.federation.dao.FederatedUserDaoImpl
 import org.barter.features.federation.service.FederationService
 import org.barter.features.federation.service.FederationServiceImpl
 import org.koin.dsl.module
@@ -13,6 +15,7 @@ val federationModule = module {
 
     // DAO layer
     single<FederationDao> { FederationDaoImpl() }
+    single<FederatedUserDao> { FederatedUserDaoImpl(get()) }
 
     // Service layer
     single<FederationService> {

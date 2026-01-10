@@ -1,7 +1,7 @@
 package org.barter.features.relationships.dao
 
 import org.barter.extensions.DatabaseFactory.dbQuery
-import org.barter.features.profile.model.UserProfilesTable
+import org.barter.features.profile.db.UserProfilesTable
 import org.barter.features.relationships.db.UserRelationshipsTable
 import org.barter.features.relationships.model.*
 import org.jetbrains.exposed.sql.*

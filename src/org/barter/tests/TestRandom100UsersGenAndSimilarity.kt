@@ -12,7 +12,7 @@ import org.barter.features.attributes.model.UserAttributeType
 import org.barter.features.profile.dao.UserProfileDaoImpl
 import org.barter.features.profile.db.UserRegistrationDataTable
 import org.barter.features.profile.model.UserProfile
-import org.barter.features.profile.model.UserProfilesTable
+import org.barter.features.profile.db.UserProfilesTable
 import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.selectAll
 import org.koin.java.KoinJavaComponent.inject

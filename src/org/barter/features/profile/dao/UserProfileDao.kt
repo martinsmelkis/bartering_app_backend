@@ -47,4 +47,16 @@ interface UserProfileDao {
     ): List<UserProfileWithDistance>
 
     suspend fun getUserCreatedAt(userId: String): java.time.Instant?
+    
+    /**
+     * Gets all users with pagination support.
+     * Optionally filters by federation_enabled flag and updated since timestamp.
+     * Used for federation user sync.
+     */
+    suspend fun getAllUsers(
+        federationEnabled: Boolean = true,
+        updatedSince: java.time.Instant? = null,
+        page: Int = 0,
+        pageSize: Int = 50
+    ): Pair<List<UserProfile>, Int> // Returns (users, totalCount)
 }

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import net.postgis.jdbc.geometry.Point
 import org.barter.features.attributes.dao.AttributesDaoImpl
 import org.barter.features.attributes.model.UserAttributeType
+import org.barter.features.profile.db.UserProfilesTable
 import org.barter.features.profile.db.UserRegistrationDataTable
 import org.barter.features.profile.db.UserSemanticProfilesTable
 import org.barter.utils.HashUtils
@@ -212,6 +213,8 @@ class UserProfileDaoImpl : UserProfileDao {
             request.profileKeywordDataMap?.let { _ ->
                 table[UserProfilesTable.profileKeywordDataMap] = request.profileKeywordDataMap
             }
+            // Update timestamp for federation sync
+            table[UserProfilesTable.updatedAt] = java.time.Instant.now()
         }
 
         request.attributes?.forEach { attr ->
@@ -1500,6 +1503,80 @@ class UserProfileDaoImpl : UserProfileDao {
             } else {
                 profileWithDistance
             }
+        }
+    }
+    
+    override suspend fun getAllUsers(
+        federationEnabled: Boolean,
+        updatedSince: java.time.Instant?,
+        page: Int,
+        pageSize: Int
+    ): Pair<List<UserProfile>, Int> = dbQuery {
+        try {
+            // Build base query
+            var query = UserProfilesTable
+                .selectAll()
+                .where { UserProfilesTable.federationEnabled eq federationEnabled }
+            
+            // Apply updatedSince filter if provided
+            if (updatedSince != null) {
+                query = query.andWhere { UserProfilesTable.updatedAt greater updatedSince }
+            }
+            
+            // Get total count before pagination
+            val totalCount = query.count().toInt()
+            
+            // Apply pagination
+            val offset = (page * pageSize).toLong()
+            val paginatedResults = if (offset > 0) {
+                query.limit(pageSize).offset(offset).toList()
+            } else {
+                query.limit(pageSize).toList()
+            }
+            
+            // Convert to UserProfile objects
+            val profiles = paginatedResults.mapNotNull { row ->
+                try {
+                    val userId = row[UserProfilesTable.userId]
+                    
+                    // Get attributes for this user
+                    val attributes = UserAttributesTable
+                        .selectAll()
+                        .where { UserAttributesTable.userId eq userId }
+                        .map { attrRow ->
+                            UserAttributeDto(
+                                attributeId = attrRow[UserAttributesTable.attributeId],
+                                type = attrRow[UserAttributesTable.type].ordinal,
+                                relevancy = attrRow[UserAttributesTable.relevancy].toDouble(),
+                                description = attrRow[UserAttributesTable.description]
+                            )
+                        }
+                    
+                    // Parse location
+                    val location = row[UserProfilesTable.location]
+                    val latitude = location?.firstPoint?.y
+                    val longitude = location?.firstPoint?.x
+                    
+                    UserProfile(
+                        userId = userId,
+                        name = row[UserProfilesTable.name] ?: "Unknown",
+                        latitude = latitude,
+                        longitude = longitude,
+                        attributes = attributes,
+                        profileKeywordDataMap = row[UserProfilesTable.profileKeywordDataMap],
+                        activePostingIds = emptyList() // Not needed for federation sync
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null
+                }
+            }
+            
+            Pair(profiles, totalCount)
+            
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Pair(emptyList(), 0)
         }
     }
 

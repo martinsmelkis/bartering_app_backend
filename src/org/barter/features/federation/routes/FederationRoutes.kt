@@ -1,12 +1,15 @@
 package org.barter.features.federation.routes
 
 import io.ktor.http.*
-import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import org.barter.features.federation.dao.FederationDao
+import org.barter.features.federation.middleware.verifyAdminAccess
 import org.barter.features.federation.model.*
 import org.barter.features.federation.service.FederationService
+import org.barter.features.authentication.dao.AuthenticationDao
+import org.barter.features.profile.cache.UserActivityCache
 import org.koin.ktor.ext.inject
 
 /**
@@ -16,6 +19,12 @@ import org.koin.ktor.ext.inject
 fun Route.federationRoutes() {
 
     val federationService by inject<FederationService>()
+    val federationDao by inject<FederationDao>()
+    val userProfileDao by inject<org.barter.features.profile.dao.UserProfileDao>()
+    val connectionManager by inject<org.barter.features.chat.manager.ConnectionManager>()
+    val offlineMessageDao by inject<org.barter.features.chat.dao.OfflineMessageDao>()
+    val postingDao by inject<org.barter.features.postings.dao.UserPostingDao>()
+    val federatedUserDao by inject<org.barter.features.federation.dao.FederatedUserDao>()
 
     route("/federation/v1") {
 
@@ -110,41 +119,151 @@ fun Route.federationRoutes() {
 
         /**
          * POST /federation/v1/sync-users
-         * Receives requests to sync user data.
-         * TODO: Implement user sync when federated user tables are ready
+         * Receives requests to sync user data from federated servers.
+         * Returns paginated list of local users that are federation-enabled.
          */
         post("/sync-users") {
-            val request = call.receive<UserSyncRequest>()
+            try {
+                val request = call.receive<UserSyncRequest>()
 
-            // Verify signature
-            val signatureValid = federationService.verifyServerSignature(
-                serverId = request.requestingServerId,
-                data = "${request.requestingServerId}|${request.timestamp}",
-                signature = request.signature
-            )
+                // Fetch server from DAO and verify users scope
+                val server = try {
+                    federationDao.getFederatedServer(request.requestingServerId)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Failed to retrieve server information: ${e.message}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
 
-            if (!signatureValid) {
-                call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Invalid signature",
+                if (server == null) {
+                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server not found. Please initiate handshake first.",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify server is active and trusted
+                if (!server.isActive) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is not active",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                if (server.trustLevel == TrustLevel.BLOCKED) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is blocked",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify users scope is granted
+                if (!server.scopePermissions.users) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Users scope not authorized for this server. Current scopes: postings=${server.scopePermissions.postings}, geolocation=${server.scopePermissions.geolocation}, chat=${server.scopePermissions.chat}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify signature
+                val signatureValid = federationService.verifyServerSignature(
+                    serverId = request.requestingServerId,
+                    data = "${request.requestingServerId}|${request.timestamp}",
+                    signature = request.signature
+                )
+
+                if (!signatureValid) {
+                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Invalid signature",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Get users for sync with pagination
+                val (users, totalCount) = federatedUserDao.getLocalUsersForSync(
+                    page = request.page,
+                    pageSize = request.pageSize.coerceAtMost(100), // Cap at 100
+                    updatedSince = request.updatedSince
+                )
+
+                // Log federation event
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.USER_SYNC,
+                    serverId = request.requestingServerId,
+                    action = "user_sync",
+                    outcome = FederationOutcome.SUCCESS,
+                    details = mapOf(
+                        "page" to request.page,
+                        "pageSize" to request.pageSize,
+                        "updatedSince" to request.updatedSince?.toString(),
+                        "usersReturned" to users.size,
+                        "totalCount" to totalCount
+                    )
+                )
+
+                call.respond(HttpStatusCode.OK, FederationApiResponse<UserSyncResponse>(
+                    success = true,
+                    data = UserSyncResponse(
+                        users = users,
+                        totalCount = totalCount,
+                        page = request.page,
+                        hasMore = (request.page + 1) * request.pageSize < totalCount
+                    ),
+                    error = null,
                     timestamp = System.currentTimeMillis()
                 ))
-                return@post
-            }
 
-            call.respond(HttpStatusCode.NotImplemented, FederationApiResponse(
-                success = false,
-                data = null,
-                error = "User sync not yet implemented",
-                timestamp = System.currentTimeMillis()
-            ))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                
+                // Log failure
+                val serverId = try {
+                    call.receive<UserSyncRequest>().requestingServerId
+                } catch (e2: Exception) {
+                    "unknown"
+                }
+                
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.USER_SYNC,
+                    serverId = serverId,
+                    action = "user_sync",
+                    outcome = FederationOutcome.FAILURE,
+                    details = null,
+                    errorMessage = e.message
+                )
+                
+                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Failed to sync users: ${e.message}",
+                    timestamp = System.currentTimeMillis()
+                ))
+            }
         }
 
         /**
          * GET /federation/v1/users/nearby
          * Receives geolocation-based user search requests from federated servers.
-         * TODO: Implement when geolocation scope is approved
+         * Searches local users by location and returns sanitized profiles.
          */
         get("/users/nearby") {
             val serverId = call.request.queryParameters["serverId"] ?: ""
@@ -156,7 +275,6 @@ fun Route.federationRoutes() {
                 ?: System.currentTimeMillis()
 
             // Require geolocation scope for this endpoint
-            // TODO: Fetch server from DAO and verify geolocation scope
             if (serverId.isBlank()) {
                 call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
                     success = false,
@@ -167,36 +285,66 @@ fun Route.federationRoutes() {
                 return@get
             }
 
-            // For now, block all geolocation requests until scope verification is implemented
-            call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                success = false,
-                data = null,
-                error = "Geolocation scope not authorized for this server",
-                timestamp = System.currentTimeMillis()
-            ))
-            return@get
+            // Fetch server from DAO and verify geolocation scope
+            val server = try {
+                federationDao.getFederatedServer(serverId)
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Failed to retrieve server information: ${e.message}",
+                    timestamp = System.currentTimeMillis()
+                ))
+                return@get
+            }
 
-            call.respond(HttpStatusCode.NotImplemented, FederationApiResponse(
-                success = false,
-                data = null,
-                error = "Federated user search not yet implemented",
-                timestamp = System.currentTimeMillis()
-            ))
-        }
+            if (server == null) {
+                call.respond(HttpStatusCode.NotFound, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Server not found. Please initiate handshake first.",
+                    timestamp = System.currentTimeMillis()
+                ))
+                return@get
+            }
 
-        /**
-         * POST /federation/v1/messages/relay
-         * Receives message relay requests for cross-server chat.
-         * TODO: Implement when chat scope is approved
-         */
-        post("/messages/relay") {
-            val request = call.receive<MessageRelayRequest>()
+            // Verify server is active and trusted
+            if (!server.isActive) {
+                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Server is not active",
+                    timestamp = System.currentTimeMillis()
+                ))
+                return@get
+            }
+
+            if (server.trustLevel == TrustLevel.BLOCKED) {
+                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Server is blocked",
+                    timestamp = System.currentTimeMillis()
+                ))
+                return@get
+            }
+
+            // Verify geolocation scope is granted
+            if (!server.scopePermissions.geolocation) {
+                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Geolocation scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, postings=${server.scopePermissions.postings}, chat=${server.scopePermissions.chat}",
+                    timestamp = System.currentTimeMillis()
+                ))
+                return@get
+            }
 
             // Verify signature
             val signatureValid = federationService.verifyServerSignature(
-                serverId = request.requestingServerId,
-                data = "${request.requestingServerId}|${request.timestamp}|${request.encryptedPayload}",
-                signature = request.signature
+                serverId = serverId,
+                data = "$serverId|$lat|$lon|$radius|$timestamp",
+                signature = signature
             )
 
             if (!signatureValid) {
@@ -206,68 +354,521 @@ fun Route.federationRoutes() {
                     error = "Invalid signature",
                     timestamp = System.currentTimeMillis()
                 ))
-                return@post
+                return@get
             }
 
-            call.respond(HttpStatusCode.NotImplemented, FederationApiResponse(
-                success = false,
-                data = null,
-                error = "Message relay not yet implemented",
-                timestamp = System.currentTimeMillis()
-            ))
-        }
-
-        /**
-         * GET /federation/v1/postings/search
-         * Receives posting search requests from federated servers.
-         * TODO: Implement when postings scope is approved
-         */
-        get("/postings/search") {
-            val serverId = call.request.queryParameters["serverId"] ?: ""
-            val query = call.request.queryParameters["q"] ?: ""
-            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
-            val signature = call.request.queryParameters["signature"] ?: ""
-            val timestamp = call.request.queryParameters["timestamp"]?.toLongOrNull()
-                ?: System.currentTimeMillis()
-
-            // Require postings scope for this endpoint
-            // TODO: Fetch from DAO and check scopes
-
-            if (serverId.isBlank() || query.isBlank()) {
+            // Validate coordinates
+            if (lat == null || lon == null) {
                 call.respond(HttpStatusCode.BadRequest, FederationApiResponse(
                     success = false,
                     data = null,
-                    error = "Missing required parameters",
+                    error = "Invalid coordinates. Both lat and lon are required.",
                     timestamp = System.currentTimeMillis()
                 ))
                 return@get
             }
 
-            call.respond(HttpStatusCode.NotImplemented, FederationApiResponse(
-                success = false,
-                data = null,
-                error = "Federated posting search not yet implemented",
-                timestamp = System.currentTimeMillis()
-            ))
+            // Perform geolocation search
+            try {
+                val nearbyUsers = userProfileDao.getNearbyProfiles(
+                    latitude = lat,
+                    longitude = lon,
+                    radiusMeters = radius * 1000, // Convert km to meters
+                    excludeUserId = null
+                )
+
+                // Convert to federated user profiles
+                val federatedProfiles = nearbyUsers.map { userWithDistance ->
+                    val profile = userWithDistance.profile
+                    
+                    // Get online status from activity cache
+                    val isOnline = try {
+                        UserActivityCache.isOnline(profile.userId)
+                    } catch (e: Exception) {
+                        false
+                    }
+                    
+                    FederatedUserProfile(
+                        userId = profile.userId,
+                        name = profile.name,
+                        bio = null, // Not exposing bio in federation for privacy
+                        profileImageUrl = null, // Not exposing images for bandwidth
+                        location = if (profile.latitude != null && profile.longitude != null) {
+                            FederatedLocation(
+                                lat = profile.latitude!!,
+                                lon = profile.longitude!!,
+                                city = null, // Not implemented
+                                country = null // Not implemented
+                            )
+                        } else null,
+                        attributes = profile.attributes.map { it.attributeId }, // Just the attribute IDs
+                        lastOnline = if (isOnline) java.time.Instant.now() else null
+                    )
+                }
+
+                // Log federation event
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.USER_SEARCH,
+                    serverId = serverId,
+                    action = "geolocation_search",
+                    outcome = FederationOutcome.SUCCESS,
+                    details = mapOf(
+                        "lat" to lat,
+                        "lon" to lon,
+                        "radius" to radius,
+                        "resultsCount" to federatedProfiles.size
+                    )
+                )
+
+                call.respond(HttpStatusCode.OK, FederationApiResponse(
+                    success = true,
+                    data = UserSearchResponse(
+                        users = federatedProfiles,
+                        count = federatedProfiles.size
+                    ),
+                    error = null,
+                    timestamp = System.currentTimeMillis()
+                ))
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.USER_SEARCH,
+                    serverId = serverId,
+                    action = "geolocation_search",
+                    outcome = FederationOutcome.FAILURE,
+                    details = null,
+                    errorMessage = e.message
+                )
+                
+                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Failed to perform geolocation search: ${e.message}",
+                    timestamp = System.currentTimeMillis()
+                ))
+            }
+        }
+
+        /**
+         * POST /federation/v1/messages/relay
+         * Receives message relay requests for cross-server chat.
+         * Relays encrypted messages from federated servers to local users.
+         */
+        post("/messages/relay") {
+            try {
+                val request = call.receive<MessageRelayRequest>()
+
+                // Fetch server from DAO and verify chat scope
+                val server = try {
+                    federationDao.getFederatedServer(request.requestingServerId)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Failed to retrieve server information: ${e.message}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                if (server == null) {
+                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server not found. Please initiate handshake first.",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify server is active and trusted
+                if (!server.isActive) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is not active",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                if (server.trustLevel == TrustLevel.BLOCKED) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is blocked",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify chat scope is granted
+                if (!server.scopePermissions.chat) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Chat scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, postings=${server.scopePermissions.postings}, geolocation=${server.scopePermissions.geolocation}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Verify signature
+                val signatureValid = federationService.verifyServerSignature(
+                    serverId = request.requestingServerId,
+                    data = "${request.requestingServerId}|${request.timestamp}|${request.encryptedPayload}",
+                    signature = request.signature
+                )
+
+                if (!signatureValid) {
+                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Invalid signature",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Check if recipient user exists on this server
+                val recipientProfile = try {
+                    userProfileDao.getProfile(request.recipientUserId)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                        success = false,
+                        data = MessageRelayResponse(
+                            delivered = false,
+                            messageId = null,
+                            reason = "Failed to lookup recipient: ${e.message}"
+                        ),
+                        error = null,
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                if (recipientProfile == null) {
+                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
+                        success = false,
+                        data = MessageRelayResponse(
+                            delivered = false,
+                            messageId = null,
+                            reason = "Recipient user not found on this server"
+                        ),
+                        error = null,
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@post
+                }
+
+                // Try to deliver message in real-time if user is connected
+                val recipientConnection = connectionManager.getConnection(request.recipientUserId)
+                val messageId = java.util.UUID.randomUUID().toString()
+
+                if (recipientConnection != null && connectionManager.isConnected(request.recipientUserId)) {
+                    // User is online - deliver via WebSocket
+                    try {
+                        val chatData = org.barter.features.chat.model.ChatMessageData(
+                            id = messageId,
+                            senderId = "${request.senderUserId}@${server.serverId}", // Federated user ID format
+                            senderName = server.serverName ?: "Unknown Server", // Use server name as sender display name
+                            recipientId = request.recipientUserId,
+                            encryptedPayload = request.encryptedPayload,
+                            timestamp = request.timestamp.toString()
+                        )
+                        
+                        val relayedMessage = org.barter.features.chat.model.ClientChatMessage(
+                            data = chatData
+                        )
+
+                        recipientConnection.session.send(
+                            io.ktor.websocket.Frame.Text(
+                                kotlinx.serialization.json.Json.encodeToString(
+                                    org.barter.features.chat.model.SocketMessage.serializer(),
+                                    relayedMessage
+                                )
+                            )
+                        )
+
+                        // Log successful delivery
+                        federationService.logFederationEvent(
+                            eventType = FederationEventType.MESSAGE_RELAY,
+                            serverId = request.requestingServerId,
+                            action = "message_relay_realtime",
+                            outcome = FederationOutcome.SUCCESS,
+                            details = mapOf(
+                                "recipientUserId" to request.recipientUserId,
+                                "senderUserId" to request.senderUserId,
+                                "messageId" to messageId,
+                                "deliveryMethod" to "websocket"
+                            )
+                        )
+
+                        call.respond(HttpStatusCode.OK, FederationApiResponse<MessageRelayResponse>(
+                            success = true,
+                            data = MessageRelayResponse(
+                                delivered = true,
+                                messageId = messageId,
+                                reason = null
+                            ),
+                            error = null,
+                            timestamp = System.currentTimeMillis()
+                        ))
+
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        
+                        // WebSocket delivery failed, fall back to offline storage
+                        storeAsOfflineMessage(
+                            request = request,
+                            messageId = messageId,
+                            serverName = server.serverName ?: "Unknown Server",
+                            offlineMessageDao = offlineMessageDao,
+                            federationService = federationService
+                        )
+
+                        call.respond(HttpStatusCode.OK, FederationApiResponse<MessageRelayResponse>(
+                            success = true,
+                            data = MessageRelayResponse(
+                                delivered = false,
+                                messageId = messageId,
+                                reason = "Stored for offline delivery (WebSocket error)"
+                            ),
+                            error = null,
+                            timestamp = System.currentTimeMillis()
+                        ))
+                    }
+                } else {
+                    // User is offline - store for later delivery
+                    storeAsOfflineMessage(
+                        request = request,
+                        messageId = messageId,
+                        serverName = server.serverName ?: "Unknown Server",
+                        offlineMessageDao = offlineMessageDao,
+                        federationService = federationService
+                    )
+
+                    call.respond(HttpStatusCode.OK, FederationApiResponse<MessageRelayResponse>(
+                        success = true,
+                        data = MessageRelayResponse(
+                            delivered = false,
+                            messageId = messageId,
+                            reason = "User offline, stored for delivery when online"
+                        ),
+                        error = null,
+                        timestamp = System.currentTimeMillis()
+                    ))
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Failed to relay message: ${e.message}",
+                    timestamp = System.currentTimeMillis()
+                ))
+            }
+        }
+
+        /**
+         * GET /federation/v1/postings/search
+         * Receives posting search requests from federated servers.
+         * Searches local postings and returns matching results.
+         */
+        get("/postings/search") {
+            try {
+                val serverId = call.request.queryParameters["serverId"] ?: ""
+                val query = call.request.queryParameters["q"] ?: ""
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
+                val isOffer = call.request.queryParameters["isOffer"]?.toBooleanStrictOrNull()
+                val signature = call.request.queryParameters["signature"] ?: ""
+                val timestamp = call.request.queryParameters["timestamp"]?.toLongOrNull()
+                    ?: System.currentTimeMillis()
+
+                // Require postings scope for this endpoint
+                if (serverId.isBlank() || query.isBlank()) {
+                    call.respond(HttpStatusCode.BadRequest, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Missing required parameters: serverId and query are required",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                // Fetch server from DAO and verify postings scope
+                val server = try {
+                    federationDao.getFederatedServer(serverId)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Failed to retrieve server information: ${e.message}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                if (server == null) {
+                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server not found. Please initiate handshake first.",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                // Verify server is active and trusted
+                if (!server.isActive) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is not active",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                if (server.trustLevel == TrustLevel.BLOCKED) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Server is blocked",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                // Verify postings scope is granted
+                if (!server.scopePermissions.postings) {
+                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Postings scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, geolocation=${server.scopePermissions.geolocation}, chat=${server.scopePermissions.chat}",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                // Verify signature
+                val signatureValid = federationService.verifyServerSignature(
+                    serverId = serverId,
+                    data = "$serverId|$query|$limit|$timestamp",
+                    signature = signature
+                )
+
+                if (!signatureValid) {
+                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
+                        success = false,
+                        data = null,
+                        error = "Invalid signature",
+                        timestamp = System.currentTimeMillis()
+                    ))
+                    return@get
+                }
+
+                // Perform search on local postings
+                val searchResults = postingDao.searchPostings(
+                    searchText = query,
+                    latitude = null, // Don't filter by location for federated searches
+                    longitude = null,
+                    radiusMeters = null,
+                    isOffer = isOffer,
+                    limit = limit.coerceAtMost(100) // Cap at 100 to prevent abuse
+                )
+
+                // Convert to federated posting data
+                val federatedPostings = searchResults.map { postingWithDistance ->
+                    val posting = postingWithDistance.posting
+                    FederatedPostingData(
+                        postingId = posting.id,
+                        userId = posting.userId,
+                        title = posting.title,
+                        description = posting.description,
+                        value = posting.value?.toBigDecimal(),
+                        imageUrls = posting.imageUrls,
+                        isOffer = posting.isOffer,
+                        status = posting.status.name,
+                        attributes = posting.attributes.map { it.attributeId },
+                        createdAt = posting.createdAt,
+                        expiresAt = posting.expiresAt
+                    )
+                }
+
+                // Log federation event
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.POSTING_SEARCH,
+                    serverId = serverId,
+                    action = "posting_search",
+                    outcome = FederationOutcome.SUCCESS,
+                    details = mapOf(
+                        "query" to query,
+                        "isOffer" to isOffer,
+                        "limit" to limit,
+                        "resultsCount" to federatedPostings.size
+                    )
+                )
+
+                call.respond(HttpStatusCode.OK, FederationApiResponse<PostingSearchResponse>(
+                    success = true,
+                    data = PostingSearchResponse(
+                        postings = federatedPostings,
+                        count = federatedPostings.size,
+                        hasMore = searchResults.size >= limit // Indicate if there might be more results
+                    ),
+                    error = null,
+                    timestamp = System.currentTimeMillis()
+                ))
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                
+                // Log failure
+                val serverId = call.request.queryParameters["serverId"] ?: "unknown"
+                federationService.logFederationEvent(
+                    eventType = FederationEventType.POSTING_SEARCH,
+                    serverId = serverId,
+                    action = "posting_search",
+                    outcome = FederationOutcome.FAILURE,
+                    details = null,
+                    errorMessage = e.message
+                )
+                
+                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
+                    success = false,
+                    data = null,
+                    error = "Failed to search postings: ${e.message}",
+                    timestamp = System.currentTimeMillis()
+                ))
+            }
         }
     }
 }
 
 /**
  * Admin routes for managing federation (called by local admins, not federated servers).
- * TODO: Add authentication
+ * Now protected with admin authentication.
  */
 fun Route.federationAdminRoutes() {
 
     val federationService by inject<FederationService>()
+    val authenticationDao by inject<AuthenticationDao>()
 
     route("/api/v1/federation/admin") {
 
         /**
          * POST /api/v1/federation/admin/initialize
          * Initializes the local server identity.
+         * Requires admin authentication.
          */
         post("/initialize") {
+            // Verify admin access
+            val adminUserId = call.verifyAdminAccess(authenticationDao) ?: return@post
+            
             try {
                 val request = call.receive<InitializeServerRequest>()
 
@@ -305,8 +906,12 @@ fun Route.federationAdminRoutes() {
         /**
          * GET /api/v1/federation/admin/servers
          * Lists all federated servers.
+         * Requires admin authentication.
          */
         get("/servers") {
+            // Verify admin access
+            val adminUserId = call.verifyAdminAccess(authenticationDao) ?: return@get
+            
             try {
                 val trustLevel = call.request.queryParameters["trustLevel"]?.let {
                     try { TrustLevel.valueOf(it.uppercase()) } catch (e: Exception) { null }
@@ -349,8 +954,12 @@ fun Route.federationAdminRoutes() {
         /**
          * POST /api/v1/federation/admin/servers/{serverId}/trust
          * Updates trust level for a server.
+         * Requires admin authentication.
          */
         post("/servers/{serverId}/trust") {
+            // Verify admin access
+            val adminUserId = call.verifyAdminAccess(authenticationDao) ?: return@post
+            
             try {
                 val serverId = call.parameters["serverId"]!!
                 val request = call.receive<UpdateTrustLevelRequest>()
@@ -400,8 +1009,12 @@ fun Route.federationAdminRoutes() {
         /**
          * POST /api/v1/federation/admin/handshake
          * Initiates handshake with another server.
+         * Requires admin authentication.
          */
         post("/handshake") {
+            // Verify admin access
+            val adminUserId = call.verifyAdminAccess(authenticationDao) ?: return@post
+            
             try {
                 val request = call.receive<InitiateHandshakeRequest>()
 
@@ -432,4 +1045,55 @@ fun Route.federationAdminRoutes() {
             }
         }
     }
+}
+
+/**
+ * Helper function to store a federated message for offline delivery.
+ */
+private suspend fun storeAsOfflineMessage(
+    request: MessageRelayRequest,
+    messageId: String,
+    serverName: String,
+    offlineMessageDao: org.barter.features.chat.dao.OfflineMessageDao,
+    federationService: FederationService
+) {
+    try {
+        val offlineMessage = org.barter.features.chat.model.OfflineMessageDto(
+            id = messageId,
+            senderId = "${request.senderUserId}@${request.requestingServerId}", // Federated user ID
+            recipientId = request.recipientUserId,
+            senderName = serverName, // Display server name as sender
+            encryptedPayload = request.encryptedPayload,
+            timestamp = request.timestamp,
+            delivered = false
+        )
+
+        offlineMessageDao.storeOfflineMessage(offlineMessage)
+
+        // Log offline storage
+        federationService.logFederationEvent(
+            eventType = FederationEventType.MESSAGE_RELAY,
+            serverId = request.requestingServerId,
+            action = "message_relay_offline",
+            outcome = FederationOutcome.SUCCESS,
+            details = mapOf(
+                "recipientUserId" to request.recipientUserId,
+                "senderUserId" to request.senderUserId,
+                "messageId" to messageId,
+                "deliveryMethod" to "offline_storage"
+            )
+        )
+    } catch (e: Exception) {
+        e.printStackTrace()
+
+        federationService.logFederationEvent(
+            eventType = FederationEventType.MESSAGE_RELAY,
+            serverId = request.requestingServerId,
+            action = "message_relay_offline",
+            outcome = FederationOutcome.FAILURE,
+            details = null,
+            errorMessage = "Failed to store offline message: ${e.message}"
+        )
+    }
+
 }
