@@ -5,6 +5,7 @@ import io.ktor.server.routing.*
 
 fun Application.relationshipsRoutes() {
     routing {
+        // Relationship management
         createRelationshipRoute()
         removeRelationshipRoute()
         getUserRelationshipsRoute()
@@ -14,5 +15,18 @@ fun Application.relationshipsRoutes() {
         getRelationshipStatsRoute()
         checkRelationshipRoute()
         getFavoritedProfilesRoute()
+        
+        // User blocking
+        blockUserRoute()
+        unblockUserRoute()
+        checkIsBlockedRoute()
+        getBlockedUsersRoute()
+        getBlockedByUsersRoute()
+        
+        // User reporting
+        createUserReportRoute()
+        getUserReportsRoute()
+        checkHasReportedRoute()
+        getUserReportStatsRoute()
     }
 }

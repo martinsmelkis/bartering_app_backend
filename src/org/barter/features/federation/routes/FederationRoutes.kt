@@ -1,6 +1,7 @@
 package org.barter.features.federation.routes
 
 import io.ktor.http.*
+import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -126,77 +127,18 @@ fun Route.federationRoutes() {
             try {
                 val request = call.receive<UserSyncRequest>()
 
-                // Fetch server from DAO and verify users scope
-                val server = try {
-                    federationDao.getFederatedServer(request.requestingServerId)
-                } catch (e: Exception) {
-                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Failed to retrieve server information: ${e.message}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                if (server == null) {
-                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server not found. Please initiate handshake first.",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify server is active and trusted
-                if (!server.isActive) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is not active",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                if (server.trustLevel == TrustLevel.BLOCKED) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is blocked",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify users scope is granted
-                if (!server.scopePermissions.users) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Users scope not authorized for this server. Current scopes: postings=${server.scopePermissions.postings}, geolocation=${server.scopePermissions.geolocation}, chat=${server.scopePermissions.chat}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify signature
-                val signatureValid = federationService.verifyServerSignature(
+                // Validate federation request with all checks
+                val authResult = validateFederationRequest(
                     serverId = request.requestingServerId,
-                    data = "${request.requestingServerId}|${request.timestamp}",
-                    signature = request.signature
+                    requiredScope = ScopeType.USERS,
+                    signatureData = "${request.requestingServerId}|${request.timestamp}",
+                    signature = request.signature,
+                    federationDao = federationDao,
+                    federationService = federationService
                 )
-
-                if (!signatureValid) {
-                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Invalid signature",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
+                
+                if (call.handleAuthFailure(authResult)) return@post
+                val server = (authResult as FederationAuthResult.Success).server
 
                 // Get users for sync with pagination
                 val (users, totalCount) = federatedUserDao.getLocalUsersForSync(
@@ -274,9 +216,9 @@ fun Route.federationRoutes() {
             val timestamp = call.request.queryParameters["timestamp"]?.toLongOrNull()
                 ?: System.currentTimeMillis()
 
-            // Require geolocation scope for this endpoint
+            // Require server ID
             if (serverId.isBlank()) {
-                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
+                call.respond(HttpStatusCode.BadRequest, FederationApiResponse(
                     success = false,
                     data = null,
                     error = "Server ID required for geolocation access",
@@ -285,77 +227,18 @@ fun Route.federationRoutes() {
                 return@get
             }
 
-            // Fetch server from DAO and verify geolocation scope
-            val server = try {
-                federationDao.getFederatedServer(serverId)
-            } catch (e: Exception) {
-                call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Failed to retrieve server information: ${e.message}",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
-
-            if (server == null) {
-                call.respond(HttpStatusCode.NotFound, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Server not found. Please initiate handshake first.",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
-
-            // Verify server is active and trusted
-            if (!server.isActive) {
-                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Server is not active",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
-
-            if (server.trustLevel == TrustLevel.BLOCKED) {
-                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Server is blocked",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
-
-            // Verify geolocation scope is granted
-            if (!server.scopePermissions.geolocation) {
-                call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Geolocation scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, postings=${server.scopePermissions.postings}, chat=${server.scopePermissions.chat}",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
-
-            // Verify signature
-            val signatureValid = federationService.verifyServerSignature(
+            // Validate federation request with all checks
+            val authResult = validateFederationRequest(
                 serverId = serverId,
-                data = "$serverId|$lat|$lon|$radius|$timestamp",
-                signature = signature
+                requiredScope = ScopeType.GEOLOCATION,
+                signatureData = "$serverId|$lat|$lon|$radius|$timestamp",
+                signature = signature,
+                federationDao = federationDao,
+                federationService = federationService
             )
-
-            if (!signatureValid) {
-                call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
-                    success = false,
-                    data = null,
-                    error = "Invalid signature",
-                    timestamp = System.currentTimeMillis()
-                ))
-                return@get
-            }
+            
+            if (call.handleAuthFailure(authResult)) return@get
+            val server = (authResult as FederationAuthResult.Success).server
 
             // Validate coordinates
             if (lat == null || lon == null) {
@@ -460,77 +343,18 @@ fun Route.federationRoutes() {
             try {
                 val request = call.receive<MessageRelayRequest>()
 
-                // Fetch server from DAO and verify chat scope
-                val server = try {
-                    federationDao.getFederatedServer(request.requestingServerId)
-                } catch (e: Exception) {
-                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Failed to retrieve server information: ${e.message}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                if (server == null) {
-                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server not found. Please initiate handshake first.",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify server is active and trusted
-                if (!server.isActive) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is not active",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                if (server.trustLevel == TrustLevel.BLOCKED) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is blocked",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify chat scope is granted
-                if (!server.scopePermissions.chat) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Chat scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, postings=${server.scopePermissions.postings}, geolocation=${server.scopePermissions.geolocation}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
-
-                // Verify signature
-                val signatureValid = federationService.verifyServerSignature(
+                // Validate federation request with all checks
+                val authResult = validateFederationRequest(
                     serverId = request.requestingServerId,
-                    data = "${request.requestingServerId}|${request.timestamp}|${request.encryptedPayload}",
-                    signature = request.signature
+                    requiredScope = ScopeType.CHAT,
+                    signatureData = "${request.requestingServerId}|${request.timestamp}|${request.encryptedPayload}",
+                    signature = request.signature,
+                    federationDao = federationDao,
+                    federationService = federationService
                 )
-
-                if (!signatureValid) {
-                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Invalid signature",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@post
-                }
+                
+                if (call.handleAuthFailure(authResult)) return@post
+                val server = (authResult as FederationAuthResult.Success).server
 
                 // Check if recipient user exists on this server
                 val recipientProfile = try {
@@ -688,7 +512,7 @@ fun Route.federationRoutes() {
                 val timestamp = call.request.queryParameters["timestamp"]?.toLongOrNull()
                     ?: System.currentTimeMillis()
 
-                // Require postings scope for this endpoint
+                // Validate required parameters
                 if (serverId.isBlank() || query.isBlank()) {
                     call.respond(HttpStatusCode.BadRequest, FederationApiResponse(
                         success = false,
@@ -699,77 +523,18 @@ fun Route.federationRoutes() {
                     return@get
                 }
 
-                // Fetch server from DAO and verify postings scope
-                val server = try {
-                    federationDao.getFederatedServer(serverId)
-                } catch (e: Exception) {
-                    call.respond(HttpStatusCode.InternalServerError, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Failed to retrieve server information: ${e.message}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
-
-                if (server == null) {
-                    call.respond(HttpStatusCode.NotFound, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server not found. Please initiate handshake first.",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
-
-                // Verify server is active and trusted
-                if (!server.isActive) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is not active",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
-
-                if (server.trustLevel == TrustLevel.BLOCKED) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Server is blocked",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
-
-                // Verify postings scope is granted
-                if (!server.scopePermissions.postings) {
-                    call.respond(HttpStatusCode.Forbidden, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Postings scope not authorized for this server. Current scopes: users=${server.scopePermissions.users}, geolocation=${server.scopePermissions.geolocation}, chat=${server.scopePermissions.chat}",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
-
-                // Verify signature
-                val signatureValid = federationService.verifyServerSignature(
+                // Validate federation request with all checks
+                val authResult = validateFederationRequest(
                     serverId = serverId,
-                    data = "$serverId|$query|$limit|$timestamp",
-                    signature = signature
+                    requiredScope = ScopeType.POSTINGS,
+                    signatureData = "$serverId|$query|$limit|$timestamp",
+                    signature = signature,
+                    federationDao = federationDao,
+                    federationService = federationService
                 )
-
-                if (!signatureValid) {
-                    call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
-                        success = false,
-                        data = null,
-                        error = "Invalid signature",
-                        timestamp = System.currentTimeMillis()
-                    ))
-                    return@get
-                }
+                
+                if (call.handleAuthFailure(authResult)) return@get
+                val server = (authResult as FederationAuthResult.Success).server
 
                 // Perform search on local postings
                 val searchResults = postingDao.searchPostings(
@@ -1044,6 +809,154 @@ fun Route.federationAdminRoutes() {
                 ))
             }
         }
+    }
+}
+
+/**
+ * Result of federation authorization check.
+ * Contains either the validated server or error response details.
+ */
+private sealed class FederationAuthResult {
+    data class Success(val server: FederatedServer) : FederationAuthResult()
+    data class Failure(
+        val statusCode: HttpStatusCode,
+        val error: String
+    ) : FederationAuthResult()
+}
+
+/**
+ * Retrieves and validates a federated server with comprehensive checks.
+ * 
+ * Performs the following validations:
+ * 1. Retrieves server from DAO (handles database errors)
+ * 2. Checks if server exists
+ * 3. Verifies server is active
+ * 4. Verifies server is not blocked
+ * 5. Verifies required scope permission
+ * 6. Verifies request signature
+ * 
+ * @param serverId The ID of the requesting server
+ * @param requiredScope The scope permission required for this endpoint (null to skip scope check)
+ * @param signatureData The data string used to generate the signature
+ * @param signature The signature to verify
+ * @param federationDao DAO for federation operations
+ * @param federationService Service for signature verification
+ * @return FederationAuthResult.Success with server or FederationAuthResult.Failure with error details
+ */
+private suspend fun validateFederationRequest(
+    serverId: String,
+    requiredScope: ScopeType? = null,
+    signatureData: String,
+    signature: String,
+    federationDao: FederationDao,
+    federationService: FederationService
+): FederationAuthResult {
+    
+    // 1. Retrieve server from DAO
+    val server = try {
+        federationDao.getFederatedServer(serverId)
+    } catch (e: Exception) {
+        return FederationAuthResult.Failure(
+            statusCode = HttpStatusCode.InternalServerError,
+            error = "Failed to retrieve server information: ${e.message}"
+        )
+    }
+    
+    // 2. Check if server exists
+    if (server == null) {
+        return FederationAuthResult.Failure(
+            statusCode = HttpStatusCode.NotFound,
+            error = "Server not found. Please initiate handshake first."
+        )
+    }
+    
+    // 3. Verify server is active
+    if (!server.isActive) {
+        return FederationAuthResult.Failure(
+            statusCode = HttpStatusCode.Forbidden,
+            error = "Server is not active"
+        )
+    }
+    
+    // 4. Verify server is not blocked
+    if (server.trustLevel == TrustLevel.BLOCKED) {
+        return FederationAuthResult.Failure(
+            statusCode = HttpStatusCode.Forbidden,
+            error = "Server is blocked"
+        )
+    }
+    
+    // 5. Verify required scope permission (if specified)
+    if (requiredScope != null) {
+        val hasScope = when (requiredScope) {
+            ScopeType.USERS -> server.scopePermissions.users
+            ScopeType.POSTINGS -> server.scopePermissions.postings
+            ScopeType.CHAT -> server.scopePermissions.chat
+            ScopeType.GEOLOCATION -> server.scopePermissions.geolocation
+            ScopeType.ATTRIBUTES -> server.scopePermissions.attributes
+        }
+        
+        if (!hasScope) {
+            val currentScopes = buildString {
+                append("users=${server.scopePermissions.users}, ")
+                append("postings=${server.scopePermissions.postings}, ")
+                append("chat=${server.scopePermissions.chat}, ")
+                append("geolocation=${server.scopePermissions.geolocation}, ")
+                append("attributes=${server.scopePermissions.attributes}")
+            }
+            
+            return FederationAuthResult.Failure(
+                statusCode = HttpStatusCode.Forbidden,
+                error = "${requiredScope.name.lowercase().replaceFirstChar { it.uppercase() }} scope not authorized for this server. Current scopes: $currentScopes"
+            )
+        }
+    }
+    
+    // 6. Verify signature
+    val signatureValid = federationService.verifyServerSignature(
+        serverId = serverId,
+        data = signatureData,
+        signature = signature
+    )
+    
+    if (!signatureValid) {
+        return FederationAuthResult.Failure(
+            statusCode = HttpStatusCode.Unauthorized,
+            error = "Invalid signature"
+        )
+    }
+    
+    return FederationAuthResult.Success(server)
+}
+
+/**
+ * Enum representing the different scope types.
+ */
+private enum class ScopeType {
+    USERS,
+    POSTINGS,
+    CHAT,
+    GEOLOCATION,
+    ATTRIBUTES
+}
+
+/**
+ * Extension function to handle FederationAuthResult and respond with error if needed.
+ * Returns true if validation failed (and response was sent), false if validation succeeded.
+ *
+ */
+private suspend fun ApplicationCall.handleAuthFailure(result: FederationAuthResult): Boolean {
+    return when (result) {
+        is FederationAuthResult.Failure -> {
+            respond(result.statusCode, FederationApiResponse<Nothing>(
+                success = false,
+                data = null,
+                error = result.error,
+                timestamp = System.currentTimeMillis()
+            ))
+            true
+        }
+        is FederationAuthResult.Success -> false
     }
 }
 
