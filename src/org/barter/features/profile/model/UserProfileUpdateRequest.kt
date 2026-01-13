@@ -11,5 +11,6 @@ data class UserProfileUpdateRequest(
     val latitude: Double? = 0.0,
     val longitude: Double? = 0.0,
     val attributes: List<UserAttributeDto>? = emptyList(),
-    val profileKeywordDataMap: Map<String, Double>? = emptyMap()
+    val profileKeywordDataMap: Map<String, Double>? = emptyMap(),
+    val preferredLanguage: String? = null // ISO 639-1 code: "en", "fr", "lv", etc.
 )

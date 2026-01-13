@@ -128,7 +128,8 @@ fun Route.updateProfileRoute() {
                     newLatitude,
                     newLongitude,
                     request.attributes,
-                    request.profileKeywordDataMap
+                    request.profileKeywordDataMap,
+                    request.preferredLanguage
                 )
             )
 

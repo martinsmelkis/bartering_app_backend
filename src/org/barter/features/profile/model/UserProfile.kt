@@ -14,7 +14,8 @@ data class UserProfile(
     val attributes: List<UserAttributeDto>,
     val profileKeywordDataMap: Map<String, Double>?,
     val activePostingIds: List<String> = emptyList(),
-    val isOnline: Boolean = false
+    val isOnline: Boolean = false,
+    val preferredLanguage: String = "en"
 )
 
 

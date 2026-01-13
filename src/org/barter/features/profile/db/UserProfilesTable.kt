@@ -13,7 +13,11 @@ object UserProfilesTable : Table("user_profiles") {
 
     val name = varchar("name", 255).nullable()
 
-    // TODO self-description, images, language, maybe more
+    // User's preferred language (ISO 639-1 code: "en", "fr", "lv", "es", etc.)
+    // Used for UI localization, matching, and federation
+    val preferredLanguage = varchar("preferred_language", 10).default("en")
+
+    // TODO self-description, images, maybe more
     // A single, indexable geography column is vastly more efficient
     // than separate lat/lon columns. 4326 is the standard SRID for GPS (WGS 84).
     val location = point("location", srid = 4326).nullable()

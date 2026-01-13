@@ -55,11 +55,21 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     -- Onboarding format - Map: Keyword and associated weight
     profile_keywords_with_weights jsonb NOT NULL,
 
+    preferred_language VARCHAR(10) NOT NULL DEFAULT 'en',
+
     CONSTRAINT fk_user_profile_user
         FOREIGN KEY(user_id)
         REFERENCES user_registration_data(id)  -- Enforces the one-to-one link.
         ON DELETE CASCADE    -- If a user is deleted, their profile is also deleted.
 );
+
+-- Index for language-based queries (optional but helpful for matching)
+CREATE INDEX IF NOT EXISTS idx_user_profiles_language
+ON user_profiles(preferred_language);
+
+-- Comment for documentation
+COMMENT ON COLUMN user_profiles.preferred_language IS 'User preferred language (ISO 639-1 code: en, fr, lv, etc.) for UI localization and matching';
+
 
 -- This table stores the calculated semantic profile vectors for each user.
 CREATE TABLE user_semantic_profiles (

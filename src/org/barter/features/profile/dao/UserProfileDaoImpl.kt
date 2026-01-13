@@ -1,5 +1,6 @@
 package org.barter.features.profile.dao
 
+import jdk.jfr.internal.Logger.log
 import org.barter.config.AiConfig
 import org.barter.extensions.DatabaseFactory.dbQuery
 import org.barter.features.attributes.db.UserAttributesTable
@@ -11,6 +12,7 @@ import kotlinx.serialization.json.Json
 import net.postgis.jdbc.geometry.Point
 import org.barter.features.attributes.dao.AttributesDaoImpl
 import org.barter.features.attributes.model.UserAttributeType
+import org.barter.features.categories.dao.CategoriesDaoImpl
 import org.barter.features.profile.db.UserProfilesTable
 import org.barter.features.profile.db.UserRegistrationDataTable
 import org.barter.features.profile.db.UserSemanticProfilesTable
@@ -62,12 +64,13 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.user_id,
                 up.name,
                 up.location,
-                up.profile_keywords_with_weights::text as profile_keywords_with_weights
+                up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.preferred_language
             FROM user_profiles up
             WHERE up.user_id = ?
         """.trimIndent()
 
-        var profileData: Pair<String, Pair<Double?, Double?>?>? = null
+        var profileData: Triple<String, Pair<Double?, Double?>?, String>? = null
         var profileKeywords: Map<String, Double>? = null
 
         TransactionManager.current().connection.prepareStatement(profileQuery, false)
@@ -76,6 +79,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 val rs = statement.executeQuery()
                 if (rs.next()) {
                     val name = rs.getString("name") ?: ""
+                    val preferredLanguage = rs.getString("preferred_language") ?: "en"
                     val keywordsJson = rs.getString("profile_keywords_with_weights")
 
                     profileKeywords = if (keywordsJson != null) {
@@ -91,13 +95,13 @@ class UserProfileDaoImpl : UserProfileDao {
                     // Parse location from string
                     val (longitude, latitude) = parseLocation(rs)
 
-                    profileData = name to (longitude to latitude)
+                    profileData = Triple(name, longitude to latitude, preferredLanguage)
                 } else {
                     return@dbQuery null
                 }
             }
 
-        val (name, locationPair) = profileData ?: return@dbQuery null
+        val (name, locationPair, preferredLanguage) = profileData ?: return@dbQuery null
         val (longitude, latitude) = locationPair ?: (null to null)
 
         // Now fetch attributes using Exposed (this works fine)
@@ -137,7 +141,8 @@ class UserProfileDaoImpl : UserProfileDao {
             longitude = longitude,
             attributes = attributesWithHints,
             profileKeywordDataMap = profileKeywords,
-            activePostingIds = activePostingIds
+            activePostingIds = activePostingIds,
+            preferredLanguage = preferredLanguage
         )
     }
 
@@ -200,6 +205,20 @@ class UserProfileDaoImpl : UserProfileDao {
             else -> existingName
         }
 
+        val extendedMap: HashMap<String, Double> = hashMapOf()
+        if (request.profileKeywordDataMap?.isNotEmpty() == true) {
+            val categoriesDao: CategoriesDaoImpl by inject(CategoriesDaoImpl::class.java)
+            // Fetch main categories from the database, ordered by ID to maintain consistent order
+            val mainCategories = categoriesDao.findAllMainCategoriesWithDescriptions()
+                .sortedBy { it.id } // Sort by ID to maintain the order they were inserted
+            request.profileKeywordDataMap.values.onEachIndexed { index, value ->
+                // Use the category description from the database (maintains order by ID)
+                if (index < mainCategories.size) {
+                    extendedMap[mainCategories[index].description] = value
+                }
+            }
+        }
+
         UserProfilesTable.upsert { table ->
             table[UserProfilesTable.userId] = userId
             table[UserProfilesTable.name] = finalName
@@ -210,8 +229,11 @@ class UserProfileDaoImpl : UserProfileDao {
                 table[location] = Point(request.longitude, request.latitude)
                     .also { p -> p.srid = 4326 }
             }
-            request.profileKeywordDataMap?.let { _ ->
-                table[UserProfilesTable.profileKeywordDataMap] = request.profileKeywordDataMap
+            if (extendedMap.isNotEmpty()) {
+                table[profileKeywordDataMap] = extendedMap
+            }
+            request.preferredLanguage?.let { lang ->
+                table[UserProfilesTable.preferredLanguage] = lang
             }
             // Update timestamp for federation sync
             table[UserProfilesTable.updatedAt] = java.time.Instant.now()
