@@ -55,8 +55,6 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     -- Onboarding format - Map: Keyword and associated weight
     profile_keywords_with_weights jsonb NOT NULL,
 
-    last_online TIMESTAMPTZ, -- Stores the timestamp of the user's last known activity
-
     CONSTRAINT fk_user_profile_user
         FOREIGN KEY(user_id)
         REFERENCES user_registration_data(id)  -- Enforces the one-to-one link.

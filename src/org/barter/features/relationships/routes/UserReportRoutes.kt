@@ -45,13 +45,11 @@ fun Route.createUserReportRoute() {
             }
 
             // Validate report reason
-            val reportReason = ReportReason.fromString(request.reportReason)
-            if (reportReason == null) {
-                return@post call.respond(
+            val reportReason =
+                ReportReason.fromString(request.reportReason) ?: return@post call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to "Invalid report reason: ${request.reportReason}")
                 )
-            }
 
             // Validate context type if provided
             val contextType = request.contextType?.let { ReportContextType.fromString(it) }

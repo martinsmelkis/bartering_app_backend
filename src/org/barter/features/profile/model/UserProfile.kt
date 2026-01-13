@@ -13,7 +13,8 @@ data class UserProfile(
     var longitude: Double?,
     val attributes: List<UserAttributeDto>,
     val profileKeywordDataMap: Map<String, Double>?,
-    val activePostingIds: List<String> = emptyList()
+    val activePostingIds: List<String> = emptyList(),
+    val isOnline: Boolean = false
 )
 
 

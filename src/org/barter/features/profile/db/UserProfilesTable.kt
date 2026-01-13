@@ -22,14 +22,12 @@ object UserProfilesTable : Table("user_profiles") {
     // This requires the `kotlinx.serialization` plugin and the `exposed-json` dependency.
     val profileKeywordDataMap = jsonb(
         name = "profile_keywords_with_weights",
-        serialize = { Json.Default.encodeToString(it) },
+        serialize = { Json.encodeToString(it) },
         deserialize = {
             val decoded: Map<String, Double> = Json.Default.decodeFromString(it)
             decoded
         }
     ).nullable()
-
-    val lastOnlineTimestamp = timestamp("last_online").default(Instant.now())
 
     // Federation support
     val federationEnabled = bool("federation_enabled").default(true)

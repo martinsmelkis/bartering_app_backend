@@ -48,7 +48,7 @@ if (transaction?.status != TransactionStatus.DONE) {
 **Effect**: Reviews can only come from actual completed transactions, not arbitrary accounts.
 
 #### ✅ Account Age Threshold
-**Implementation**: Minimum 14-day account age to leave reviews
+**Implementation**: Minimum 7-day account age to leave reviews
 
 ```kotlin
 val accountAge = getAccountAge(reviewerId)

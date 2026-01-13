@@ -348,8 +348,8 @@ class UserProfileDaoImpl : UserProfileDao {
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
         println("@@@@@@@@@@ Found ${results.size} nearby profiles")
         
-        // Apply online boost to results
-        applyOnlineBoost(results)
+        // Apply online boost and set online status
+        applyOnlineBoostAndStatus(results)
     }
 
     override suspend fun getSimilarProfiles(
@@ -537,8 +537,8 @@ class UserProfileDaoImpl : UserProfileDao {
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
         //println("@@@@@@@@@ Found similar profiles: $results")
         
-        // Apply online boost to results
-        applyOnlineBoost(results)
+        // Apply online boost and set online status
+        applyOnlineBoostAndStatus(results)
     }
 
     /**
@@ -792,8 +792,8 @@ class UserProfileDaoImpl : UserProfileDao {
         println("@@@@@@@@@@ Search complete: Found ${results.size} total profiles matching '$searchText' " +
                     "(semantic enhancement: $useSemanticEnhancement)")
         
-        // Apply online boost to results
-        applyOnlineBoost(results)
+        // Apply online boost and set online status
+        applyOnlineBoostAndStatus(results)
     }
 
     /**
@@ -1472,7 +1472,7 @@ class UserProfileDaoImpl : UserProfileDao {
     }
     
     /**
-     * Apply online boost to user profiles.
+     * Apply online boost to user profiles and set online status.
      * Users who are currently online get a small boost to their relevancy score,
      * making them appear slightly higher in search results.
      * 
@@ -1482,26 +1482,29 @@ class UserProfileDaoImpl : UserProfileDao {
      * - Only processes users already in results
      * 
      * @param profiles List of profiles to boost
-     * @return Same list with boosted scores for online users
+     * @return Same list with boosted scores and online status set for online users
      */
-    private fun applyOnlineBoost(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
+    private fun applyOnlineBoostAndStatus(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
         if (profiles.isEmpty()) return profiles
         
         // Batch check online status (very efficient)
         val userIds = profiles.map { it.profile.userId }
         val onlineStatuses = org.barter.features.profile.cache.UserActivityCache.getBatchOnlineStatus(userIds)
         
-        // Apply boost to online users
+        // Apply boost to online users and set online status on the UserProfile
         return profiles.map { profileWithDistance ->
             val isOnline = onlineStatuses[profileWithDistance.profile.userId] ?: false
+            
+            // Update the UserProfile with online status
+            val updatedProfile = profileWithDistance.profile.copy(isOnline = isOnline)
             
             if (isOnline && profileWithDistance.matchRelevancyScore != null) {
                 println("@@@@@@@@@ user is online: ${profileWithDistance.profile.userId}")
                 // Boost the relevancy score for online users
                 val boostedScore = (profileWithDistance.matchRelevancyScore + ONLINE_BOOST).coerceAtMost(1.0)
-                profileWithDistance.copy(matchRelevancyScore = boostedScore)
+                profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)
             } else {
-                profileWithDistance
+                profileWithDistance.copy(profile = updatedProfile)
             }
         }
     }
