@@ -1,4 +1,4 @@
-# Chat Notifications Implementation Guide
+﻿# Chat Notifications Implementation Guide
 
 ## Multi-Platform Solution for Flutter (Android, iOS, Web)
 
@@ -71,7 +71,7 @@ dependencies {
 ### Step 2: Create FCM Service
 
 ```kotlin:src/org/barter/features/chat/fcm/FCMService.kt
-package org.barter.features.chat.fcm
+package app.bartering.features.chat.fcm
 
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.firebase.FirebaseApp
@@ -200,10 +200,10 @@ class FCMService {
 ### Step 3: Create Device Token DAO
 
 ```kotlin:src/org/barter/features/chat/dao/DeviceTokenDao.kt
-package org.barter.features.chat.dao
+package app.bartering.features.chat.dao
 
-import org.barter.extensions.DatabaseFactory.dbQuery
-import org.barter.features.chat.db.DeviceTokensTable
+import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.chat.db.DeviceTokensTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 
@@ -269,13 +269,13 @@ class DeviceTokenDaoImpl : DeviceTokenDao {
 ### Step 4: Create Database Table
 
 ```kotlin:src/org/barter/features/chat/db/DeviceTokensTable.kt
-package org.barter.features.chat.db
+package app.bartering.features.chat.db
 
 import org.jetbrains.exposed.sql.Table
 
 object DeviceTokensTable : Table("device_tokens") {
     val userId = varchar("user_id", 255).references(
-        org.barter.features.profile.db.UserRegistrationDataTable.id
+        app.bartering.features.profile.db.UserRegistrationDataTable.id
     )
     val token = varchar("token", 500)
     val platform = varchar("platform", 20) // 'android', 'ios', 'web'
@@ -360,7 +360,7 @@ if (recipientConnection != null && recipientConnection.session.isActive) {
 ### Step 7: Add Device Token Management Routes
 
 ```kotlin:src/org/barter/features/chat/routes/DeviceTokenRoutes.kt
-package org.barter.features.chat.routes
+package app.bartering.features.chat.routes
 
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -368,7 +368,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
-import org.barter.features.chat.dao.DeviceTokenDaoImpl
+import app.bartering.features.chat.dao.DeviceTokenDaoImpl
 
 @Serializable
 data class DeviceTokenRequest(

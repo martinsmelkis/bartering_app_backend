@@ -1,4 +1,4 @@
-package org.barter // Or your actual package
+package app.bartering // Or your actual package
 
 import io.ktor.client.plugins.websocket.*
 import io.ktor.serialization.kotlinx.*
@@ -9,8 +9,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import org.barter.module // Your main application module function
-import org.barter.features.chat.model.*
+import app.bartering.module // Your main application module function
+import app.bartering.features.chat.model.*
 import org.junit.jupiter.api.Test
 import kotlin.test.*
 

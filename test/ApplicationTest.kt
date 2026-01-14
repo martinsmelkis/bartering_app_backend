@@ -1,4 +1,4 @@
-package org.barter
+package app.bartering
 
 import io.ktor.http.*
 import kotlin.test.*

@@ -26,7 +26,7 @@ apply plugin: 'io.ktor.plugin'
 apply plugin: 'com.gradleup.shadow'
 
 application {
-    mainClass = "org.barter.ApplicationKt"
+    mainClass = "app.bartering.ApplicationKt"
 }
 
 group 'org.barter'
@@ -52,7 +52,7 @@ kotlin {
 
 tasks.withType(Jar).configureEach {
     manifest {
-        attributes["Main-Class"] = "org.barter.ApplicationKt"
+        attributes["Main-Class"] = "app.bartering.ApplicationKt"
     }
 }
 
@@ -148,6 +148,6 @@ shadowJar {
     archiveClassifier.set("")
     archiveVersion.set("")
     manifest {
-        attributes("Main-Class" : "org.barter.ApplicationKt")
+        attributes("Main-Class" : "app.bartering.ApplicationKt")
     }
 }
