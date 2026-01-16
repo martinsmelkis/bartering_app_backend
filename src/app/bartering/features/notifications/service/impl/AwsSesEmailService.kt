@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import app.bartering.features.notifications.model.EmailNotification
 import app.bartering.features.notifications.model.NotificationResult
 import app.bartering.features.notifications.service.EmailService
+import org.slf4j.LoggerFactory
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.regions.Region
@@ -43,6 +44,7 @@ class AwsSesEmailService(
     private val defaultFrom: String = System.getenv("AWS_SES_FROM_EMAIL") ?: "noreply@bartering.app",
     private val configurationSetName: String? = System.getenv("AWS_SES_CONFIGURATION_SET")
 ) : EmailService {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     private val sesClient: SesClient by lazy {
         val credentialsProvider = try {
@@ -172,7 +174,7 @@ class AwsSesEmailService(
                 )
 
             } catch (e: MessageRejectedException) {
-                println("❌ AWS SES Message Rejected: ${e.message}")
+                log.error("AWS SES Message Rejected", e)
                 NotificationResult(
                     success = false,
                     messageId = null,
@@ -186,7 +188,7 @@ class AwsSesEmailService(
                 )
 
             } catch (e: MailFromDomainNotVerifiedException) {
-                println("❌ AWS SES Domain Not Verified: ${e.message}")
+                log.error("AWS SES Domain Not Verified", e)
                 NotificationResult(
                     success = false,
                     messageId = null,
@@ -199,7 +201,7 @@ class AwsSesEmailService(
                 )
 
             } catch (e: Exception) {
-                println("❌ AWS SES Send Error: ${e.message}")
+                log.error("AWS SES Send Error", e)
                 e.printStackTrace()
                 NotificationResult(
                     success = false,
@@ -282,7 +284,7 @@ class AwsSesEmailService(
                 )
 
             } catch (e: TemplateDoesNotExistException) {
-                println("❌ AWS SES Template Not Found: $templateId")
+                log.error("AWS SES Template Not Found: {}", templateId)
                 NotificationResult(
                     success = false,
                     messageId = null,
@@ -296,7 +298,7 @@ class AwsSesEmailService(
                 )
 
             } catch (e: Exception) {
-                println("❌ AWS SES Template Error: ${e.message}")
+                log.error("AWS SES Template Error", e)
                 e.printStackTrace()
                 NotificationResult(
                     success = false,
@@ -368,11 +370,11 @@ class AwsSesEmailService(
             try {
                 // Use GetSendQuota as a simple health check
                 val response = sesClient.getSendQuota()
-                println("✅ AWS SES Health Check - Max24HourSend: ${response.max24HourSend()}")
+                log.info("AWS SES Health Check - Max24HourSend: {}", response.max24HourSend())
                 true
 
             } catch (e: Exception) {
-                println("❌ AWS SES Health Check Failed: ${e.message}")
+                log.error("AWS SES Health Check Failed", e)
                 false
             }
         }
@@ -389,11 +391,11 @@ class AwsSesEmailService(
                     .build()
 
                 sesClient.verifyEmailIdentity(request)
-                println("✅ Verification email sent to: $email")
+                log.info("Verification email sent to: {}", email)
                 true
 
             } catch (e: Exception) {
-                println("❌ Failed to verify email identity: ${e.message}")
+                log.error("Failed to verify email identity", e)
                 false
             }
         }
@@ -410,12 +412,12 @@ class AwsSesEmailService(
                     .build()
 
                 val response = sesClient.verifyDomainIdentity(request)
-                println("✅ Domain verification initiated for: $domain")
-                println("📋 DNS Record to add: ${response.verificationToken()}")
+                log.info("Domain verification initiated for: {}", domain)
+                log.info("DNS Record to add: {}", response.verificationToken())
                 true
 
             } catch (e: Exception) {
-                println("❌ Failed to verify domain identity: ${e.message}")
+                log.error("Failed to verify domain identity", e)
                 false
             }
         }
@@ -448,7 +450,7 @@ class AwsSesEmailService(
                 status == VerificationStatus.SUCCESS
 
             } catch (e: Exception) {
-                println("❌ Failed to check identity verification: ${e.message}")
+                log.error("Failed to check identity verification", e)
                 false
             }
         }
@@ -479,7 +481,7 @@ class AwsSesEmailService(
         try {
             sesClient.close()
         } catch (e: Exception) {
-            println("⚠️ Error closing SES client: ${e.message}")
+            log.warn("Error closing SES client", e)
         }
     }
 }

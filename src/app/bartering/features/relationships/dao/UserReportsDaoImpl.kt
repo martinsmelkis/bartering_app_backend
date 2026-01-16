@@ -5,11 +5,13 @@ import app.bartering.features.relationships.db.UserReportsTable
 import app.bartering.features.relationships.model.*
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 class UserReportsDaoImpl : UserReportsDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createReport(
         reporterUserId: String,
@@ -34,8 +36,7 @@ class UserReportsDaoImpl : UserReportsDao {
             }
             reportId
         } catch (e: Exception) {
-            println("Error creating report: ${e.message}")
-            e.printStackTrace()
+            log.error("Error creating report from {} against {}", reporterUserId, reportedUserId, e)
             null
         }
     }
@@ -143,7 +144,7 @@ class UserReportsDaoImpl : UserReportsDao {
                 it[UserReportsTable.moderatorNotes] = moderatorNotes
             } > 0
         } catch (e: Exception) {
-            println("Error updating report status: ${e.message}")
+            log.error("Error updating report status for reportId={}", reportId, e)
             false
         }
     }
@@ -184,7 +185,7 @@ class UserReportsDaoImpl : UserReportsDao {
                 it[moderatorNotes] = reason
             } > 0
         } catch (e: Exception) {
-            println("Error dismissing report: ${e.message}")
+            log.error("Error dismissing report reportId={}", reportId, e)
             false
         }
     }

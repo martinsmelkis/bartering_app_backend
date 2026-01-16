@@ -10,6 +10,9 @@ import app.bartering.features.relationships.dao.UserRelationshipsDaoImpl
 import app.bartering.features.relationships.model.*
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("app.bartering.features.relationships.routes.RelationshipsRoutes")
 
 /**
  * Create or update a relationship between users
@@ -437,7 +440,7 @@ fun Route.getFavoritedProfilesRoute() {
         }
 
         try {
-            println("🔍 Fetching favorited profiles for user: $userId")
+            log.debug("Fetching favorited profiles for userId={}", userId)
 
             // Get all favorited user IDs
             val favoritedUserIds = relationshipsDao.getRelationshipsByType(
@@ -445,28 +448,28 @@ fun Route.getFavoritedProfilesRoute() {
                 RelationshipType.FAVORITE
             )
 
-            println("🔍 Found ${favoritedUserIds.size} favorited user IDs: $favoritedUserIds")
+            log.debug("Found {} favorited user IDs", favoritedUserIds.size)
 
             // Fetch full profiles for each favorited user
             val profiles = favoritedUserIds.mapNotNull { favUserId ->
                 try {
-                    println("🔍 Fetching profile for favorited user: $favUserId")
+                    log.debug("Fetching profile for favorited userId={}", favUserId)
                     val profile = profileDao.getProfile(favUserId)
-                    println("🔍 Profile fetched successfully: ${profile?.userId}")
+                    log.debug("Profile fetched successfully: {}", profile?.userId)
                     profile
                 } catch (e: Exception) {
-                    println("⚠️  Failed to fetch profile for user $favUserId: ${e.message}")
+                    log.warn("Failed to fetch profile for userId={}", favUserId, e)
                     e.printStackTrace()
                     null
                 }
             }
 
-            println("🔍 Returning ${profiles.size} profiles")
+            log.info("Returning {} favorited profiles for userId={}", profiles.size, userId)
 
             call.respond(HttpStatusCode.OK, profiles)
 
         } catch (e: Exception) {
-            println("❌ Error fetching favorited profiles: ${e.message}")
+            log.error("Error fetching favorited profiles", e)
             e.printStackTrace()
             call.respond(
                 HttpStatusCode.InternalServerError,

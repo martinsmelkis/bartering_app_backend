@@ -5,6 +5,7 @@ import com.google.cloud.storage.*
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.StorageClient
+import org.slf4j.LoggerFactory
 import java.io.FileInputStream
 import java.util.*
 
@@ -17,6 +18,7 @@ import java.util.*
  * - Set FIREBASE_STORAGE_BUCKET environment variable to your bucket name (e.g., "your-app.appspot.com")
  */
 class FirebaseStorageService : ImageStorageService {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     private var bucketName: String = ""
     private var initialized: Boolean = false
@@ -39,15 +41,15 @@ class FirebaseStorageService : ImageStorageService {
 
             if (FirebaseApp.getApps().isEmpty()) {
                 FirebaseApp.initializeApp(options)
-                println("✅ Firebase Admin SDK initialized successfully")
+                log.info("Firebase Admin SDK initialized successfully")
             }
 
             bucketName = System.getenv("FIREBASE_STORAGE_BUCKET") ?: "your-app.appspot.com"
             initialized = true
         } catch (e: Exception) {
-            println("⚠️  Firebase initialization failed: ${e.message}")
-            println("   Image uploads will not work until Firebase is configured")
-            println("   See FIREBASE_SETUP_GUIDE.md for configuration instructions")
+            log.error("Firebase initialization failed", e)
+            log.warn("Image uploads will not work until Firebase is configured")
+            log.warn("See FIREBASE_SETUP_GUIDE.md for configuration instructions")
             initialized = false
         }
     }
@@ -102,11 +104,11 @@ class FirebaseStorageService : ImageStorageService {
             // Return public URL
             val publicUrl = "https://storage.googleapis.com/${bucket.name}/$uniqueFileName"
 
-            println("✅ Uploaded image: $publicUrl")
+            log.info("Uploaded image to Firebase Storage: {}", publicUrl)
             return publicUrl
 
         } catch (e: Exception) {
-            println("❌ Failed to upload image: ${e.message}")
+            log.error("Failed to upload image to Firebase Storage", e)
             e.printStackTrace()
             throw Exception("Failed to upload image to Firebase Storage: ${e.message}")
         }
@@ -120,7 +122,7 @@ class FirebaseStorageService : ImageStorageService {
      */
     override suspend fun deleteImage(imageUrl: String): Boolean {
         if (!isInitialized()) {
-            println("⚠️  Firebase Storage is not initialized. Cannot delete image.")
+            log.warn("Firebase Storage is not initialized. Cannot delete image")
             return false
         }
 
@@ -134,15 +136,15 @@ class FirebaseStorageService : ImageStorageService {
             val blob = bucket.get(filePath)
             if (blob != null && blob.exists()) {
                 blob.delete()
-                println("✅ Deleted image: $imageUrl")
+                log.info("Deleted image from Firebase Storage: {}", imageUrl)
                 return true
             } else {
-                println("⚠️  Image not found: $imageUrl")
+                log.warn("Image not found in Firebase Storage: {}", imageUrl)
                 return false
             }
 
         } catch (e: Exception) {
-            println("❌ Failed to delete image: ${e.message}")
+            log.error("Failed to delete image from Firebase Storage", e)
             e.printStackTrace()
             return false
         }

@@ -1,5 +1,6 @@
 package app.bartering.features.postings.service
 
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.*
 
@@ -12,6 +13,7 @@ import java.util.*
  * - IMAGE_BASE_URL: Base URL for serving images (default: "/api/v1/images")
  */
 class LocalFileStorageService : ImageStorageService {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     private val uploadDir: File
     private val baseUrl: String
@@ -29,21 +31,20 @@ class LocalFileStorageService : ImageStorageService {
         initialized = try {
             if (!uploadDir.exists()) {
                 uploadDir.mkdirs()
-                println("✅ Created image upload directory: ${uploadDir.absolutePath}")
+                log.info("Created image upload directory: {}", uploadDir.absolutePath)
             }
 
             // Check if directory is writable
             if (!uploadDir.canWrite()) {
-                println("❌ Upload directory is not writable: ${uploadDir.absolutePath}")
+                log.error("Upload directory is not writable: {}", uploadDir.absolutePath)
                 false
             } else {
-                println("✅ Local file storage initialized: ${uploadDir.absolutePath}")
-                println("   Images will be accessible at: $baseUrl/{filename}")
+                log.info("Local file storage initialized: {}", uploadDir.absolutePath)
+                log.info("Images will be accessible at: {}/{filename}", baseUrl)
                 true
             }
         } catch (e: Exception) {
-            println("❌ Failed to initialize local file storage: ${e.message}")
-            e.printStackTrace()
+            log.error("Failed to initialize local file storage", e)
             false
         }
     }
@@ -88,20 +89,19 @@ class LocalFileStorageService : ImageStorageService {
 
             // Return URL
             val imageUrl = "$baseUrl/$userId/$uniqueFileName"
-            println("✅ Uploaded image: ${file.absolutePath} → $imageUrl")
+            log.info("Uploaded image for userId={}: {} -> {}", userId, file.name, imageUrl)
 
             return imageUrl
 
         } catch (e: Exception) {
-            println("❌ Failed to upload image: ${e.message}")
-            e.printStackTrace()
+            log.error("Failed to upload image for userId={}", userId, e)
             throw Exception("Failed to upload image: ${e.message}")
         }
     }
 
     override suspend fun deleteImage(imageUrl: String): Boolean {
         if (!initialized) {
-            println("⚠️  Local file storage is not initialized. Cannot delete image.")
+            log.warn("Local file storage is not initialized. Cannot delete image")
             return false
         }
 
@@ -114,7 +114,7 @@ class LocalFileStorageService : ImageStorageService {
             if (file.exists() && file.isFile) {
                 val deleted = file.delete()
                 if (deleted) {
-                    println("✅ Deleted image: ${file.absolutePath}")
+                    log.info("Deleted image: {}", file.name)
 
                     // Clean up empty user directory
                     val parentDir = file.parentFile
@@ -122,18 +122,17 @@ class LocalFileStorageService : ImageStorageService {
                             ?.isEmpty() == true
                     ) {
                         parentDir.delete()
-                        println("   Cleaned up empty directory: ${parentDir.absolutePath}")
+                        log.debug("Cleaned up empty directory: {}", parentDir.name)
                     }
                 }
                 return deleted
             } else {
-                println("⚠️  Image not found: ${file.absolutePath}")
+                log.warn("Image not found: {}", file.absolutePath)
                 return false
             }
 
         } catch (e: Exception) {
-            println("❌ Failed to delete image: ${e.message}")
-            e.printStackTrace()
+            log.error("Failed to delete image", e)
             return false
         }
     }
@@ -146,29 +145,25 @@ class LocalFileStorageService : ImageStorageService {
      */
     fun getFile(imageUrl: String): File? {
         return try {
-            println("📷 getFile called with URL: $imageUrl")
-            println("📷 baseUrl: $baseUrl")
-            println("📷 uploadDir: ${uploadDir.absolutePath}")
+            log.debug("getFile called with URL: {}", imageUrl)
+            log.trace("baseUrl: {}, uploadDir: {}", baseUrl, uploadDir.absolutePath)
 
             val path = imageUrl.removePrefix(baseUrl).removePrefix("/")
-            println("📷 Extracted path: $path")
+            log.trace("Extracted path: {}", path)
 
             val file = File(uploadDir, path)
-            println("📷 Full file path: ${file.absolutePath}")
-            println("📷 File exists: ${file.exists()}, isFile: ${file.isFile}")
+            log.trace("Full file path: {}, exists: {}, isFile: {}", file.absolutePath, file.exists(), file.isFile)
 
             if (file.exists() && file.isFile && file.canonicalPath.startsWith(uploadDir.canonicalPath)) {
-                println("📷 File validation passed")
+                log.debug("File validation passed for: {}", file.name)
                 file
             } else {
-                println("📷 File validation failed")
-                println("   Canonical path: ${file.canonicalPath}")
-                println("   Upload dir canonical: ${uploadDir.canonicalPath}")
+                log.warn("File validation failed - canonical: {}, uploadDir: {}", 
+                    file.canonicalPath, uploadDir.canonicalPath)
                 null
             }
         } catch (e: Exception) {
-            println("❌ Error in getFile: ${e.message}")
-            e.printStackTrace()
+            log.error("Error in getFile for URL: {}", imageUrl, e)
             null
         }
     }

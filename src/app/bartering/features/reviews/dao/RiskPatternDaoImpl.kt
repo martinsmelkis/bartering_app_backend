@@ -8,6 +8,7 @@ import app.bartering.features.reviews.db.UserLocationChangesTable
 import app.bartering.features.reviews.model.*
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.slf4j.LoggerFactory
 import net.postgis.jdbc.geometry.Point
 import java.time.Instant
 import java.util.UUID
@@ -17,6 +18,7 @@ import kotlin.math.*
  * Implementation of RiskPatternDao for tracking and analyzing risk patterns.
  */
 class RiskPatternDaoImpl : RiskPatternDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     // ========== Device Tracking ==========
     
@@ -495,7 +497,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
                 DeviceTrackingTable.timestamp less cutoffDate
             }
         } catch (e: Exception) {
-            println("Error cleaning up device tracking: ${e.message}")
+            log.error("Error cleaning up device tracking", e)
             e.printStackTrace()
             0
         }
@@ -510,7 +512,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
                 IpTrackingTable.timestamp less cutoffDate
             }
         } catch (e: Exception) {
-            println("Error cleaning up IP tracking: ${e.message}")
+            log.error("Error cleaning up IP tracking", e)
             e.printStackTrace()
             0
         }
@@ -525,7 +527,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
                 UserLocationChangesTable.changedAt less cutoffDate
             }
         } catch (e: Exception) {
-            println("Error cleaning up location changes: ${e.message}")
+            log.error("Error cleaning up location changes", e)
             e.printStackTrace()
             0
         }
@@ -540,7 +542,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
                 RiskPatternsTable.detectedAt less cutoffDate
             }
         } catch (e: Exception) {
-            println("Error cleaning up risk patterns: ${e.message}")
+            log.error("Error cleaning up risk patterns", e)
             e.printStackTrace()
             0
         }

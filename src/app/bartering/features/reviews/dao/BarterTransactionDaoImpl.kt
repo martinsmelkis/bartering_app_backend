@@ -5,11 +5,13 @@ import app.bartering.features.reviews.db.BarterTransactionsTable
 import app.bartering.features.reviews.model.TransactionStatus
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
 
 class BarterTransactionDaoImpl : BarterTransactionDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createTransaction(
         user1Id: String,
@@ -33,14 +35,15 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
         completedAt: Instant?
     ): Boolean = dbQuery {
         try {
-            BarterTransactionsTable.update({ BarterTransactionsTable.id eq transactionId }) {
+            val rowsUpdated = BarterTransactionsTable.update({ BarterTransactionsTable.id eq transactionId }) {
                 it[BarterTransactionsTable.status] = status.value
                 if (completedAt != null) {
                     it[BarterTransactionsTable.completedAt] = completedAt
                 }
-            } > 0
+            }
+            rowsUpdated > 0
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Failed to update transaction status for transactionId={}", transactionId, e)
             false
         }
     }
@@ -101,7 +104,7 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
                 it[BarterTransactionsTable.riskScore] = riskScore.toBigDecimal()
             } > 0
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Failed to update risk score for transactionId={}", transactionId, e)
             false
         }
     }
@@ -112,7 +115,7 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
                 it[locationConfirmed] = true
             } > 0
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Failed to confirm location for transactionId={}", transactionId, e)
             false
         }
     }

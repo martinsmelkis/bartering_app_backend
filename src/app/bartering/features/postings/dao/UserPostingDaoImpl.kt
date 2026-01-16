@@ -9,10 +9,12 @@ import app.bartering.utils.SecurityUtils
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.*
 
 class UserPostingDaoImpl : UserPostingDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createPosting(userId: String, request: UserPostingRequest): String? {
         return try {
@@ -46,7 +48,7 @@ class UserPostingDaoImpl : UserPostingDao {
             }
 
             // After transaction commits, generate embedding in separate transaction
-            println("@@@@@@@@@ Created posting with ID: $postingId, now generating embedding...")
+            log.debug("Created posting with ID: {}, now generating embedding", postingId)
             updatePostingEmbedding(postingId)
 
             postingId
@@ -93,7 +95,7 @@ class UserPostingDaoImpl : UserPostingDao {
 
         // After transaction commits, regenerate embedding in separate transaction
         if (success) {
-            println("@@@@@@@@@ Updated posting with ID: $postingId, now regenerating embedding...")
+            log.debug("Updated posting with ID: {}, now regenerating embedding", postingId)
             updatePostingEmbedding(postingId)
         }
 
@@ -184,7 +186,7 @@ class UserPostingDaoImpl : UserPostingDao {
     ): List<UserPostingWithDistance> = dbQuery {
 
         if (excludeUserId != null && !SecurityUtils.isValidUUID(excludeUserId)) {
-            println("Invalid excludeUserId format: $excludeUserId")
+            log.warn("Invalid excludeUserId format: {}", excludeUserId)
             return@dbQuery emptyList()
         }
 
@@ -307,12 +309,12 @@ class UserPostingDaoImpl : UserPostingDao {
     ): List<UserPostingWithDistance> = dbQuery {
 
         if (!SecurityUtils.isValidLength(searchText, 1, 1000)) {
-            println("Invalid search text length: ${searchText.length}")
+            log.warn("Invalid search text length: {}", searchText.length)
             return@dbQuery emptyList()
         }
 
         if (SecurityUtils.containsSqlInjectionPatterns(searchText)) {
-            println("Search text contains dangerous patterns")
+            log.warn("Search text contains dangerous patterns")
             return@dbQuery emptyList()
         }
 
@@ -466,7 +468,7 @@ class UserPostingDaoImpl : UserPostingDao {
         limit: Int
     ): List<UserPostingWithDistance> = dbQuery {
         if (!SecurityUtils.isValidUUID(userId)) {
-            println("Invalid userId format: $userId")
+            log.warn("Invalid userId format: {}", userId)
             return@dbQuery emptyList()
         }
 
@@ -619,7 +621,7 @@ class UserPostingDaoImpl : UserPostingDao {
 
     override suspend fun updatePostingEmbedding(postingId: String): Boolean = dbQuery {
         try {
-            println("@@@@@@@@@ [updatePostingEmbedding] Starting for postingId: $postingId")
+            log.debug("updatePostingEmbedding: Starting for postingId={}", postingId)
             
             val posting = UserPostingsTable
                 .select(UserPostingsTable.title, UserPostingsTable.description)
@@ -627,7 +629,7 @@ class UserPostingDaoImpl : UserPostingDao {
                 .singleOrNull()
             
             if (posting == null) {
-                println("@@@@@@@@@ [updatePostingEmbedding] ERROR: Posting not found with ID: $postingId")
+                log.error("updatePostingEmbedding: Posting not found with ID={}", postingId)
                 return@dbQuery false
             }
 
@@ -635,8 +637,8 @@ class UserPostingDaoImpl : UserPostingDao {
             val description = posting[UserPostingsTable.description]
             val combinedText = "$title. $description"
             
-            println("@@@@@@@@@ [updatePostingEmbedding] Found posting. Combined text length: ${combinedText.length}")
-            println("@@@@@@@@@ [updatePostingEmbedding] Using model: ${AiConfig.embedModel}, host: ${AiConfig.ollamaHost}")
+            log.debug("updatePostingEmbedding: Found posting. Combined text length: {}", combinedText.length)
+            log.debug("updatePostingEmbedding: Using model={}, host={}", AiConfig.embedModel, AiConfig.ollamaHost)
 
             val embeddingQuery = """
                 UPDATE user_postings
@@ -651,10 +653,10 @@ class UserPostingDaoImpl : UserPostingDao {
                     statement.executeUpdate()
                 }
 
-            println("@@@@@@@@@ [updatePostingEmbedding] Successfully generated embedding for posting: $postingId (rows updated: $rowsUpdated)")
+            log.info("updatePostingEmbedding: Successfully generated embedding for postingId={} (rows updated: {})", postingId, rowsUpdated)
             true
         } catch (e: Exception) {
-            println("@@@@@@@@@ [updatePostingEmbedding] ERROR generating embedding for posting $postingId: ${e.message}")
+            log.error("updatePostingEmbedding: Error generating embedding for postingId={}", postingId, e)
             e.printStackTrace()
             false
         }
@@ -702,9 +704,7 @@ class UserPostingDaoImpl : UserPostingDao {
                 updatedAt = postingRow[UserPostingsTable.updatedAt]
             )
         } catch (e: Exception) {
-            println("❌ Error in toUserPosting: ${e.message}\n${e.stackTraceToString()}")
-            println("postingRow: $postingRow")
-            println("attributeRows: $attributeRows")
+            log.error("Error in toUserPosting - postingRow: {}, attributeRows: {}", postingRow, attributeRows, e)
             throw e
         }
     }

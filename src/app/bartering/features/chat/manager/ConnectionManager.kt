@@ -4,6 +4,7 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
 import kotlinx.coroutines.isActive
 import app.bartering.features.chat.model.ChatConnection
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -22,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
  * - Redis Sets for tracking online users
  */
 class ConnectionManager {
+    private val log = LoggerFactory.getLogger(this::class.java)
     private val connections = ConcurrentHashMap<String, ChatConnection>()
 
     /**
@@ -31,7 +33,7 @@ class ConnectionManager {
     suspend fun addConnection(userId: String, connection: ChatConnection) {
         // Close old session if exists
         connections[userId]?.let { oldConnection ->
-            println("User $userId reconnected, closing old session (ID: ${oldConnection.id})")
+            log.info("User {} reconnected, closing old session (ID: {})", userId, oldConnection.id)
             try {
                 oldConnection.session.close(
                     CloseReason(
@@ -40,7 +42,7 @@ class ConnectionManager {
                     )
                 )
             } catch (e: Exception) {
-                println("Error closing old session for user $userId: ${e.message}")
+                log.error("Error closing old session for userId={}", userId, e)
             }
         }
         connections[userId] = connection
@@ -61,10 +63,10 @@ class ConnectionManager {
         val currentConnection = connections[userId]
         return if (currentConnection?.id == connectionId) {
             connections.remove(userId)
-            println("User $userId (Connection ID: $connectionId) removed from active connections.")
+            log.info("User {} (Connection ID: {}) removed from active connections", userId, connectionId)
             true
         } else {
-            println("User $userId (Connection ID: $connectionId) already had a newer session. Not removing.")
+            log.debug("User {} (Connection ID: {}) already had a newer session. Not removing", userId, connectionId)
             false
         }
     }

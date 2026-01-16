@@ -1,7 +1,7 @@
 package app.bartering.features.profile.dao
 
-import jdk.jfr.internal.Logger.log
 import app.bartering.config.AiConfig
+import org.slf4j.LoggerFactory
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.authentication.model.UserRegistrationDataDto
@@ -32,6 +32,7 @@ import kotlin.text.toDouble
 import kotlin.text.trim
 
 class UserProfileDaoImpl : UserProfileDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
@@ -54,7 +55,7 @@ class UserProfileDaoImpl : UserProfileDao {
     override suspend fun getProfile(userId: String): UserProfile? = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(userId)) {
-            println("Invalid userId format: $userId")
+            log.warn("Invalid userId format: {}", userId)
             return@dbQuery null
         }
 
@@ -277,7 +278,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Validate excludeUserId to prevent SQL injection
         if (excludeUserId != null && !SecurityUtils.isValidUUID(excludeUserId)) {
-            println("Invalid excludeUserId format: $excludeUserId")
+            log.warn("Invalid excludeUserId format: {}", excludeUserId)
             return@dbQuery emptyList()
         }
 
@@ -302,7 +303,7 @@ class UserProfileDaoImpl : UserProfileDao {
             LIMIT 30;
         """.trimIndent()
 
-        println("@@@@@@@@@@ Executing nearby profiles query at ($latitude, $longitude) radius: $radiusMeters")
+        log.debug("Executing nearby profiles query at ({}, {}) radius: {} meters", latitude, longitude, radiusMeters)
 
         // Prepare query parameters
         val queryParams = mutableListOf<Pair<IColumnType<*>, Any?>>()
@@ -368,7 +369,7 @@ class UserProfileDaoImpl : UserProfileDao {
             }
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
-        println("@@@@@@@@@@ Found ${results.size} nearby profiles")
+        log.debug("Found {} nearby profiles", results.size)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(results)
@@ -404,7 +405,7 @@ class UserProfileDaoImpl : UserProfileDao {
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
-            println("Invalid userId format: $currentUserId")
+            log.warn("Invalid userId format: {}", currentUserId)
             return@dbQuery emptyList()
         }
         val myEmbeddingColumnType = when (currentUserProfileType) {
@@ -489,7 +490,7 @@ class UserProfileDaoImpl : UserProfileDao {
             LIMIT 20;
         """.trimIndent()
 
-        //println("@@@@@@@@@@@@ Executing Similar Profiles Query:\n$semanticSimilarityQuery")
+        log.trace("Executing Similar Profiles Query: {}", semanticSimilarityQuery)
 
         // This list will hold the parameters for the prepared statement in the correct order.
         val queryParams = mutableListOf<Pair<IColumnType<*>, Any?>>()
@@ -557,7 +558,7 @@ class UserProfileDaoImpl : UserProfileDao {
         }
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
-        //println("@@@@@@@@@ Found similar profiles: $results")
+        log.debug("Found {} similar profiles", results.size)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(results)
@@ -571,7 +572,7 @@ class UserProfileDaoImpl : UserProfileDao {
         dbQuery {
             // Validate userId to prevent SQL injection
             if (!SecurityUtils.isValidUUID(userId)) {
-                println("Invalid userId format in updateSemanticProfile: $userId")
+                log.warn("Invalid userId format in updateSemanticProfile: {}", userId)
                 return@dbQuery
             }
 
@@ -599,7 +600,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
                 val hash = if (resultMap.isNotEmpty()) HashUtils.sha256(resultMap) else null
                 if (hash != null && hash == (semanticProfileHashes?.get(hashCol) ?: "")) {
-                    println("@@@@@@@@@@ No changes to semantic haves/needs $hashCol for user $userId")
+                    log.debug("No changes to semantic haves/needs {} for userId={}", hashCol, userId)
                     return@dbQuery
                 }
                 UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
@@ -662,7 +663,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
                 val hash = if (keywords.isNotEmpty()) HashUtils.sha256(keywords) else null
                 if (hash != null && hash == (semanticProfileHashes?.get(UserSemanticProfilesTable.hashProfile) ?: "")) {
-                    println("@@@@@@@@@@ No changes to semantic profile ${UserSemanticProfilesTable.hashProfile} for user $userId")
+                    log.debug("No changes to semantic profile {} for userId={}", UserSemanticProfilesTable.hashProfile, userId)
                     return@dbQuery
                 }
                 UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
@@ -707,12 +708,12 @@ class UserProfileDaoImpl : UserProfileDao {
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate input
         if (!SecurityUtils.isValidLength(searchText, 1, 1000)) {
-            println("Invalid search text length: ${searchText.length}")
+            log.warn("Invalid search text length: {}", searchText.length)
             return@dbQuery emptyList()
         }
 
         if (SecurityUtils.containsSqlInjectionPatterns(searchText)) {
-            println("Search text contains dangerous patterns")
+            log.warn("Search text contains dangerous patterns")
             return@dbQuery emptyList()
         }
 
@@ -724,7 +725,8 @@ class UserProfileDaoImpl : UserProfileDao {
         val clampedWeight = customWeight.coerceIn(10, 100)
         val weightMultiplier = 0.5 + (clampedWeight - 10) * 0.7 / 90.0
         
-        println("@@@@@@@@@@ Starting multi-stage search for: '$sanitizedSearchText' (customWeight: $customWeight, multiplier: $weightMultiplier)")
+        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {})", 
+            sanitizedSearchText, customWeight, weightMultiplier)
 
         // Stage 1: Fast keyword-only search (no embedding generation)
         val keywordResults = executeKeywordSearch(
@@ -736,7 +738,7 @@ class UserProfileDaoImpl : UserProfileDao {
             weightMultiplier
         )
 
-        println("@@@@@@@@@@ Stage 1 complete: Found ${keywordResults.size} keyword matches")
+        log.debug("Stage 1 complete: Found {} keyword matches", keywordResults.size)
 
         // Decision point: Should we enhance with semantic search?
         val hasLowKeywordScores = keywordResults.any { it.second < 0.5 }
@@ -768,7 +770,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     userAttributes[profile.userId] = mutableListOf()
                 }
                 
-                println("@@@@@@@@@@ Stage 2 complete: Found ${semanticResults.size} semantic profile matches")
+                log.debug("Stage 2 complete: Found {} semantic profile matches", semanticResults.size)
 
                 // Stage 3: Semantic similarity search on user postings
                 val postingResults = executeSemanticPostingSearch(
@@ -793,7 +795,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     }
                 }
                 
-                println("@@@@@@@@@@ Stage 3 complete: Found ${postingResults.size} posting matches")
+                log.debug("Stage 3 complete: Found {} posting matches", postingResults.size)
             }
         }
 
@@ -811,8 +813,8 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
 
-        println("@@@@@@@@@@ Search complete: Found ${results.size} total profiles matching '$searchText' " +
-                    "(semantic enhancement: $useSemanticEnhancement)")
+        log.info("Search complete: Found {} total profiles matching '{}' (semantic enhancement: {})", 
+            results.size, searchText, useSemanticEnhancement)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(results)
@@ -996,8 +998,8 @@ class UserProfileDaoImpl : UserProfileDao {
         var cachedEmbedding = embeddingCache.get(searchText)
 
         if (cachedEmbedding == null) {
-            println("@@@@@@@@@@ Cache MISS: Generating embedding for '$searchText'")
-            try {
+            log.debug("Cache MISS: Generating embedding for '{}'", searchText)
+            try{
                 val embeddingGenQuery = """
                     SELECT ai.ollama_embed('${AiConfig.embedModel}', ?, host => '${AiConfig.ollamaHost}')::text as embedding
                 """.trimIndent()
@@ -1015,14 +1017,14 @@ class UserProfileDaoImpl : UserProfileDao {
                     if (embedding.isNotEmpty()) {
                         embeddingCache.put(searchText, embedding)
                         cachedEmbedding = embedding
-                        println("@@@@@@@@@@ Cached embedding (${embedding.size} dimensions)")
+                        log.debug("Cached embedding ({} dimensions)", embedding.size)
                     }
                 }
             } catch (e: Exception) {
-                println("@@@@@@@@@@ Warning: Could not generate embedding: ${e.message}")
+                log.warn("Could not generate embedding", e)
             }
         } else {
-            println("@@@@@@@@@@ Cache HIT: Using cached embedding")
+            log.debug("Cache HIT: Using cached embedding")
         }
 
         cachedEmbedding
@@ -1227,7 +1229,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         .let { if (it.isNaN() || it.isInfinite()) 0.0 else it }
                     val distanceMeters = rs.getDouble("distance_meters")
 
-                    println("@@@@@@@@@@@ Posting similarity: $postingSimilarity")
+                    log.trace("Posting similarity: {}", postingSimilarity)
                     if (postingSimilarity >= minimalSimilarity) {
                         val (longitude, latitude) = parseLocation(rs)
                         
@@ -1521,7 +1523,7 @@ class UserProfileDaoImpl : UserProfileDao {
             val updatedProfile = profileWithDistance.profile.copy(isOnline = isOnline)
             
             if (isOnline && profileWithDistance.matchRelevancyScore != null) {
-                println("@@@@@@@@@ user is online: ${profileWithDistance.profile.userId}")
+                log.debug("User is online: {}", profileWithDistance.profile.userId)
                 // Boost the relevancy score for online users
                 val boostedScore = (profileWithDistance.matchRelevancyScore + ONLINE_BOOST).coerceAtMost(1.0)
                 profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)

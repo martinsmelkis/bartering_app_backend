@@ -54,8 +54,11 @@ import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.SLF4JLogger
 import org.slf4j.event.Level
+import org.slf4j.LoggerFactory
 import java.security.Security
 import java.text.DateFormat
+
+private val log = LoggerFactory.getLogger("app.bartering.Application")
 
 fun main(args: Array<String>): Unit {
 
@@ -113,7 +116,7 @@ fun Application.module(testing: Boolean = false) {
     
     // Initialize user activity cache for presence tracking
     UserActivityCache.init()
-    println("✅ User activity tracking initialized")
+    log.info("✅ User activity tracking initialized")
 
     // Install rate limiting (application-level protection)
     configureRateLimiting()
@@ -168,11 +171,11 @@ fun Application.module(testing: Boolean = false) {
     val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)
     val riskCleanupTask = ReviewRiskTrackingCleanupTask(riskPatternDao)
     riskCleanupTask.start(GlobalScope)
-    println("✅ Risk tracking cleanup task started")
+    log.info("✅ Risk tracking cleanup task started")
     
     // Start digest notification jobs
     DigestNotificationJobManager.startJobs()
-    println("✅ Digest notification jobs started")
+    log.info("✅ Digest notification jobs started")
 
     install(StatusPages) {
         exception<Throwable> { call, cause ->

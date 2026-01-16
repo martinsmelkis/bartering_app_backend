@@ -2,6 +2,7 @@ package app.bartering.features.chat.tasks
 
 import kotlinx.coroutines.*
 import app.bartering.features.chat.dao.OfflineMessageDao
+import org.slf4j.LoggerFactory
 import kotlin.time.Duration.Companion.hours
 
 /**
@@ -13,6 +14,7 @@ class MessageCleanupTask(
     private val intervalHours: Long = 24,
     private val retentionDays: Int = 7
 ) {
+    private val log = LoggerFactory.getLogger(this::class.java)
     private var cleanupJob: Job? = null
 
     /**
@@ -27,12 +29,11 @@ class MessageCleanupTask(
         cleanupJob = scope.launch {
             while (isActive) {
                 try {
-                    println("Running offline message cleanup task...")
+                    log.info("Running offline message cleanup task")
                     val deletedCount = offlineMessageDao.deleteDeliveredMessages(retentionDays)
-                    println("Cleaned up $deletedCount delivered messages older than $retentionDays days")
+                    log.info("Cleaned up {} delivered messages older than {} days", deletedCount, retentionDays)
                 } catch (e: Exception) {
-                    println("Error during message cleanup: ${e.message}")
-                    e.printStackTrace()
+                    log.error("Error during message cleanup", e)
                 }
 
                 // Wait for the next cleanup cycle
@@ -40,7 +41,7 @@ class MessageCleanupTask(
             }
         }
 
-        println("MessageCleanupTask started (interval: ${intervalHours}h, retention: ${retentionDays}d)")
+        log.info("MessageCleanupTask started (interval: {}h, retention: {}d)", intervalHours, retentionDays)
     }
 
     /**
@@ -49,6 +50,6 @@ class MessageCleanupTask(
     fun stop() {
         cleanupJob?.cancel()
         cleanupJob = null
-        println("MessageCleanupTask stopped")
+        log.info("MessageCleanupTask stopped")
     }
 }

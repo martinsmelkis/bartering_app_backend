@@ -14,9 +14,12 @@ import app.bartering.features.reviews.dao.*
 import app.bartering.features.reviews.model.*
 import app.bartering.features.reviews.service.*
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+
+private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes.ReviewRoutes")
 
 /**
  * Submit a review for a transaction
@@ -75,7 +78,7 @@ fun Route.submitReviewRoute() {
                     } else {
                         // If user registration date not found, assume account is old enough
                         // This handles legacy accounts or accounts created before this tracking
-                        println("WARNING: Could not find registration date for user $userId, assuming account is old enough")
+                        log.warn("Could not find registration date for userId={}, assuming account is old enough", userId)
                         Duration.ofDays(30)
                     }
                 },
@@ -85,7 +88,7 @@ fun Route.submitReviewRoute() {
             )
 
             if (!eligibility.canReview) {
-                println("Review eligibility failed for reviewer ${request.reviewerId}: ${eligibility.reason}")
+                log.info("Review eligibility failed for reviewerId={}: {}", request.reviewerId, eligibility.reason)
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to eligibility.reason)
@@ -138,7 +141,8 @@ fun Route.submitReviewRoute() {
             // Apply risk-based policies
             when (riskReport.riskLevel) {
                 "CRITICAL" -> {
-                    println("CRITICAL risk detected for transaction ${request.transactionId}: ${riskReport.detectedPatterns}")
+                    log.error("CRITICAL risk detected for transactionId={}: {}", 
+                        request.transactionId, riskReport.detectedPatterns)
                     return@post call.respond(
                         HttpStatusCode.Forbidden,
                         mapOf(
@@ -148,7 +152,8 @@ fun Route.submitReviewRoute() {
                     )
                 }
                 "HIGH" -> {
-                    println("HIGH risk detected for transaction ${request.transactionId}: ${riskReport.detectedPatterns}")
+                    log.warn("HIGH risk detected for transactionId={}: {}", 
+                        request.transactionId, riskReport.detectedPatterns)
                     // Flag for manual review but allow submission
                     // Weight will be reduced below
                 }
@@ -163,7 +168,7 @@ fun Route.submitReviewRoute() {
             // Parse transaction status
             val transactionStatus =
                 TransactionStatus.fromString(request.transactionStatus) ?: run {
-                    println("Invalid transaction status: ${request.transactionStatus}")
+                    log.warn("Invalid transaction status: {}", request.transactionStatus)
                     return@post call.respond(
                         HttpStatusCode.BadRequest,
                         mapOf("error" to "Invalid transaction status: ${request.transactionStatus}")
@@ -273,7 +278,7 @@ fun Route.submitReviewRoute() {
             }
 
         } catch (e: Exception) {
-            println("Error submitting review: ${e.message}")
+            log.error("Error submitting review", e)
             e.printStackTrace()
             call.respond(
                 HttpStatusCode.BadRequest,

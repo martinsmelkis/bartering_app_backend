@@ -10,6 +10,9 @@ import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.relationships.dao.UserRelationshipsDaoImpl
 import app.bartering.features.relationships.model.*
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("UserBlockRoutes")
 
 /**
  * Block a user
@@ -228,7 +231,7 @@ fun Route.getBlockedUsersRoute() {
                 try {
                     profileDao.getProfile(blockedUserId)
                 } catch (e: Exception) {
-                    println("Failed to fetch profile for blocked user $blockedUserId: ${e.message}")
+                    log.warn("Failed to fetch profile for blocked userId={}", blockedUserId, e)
                     null
                 }
             }

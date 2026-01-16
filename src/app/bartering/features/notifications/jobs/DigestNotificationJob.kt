@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import app.bartering.features.notifications.model.NotificationFrequency
 import app.bartering.features.notifications.service.MatchNotificationService
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
@@ -15,6 +16,7 @@ import java.time.temporal.ChronoUnit
  * Runs on a schedule and sends batched notifications to users
  */
 class DigestNotificationJob {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     private val matchService: MatchNotificationService by inject(MatchNotificationService::class.java)
     private var dailyJob: Job? = null
@@ -25,7 +27,7 @@ class DigestNotificationJob {
      * Start the digest notification jobs
      */
     fun start() {
-        println("📬 Starting digest notification jobs...")
+        log.info("Starting digest notification jobs")
         
         // Start daily digest job - runs every day at 9 AM
         dailyJob = scope.launch {
@@ -40,20 +42,19 @@ class DigestNotificationJob {
                     }
                     
                     val delayMillis = Duration.between(now, adjustedNextRun).toMillis()
-                    println("📬 Daily digest scheduled for: $adjustedNextRun (in ${delayMillis / 1000 / 60} minutes)")
+                    log.info("Daily digest scheduled for: {} (in {} minutes)", adjustedNextRun, delayMillis / 1000 / 60)
                     
                     delay(delayMillis)
                     
-                    println("📬 Running daily digest job...")
+                    log.info("Running daily digest job")
                     matchService.processDigestNotifications(NotificationFrequency.DAILY)
-                    println("✅ Daily digest job completed")
+                    log.info("Daily digest job completed")
                     
                 } catch (e: CancellationException) {
-                    println("📬 Daily digest job cancelled")
+                    log.info("Daily digest job cancelled")
                     throw e
                 } catch (e: Exception) {
-                    println("❌ Error in daily digest job: ${e.message}")
-                    e.printStackTrace()
+                    log.error("Error in daily digest job", e)
                     // Wait 1 hour before retrying on error
                     delay(60 * 60 * 1000)
                 }
@@ -78,51 +79,49 @@ class DigestNotificationJob {
                     }
                     
                     val delayMillis = Duration.between(now, nextRun).toMillis()
-                    println("📬 Weekly digest scheduled for: $nextRun (in ${delayMillis / 1000 / 60 / 60} hours)")
+                    log.info("Weekly digest scheduled for: {} (in {} hours)", nextRun, delayMillis / 1000 / 60 / 60)
                     
                     delay(delayMillis)
                     
-                    println("📬 Running weekly digest job...")
+                    log.info("Running weekly digest job")
                     matchService.processDigestNotifications(NotificationFrequency.WEEKLY)
-                    println("✅ Weekly digest job completed")
+                    log.info("Weekly digest job completed")
                     
                 } catch (e: CancellationException) {
-                    println("📬 Weekly digest job cancelled")
+                    log.info("Weekly digest job cancelled")
                     throw e
                 } catch (e: Exception) {
-                    println("❌ Error in weekly digest job: ${e.message}")
-                    e.printStackTrace()
+                    log.error("Error in weekly digest job", e)
                     // Wait 1 hour before retrying on error
                     delay(60 * 60 * 1000)
                 }
             }
         }
         
-        println("✅ Digest notification jobs started")
+        log.info("Digest notification jobs started")
     }
     
     /**
      * Stop the digest notification jobs
      */
     fun stop() {
-        println("📬 Stopping digest notification jobs...")
+        log.info("Stopping digest notification jobs")
         dailyJob?.cancel()
         weeklyJob?.cancel()
         scope.cancel()
-        println("✅ Digest notification jobs stopped")
+        log.info("Digest notification jobs stopped")
     }
     
     /**
      * Manually trigger daily digest (for testing)
      */
     suspend fun triggerDailyDigest() {
-        println("📬 Manually triggering daily digest...")
+        log.info("Manually triggering daily digest")
         try {
             matchService.processDigestNotifications(NotificationFrequency.DAILY)
-            println("✅ Daily digest completed")
+            log.info("Daily digest completed")
         } catch (e: Exception) {
-            println("❌ Error in daily digest: ${e.message}")
-            e.printStackTrace()
+            log.error("Error in daily digest", e)
         }
     }
     
@@ -130,13 +129,12 @@ class DigestNotificationJob {
      * Manually trigger weekly digest (for testing)
      */
     suspend fun triggerWeeklyDigest() {
-        println("📬 Manually triggering weekly digest...")
+        log.info("Manually triggering weekly digest")
         try {
             matchService.processDigestNotifications(NotificationFrequency.WEEKLY)
-            println("✅ Weekly digest completed")
+            log.info("Weekly digest completed")
         } catch (e: Exception) {
-            println("❌ Error in weekly digest: ${e.message}")
-            e.printStackTrace()
+            log.error("Error in weekly digest", e)
         }
     }
 }
@@ -145,6 +143,7 @@ class DigestNotificationJob {
  * Singleton instance for managing the digest job lifecycle
  */
 object DigestNotificationJobManager {
+    private val log = LoggerFactory.getLogger(this::class.java)
     private var job: DigestNotificationJob? = null
     
     fun startJobs() {
@@ -152,7 +151,7 @@ object DigestNotificationJobManager {
             job = DigestNotificationJob()
             job?.start()
         } else {
-            println("⚠️  Digest notification jobs already running")
+            log.warn("Digest notification jobs already running")
         }
     }
     
@@ -162,10 +161,10 @@ object DigestNotificationJobManager {
     }
     
     suspend fun triggerDailyDigest() {
-        job?.triggerDailyDigest() ?: println("❌ No job instance available")
+        job?.triggerDailyDigest() ?: log.error("No job instance available for daily digest")
     }
     
     suspend fun triggerWeeklyDigest() {
-        job?.triggerWeeklyDigest() ?: println("❌ No job instance available")
+        job?.triggerWeeklyDigest() ?: log.error("No job instance available for weekly digest")
     }
 }

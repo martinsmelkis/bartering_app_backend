@@ -9,6 +9,7 @@ import app.bartering.features.notifications.utils.NotificationDataBuilder
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.model.UserPosting
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.UUID
 
@@ -21,6 +22,7 @@ class MatchNotificationService(
     private val postingDao: UserPostingDao,
     private val orchestrator: NotificationOrchestrator
 ) {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     /**
      * Check a new posting against all users' attribute notification preferences
@@ -45,7 +47,7 @@ class MatchNotificationService(
 
                 val matchScore = calculateMatchScore(preference.attributeId, posting)
 
-                println("@@@@@@@@@ User preference score: ${matchScore} $preference")
+                log.debug("User preference score: {} for preference: {}", matchScore, preference)
 
                 // Only create match if score meets minimum threshold
                 if (matchScore >= preference.minMatchScore) {
@@ -119,7 +121,7 @@ class MatchNotificationService(
             
             val matchScore = calculatePostingMatchScore(interestPosting, newPosting)
 
-            println("@@@@@@@@ Match score posting against interest postings: ${matchScore} for posting ${interestPosting.id}")
+            log.debug("Match score posting against interest postings: {} for posting {}", matchScore, interestPosting.id)
             
             if (matchScore >= minMatchScore) {
                 // Check if match already exists
@@ -131,7 +133,7 @@ class MatchNotificationService(
                     targetId = newPosting.userId
                 )
 
-                println("@@@@@@@@@@@@ Existing match: $existingMatch")
+                log.debug("Existing match found: {}", existingMatch)
                 
                 if (existingMatch == null) {
                     val match = MatchHistoryEntry(
@@ -150,7 +152,7 @@ class MatchNotificationService(
                     preferencesDao.createMatch(match)
                     matches.add(match)
 
-                    println("@@@@@@@@@ notificationFrequency $notificationFrequency")
+                    log.debug("Notification frequency: {}", notificationFrequency)
                     // Send notification based on frequency
                     if (notificationFrequency == NotificationFrequency.INSTANT) {
                         sendMatchNotification(match, newPosting)
@@ -288,7 +290,7 @@ class MatchNotificationService(
                     
                     // Send notification to posting owner based on their frequency
                     if (postingOwnerPreference.notificationFrequency == NotificationFrequency.INSTANT) {
-                        println("🔔 Notifying ${posting.userId} about match: ${match.matchReason}")
+                        log.info("Notifying userId={} about match: {}", posting.userId, match.matchReason)
                         sendMatchNotification(match, posting)
                     }
                 }
@@ -358,7 +360,7 @@ class MatchNotificationService(
                     
                     // Send notification to posting owner based on their frequency
                     if (postingOwnerPreference.notificationFrequency == NotificationFrequency.INSTANT) {
-                        println("🔔 Notifying ${posting.userId} about match: ${match.matchReason}")
+                        log.info("Notifying userId={} about match: {}", posting.userId, match.matchReason)
                         sendMatchNotification(match, posting)
                     }
                 }
@@ -447,7 +449,8 @@ class MatchNotificationService(
             val embeddingSimilarity = calculateEmbeddingSimilarity(interestPosting.id, offerPosting.id)
             if (embeddingSimilarity != null) {
                 score += embeddingSimilarity * 0.8
-                println("🔍 Embedding similarity between '${interestPosting.title}' and '${offerPosting.title}': $embeddingSimilarity")
+                log.debug("Embedding similarity between '{}' and '{}': {}", 
+                    interestPosting.title, offerPosting.title, embeddingSimilarity)
             }
         }
 
@@ -491,7 +494,7 @@ class MatchNotificationService(
                 }
             }
         } catch (e: Exception) {
-            println("⚠️ Error calculating embedding similarity: ${e.message}")
+            log.warn("Error calculating embedding similarity", e)
             null
         }
     }
@@ -542,7 +545,7 @@ class MatchNotificationService(
         try {
             // Get user's contacts
             val contacts = preferencesDao.getUserContacts(match.userId)
-            println("@@@@@@@@@@ User contacts: $contacts")
+            log.debug("User contacts: {}", contacts)
             if (contacts == null || !contacts.notificationsEnabled) {
                 return
             }
@@ -567,7 +570,7 @@ class MatchNotificationService(
                 matchType = notificationType
             )
 
-            println("@@@@@@@@@@@@@@ MATCH FOUND, sending notification")
+            log.info("Match found, sending notification")
             
             // Send via orchestrator
             orchestrator.sendNotification(
@@ -580,7 +583,7 @@ class MatchNotificationService(
             preferencesDao.markMatchNotificationSent(match.id)
             
         } catch (e: Exception) {
-            println("❌ Failed to send match notification: ${e.message}")
+            log.error("Failed to send match notification", e)
             e.printStackTrace()
         }
     }
@@ -596,7 +599,7 @@ class MatchNotificationService(
         val now = java.time.LocalTime.now()
         val currentHour = now.hour
 
-        println("@@@@@@@@@@ quiet hours: $quietHoursStart - $quietHoursEnd")
+        log.debug("Quiet hours: {} - {}", quietHoursStart, quietHoursEnd)
 
         return if (quietHoursStart < quietHoursEnd) {
             currentHour in quietHoursStart until quietHoursEnd
@@ -660,7 +663,7 @@ class MatchNotificationService(
                 }
                 
             } catch (e: Exception) {
-                println("❌ Failed to process digest for user $userId: ${e.message}")
+                log.error("Failed to process digest for userId={}", userId, e)
                 e.printStackTrace()
             }
         }

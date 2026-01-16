@@ -2,6 +2,7 @@ package app.bartering.features.notifications.service
 
 import app.bartering.features.notifications.model.*
 import app.bartering.features.notifications.dao.NotificationPreferencesDao
+import org.slf4j.LoggerFactory
 
 /**
  * High-level notification orchestrator
@@ -14,6 +15,7 @@ class NotificationOrchestrator(
     private val pushService: PushNotificationService,
     private val preferencesDao: NotificationPreferencesDao
 ) {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     /**
      * Send notification via all enabled channels for the user
@@ -27,7 +29,7 @@ class NotificationOrchestrator(
     ): Map<String, NotificationResult> {
         val results = mutableMapOf<String, NotificationResult>()
 
-        println("@@@@@@@@@@@@@ sending notification to $userId")
+        log.debug("Sending notification to userId={}", userId)
         // Get user contacts
         val contacts = preferencesDao.getUserContacts(userId)
             ?: return results // User not found or no contacts
@@ -47,7 +49,7 @@ class NotificationOrchestrator(
             try {
                 results["email"] = emailService.sendEmail(email)
             } catch (e: Exception) {
-                println("❌ Failed to send email to ${contacts.email}: ${e.message}")
+                log.error("Failed to send email to {}", contacts.email, e)
                 results["email"] = NotificationResult(
                     success = false,
                     errorMessage = e.message
@@ -70,7 +72,7 @@ class NotificationOrchestrator(
                 try {
                     results["push"] = pushService.sendPushNotification(push)
                 } catch (e: Exception) {
-                    println("❌ Failed to send push notification: ${e.message}")
+                    log.error("Failed to send push notification", e)
                     results["push"] = NotificationResult(
                         success = false,
                         errorMessage = e.message

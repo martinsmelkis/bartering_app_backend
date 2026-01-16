@@ -16,7 +16,10 @@ import app.bartering.features.postings.service.LocalFileStorageService
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.time.Instant
+
+private val log = LoggerFactory.getLogger("PostingImageUploadRoutes")
 
 fun Route.postingImageUploadRoutes() {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
@@ -31,7 +34,7 @@ fun Route.postingImageUploadRoutes() {
         else -> LocalFileStorageService()
     }
 
-    println("📁 Using image storage: ${imageStorage.javaClass.simpleName}")
+    log.info("Using image storage: {}", imageStorage.javaClass.simpleName)
 
     route("/api/v1/postings") {
 
@@ -121,7 +124,7 @@ fun Route.postingImageUploadRoutes() {
                         )
                         imageUrls.add(url)
                     } catch (e: Exception) {
-                        println("Failed to upload image $index: ${e.message}")
+                        log.error("Failed to upload image {}", index, e)
                     }
                 }
 
@@ -203,7 +206,7 @@ fun Route.postingImageUploadRoutes() {
                         )
                         imageUrls.add(url)
                     } catch (e: Exception) {
-                        println("Failed to upload image $index: ${e.message}")
+                        log.error("Failed to upload image {}", index, e)
                     }
                 }
 

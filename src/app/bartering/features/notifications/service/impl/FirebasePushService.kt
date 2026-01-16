@@ -12,6 +12,7 @@ import app.bartering.features.notifications.model.PushNotification
 import app.bartering.features.notifications.model.PushPlatform
 import app.bartering.features.notifications.service.PushNotificationService
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.io.FileInputStream
 import java.nio.file.Paths
 
@@ -32,7 +33,8 @@ import java.nio.file.Paths
  * SDK: com.google.firebase:firebase-admin:9.3.0
  */
 class FirebasePushService : PushNotificationService {
-    
+    private val log = LoggerFactory.getLogger(this::class.java)
+
     private val preferencesDao: NotificationPreferencesDao by inject(NotificationPreferencesDao::class.java)
     private var isInitialized = false
     
@@ -56,10 +58,10 @@ class FirebasePushService : PushNotificationService {
                 val serviceAccountFile = java.io.File(serviceAccountPath)
                 
                 if (!serviceAccountFile.exists()) {
-                    println("⚠️ Firebase credentials file not found at: $serviceAccountPath")
-                    println("⚠️ Push notifications will be disabled. Place the credentials file or set environment variables:")
-                    println("   - FIREBASE_CREDENTIALS_PATH (default: .)")
-                    println("   - FIREBASE_CREDENTIALS_FILE (default: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json)")
+                    log.warn("Firebase credentials file not found at: {}", serviceAccountPath)
+                    log.warn("Push notifications will be disabled. Place the credentials file or set environment variables:")
+                    log.warn("  - FIREBASE_CREDENTIALS_PATH (default: .)")
+                    log.warn("  - FIREBASE_CREDENTIALS_FILE (default: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json)")
                     return false
                 }
                 
@@ -70,15 +72,15 @@ class FirebasePushService : PushNotificationService {
                     .build()
                 
                 FirebaseApp.initializeApp(options)
-                println("✅ Firebase Admin SDK initialized successfully from: $serviceAccountPath")
+                log.info("Firebase Admin SDK initialized successfully from: {}", serviceAccountPath)
                 return true
             } else {
-                println("✅ Firebase Admin SDK already initialized")
+                log.info("Firebase Admin SDK already initialized")
                 return true
             }
         } catch (e: Exception) {
-            println("❌ Failed to initialize Firebase Admin SDK: ${e.message}")
-            println("⚠️ Push notifications will be disabled")
+            log.error("Failed to initialize Firebase Admin SDK", e)
+            log.warn("Push notifications will be disabled")
             e.printStackTrace()
             return false
         }
@@ -89,7 +91,7 @@ class FirebasePushService : PushNotificationService {
      */
     private fun checkInitialized(): Boolean {
         if (!isInitialized) {
-            println("⚠️ Firebase not initialized - operation skipped")
+            log.warn("Firebase not initialized - operation skipped")
         }
         return isInitialized
     }
@@ -329,7 +331,7 @@ class FirebasePushService : PushNotificationService {
                 else -> true // Other errors might be temporary
             }
         } catch (e: Exception) {
-            println("❌ Token validation error: ${e.message}")
+            log.error("Token validation error", e)
             false
         }
     }
@@ -351,7 +353,7 @@ class FirebasePushService : PushNotificationService {
             
             removedCount
         } catch (e: Exception) {
-            println("❌ Failed to cleanup invalid tokens for user $userId: ${e.message}")
+            log.error("Failed to cleanup invalid tokens for userId={}", userId, e)
             0
         }
     }
@@ -365,7 +367,7 @@ class FirebasePushService : PushNotificationService {
             FirebaseMessaging.getInstance()
             true
         } catch (e: Exception) {
-            println("❌ Firebase health check failed: ${e.message}")
+            log.error("Firebase health check failed", e)
             false
         }
     }

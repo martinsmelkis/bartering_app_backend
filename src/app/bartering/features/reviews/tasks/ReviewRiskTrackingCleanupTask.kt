@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import app.bartering.features.reviews.dao.RiskPatternDao
+import org.slf4j.LoggerFactory
 
 /**
  * Background task to periodically clean up old risk tracking data.
@@ -35,23 +36,24 @@ class ReviewRiskTrackingCleanupTask(
     private val locationRetentionDays: Int = 90,  // Keep location history for 90 days
     private val riskPatternRetentionDays: Int = 180  // Keep risk patterns longer for trend analysis
 ) {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     /**
      * Start the cleanup task in the provided coroutine scope.
      */
     fun start(scope: CoroutineScope) {
         scope.launch {
-            println("🚀 Starting RiskTrackingCleanupTask (runs every ${intervalHours}h)")
-            println("   - Device tracking retention: $deviceRetentionDays days")
-            println("   - IP tracking retention: $ipRetentionDays days")
-            println("   - Location history retention: $locationRetentionDays days")
-            println("   - Risk patterns retention: $riskPatternRetentionDays days")
+            log.info("Starting RiskTrackingCleanupTask (runs every {}h)", intervalHours)
+            log.info("Device tracking retention: {} days", deviceRetentionDays)
+            log.info("IP tracking retention: {} days", ipRetentionDays)
+            log.info("Location history retention: {} days", locationRetentionDays)
+            log.info("Risk patterns retention: {} days", riskPatternRetentionDays)
             
             while (true) {
                 try {
                     performCleanup()
                 } catch (e: Exception) {
-                    println("❌ Error during risk tracking cleanup: ${e.message}")
+                    log.error("Error during risk tracking cleanup", e)
                     e.printStackTrace()
                 }
                 
@@ -65,7 +67,7 @@ class ReviewRiskTrackingCleanupTask(
      * Perform the actual cleanup of old risk tracking data.
      */
     private suspend fun performCleanup() {
-        println("🧹 Starting risk tracking data cleanup...")
+        log.info("Starting risk tracking data cleanup")
         val startTime = System.currentTimeMillis()
         
         var totalDeleted = 0
@@ -75,10 +77,10 @@ class ReviewRiskTrackingCleanupTask(
             val deletedDevices = riskPatternDao.cleanupOldDeviceTracking(deviceRetentionDays)
             totalDeleted += deletedDevices
             if (deletedDevices > 0) {
-                println("   ✓ Deleted $deletedDevices old device tracking records")
+                log.info("Deleted {} old device tracking records", deletedDevices)
             }
         } catch (e: Exception) {
-            println("   ⚠️ Failed to cleanup device tracking: ${e.message}")
+            log.warn("Failed to cleanup device tracking", e)
         }
         
         // Clean up IP tracking data
@@ -86,10 +88,10 @@ class ReviewRiskTrackingCleanupTask(
             val deletedIps = riskPatternDao.cleanupOldIpTracking(ipRetentionDays)
             totalDeleted += deletedIps
             if (deletedIps > 0) {
-                println("   ✓ Deleted $deletedIps old IP tracking records")
+                log.info("Deleted {} old IP tracking records", deletedIps)
             }
         } catch (e: Exception) {
-            println("   ⚠️ Failed to cleanup IP tracking: ${e.message}")
+            log.warn("Failed to cleanup IP tracking", e)
         }
         
         // Clean up location change history
@@ -97,10 +99,10 @@ class ReviewRiskTrackingCleanupTask(
             val deletedLocations = riskPatternDao.cleanupOldLocationChanges(locationRetentionDays)
             totalDeleted += deletedLocations
             if (deletedLocations > 0) {
-                println("   ✓ Deleted $deletedLocations old location change records")
+                log.info("Deleted {} old location change records", deletedLocations)
             }
         } catch (e: Exception) {
-            println("   ⚠️ Failed to cleanup location changes: ${e.message}")
+            log.warn("Failed to cleanup location changes", e)
         }
         
         // Clean up old risk patterns
@@ -108,18 +110,18 @@ class ReviewRiskTrackingCleanupTask(
             val deletedPatterns = riskPatternDao.cleanupOldRiskPatterns(riskPatternRetentionDays)
             totalDeleted += deletedPatterns
             if (deletedPatterns > 0) {
-                println("   ✓ Deleted $deletedPatterns old risk pattern records")
+                log.info("Deleted {} old risk pattern records", deletedPatterns)
             }
         } catch (e: Exception) {
-            println("   ⚠️ Failed to cleanup risk patterns: ${e.message}")
+            log.warn("Failed to cleanup risk patterns", e)
         }
         
         val duration = System.currentTimeMillis() - startTime
         
         if (totalDeleted > 0) {
-            println("✅ Risk tracking cleanup complete: Deleted $totalDeleted records in ${duration}ms")
+            log.info("Risk tracking cleanup complete: Deleted {} records in {}ms", totalDeleted, duration)
         } else {
-            println("✅ Risk tracking cleanup complete: No old records to delete")
+            log.info("Risk tracking cleanup complete: No old records to delete")
         }
     }
 }

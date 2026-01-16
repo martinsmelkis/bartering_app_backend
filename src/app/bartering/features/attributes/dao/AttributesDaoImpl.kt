@@ -1,5 +1,6 @@
 package app.bartering.features.attributes.dao
 
+import org.slf4j.LoggerFactory
 import app.bartering.config.AiConfig
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.extensions.normalizeAttributeForDBProcessing
@@ -15,6 +16,7 @@ import org.jetbrains.exposed.sql.transactions.TransactionManager
 import kotlin.math.abs
 
 class AttributesDaoImpl : AttributesDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     val attributeCategorizer = AttributeCategorizer()
 
@@ -47,14 +49,14 @@ class AttributesDaoImpl : AttributesDao {
             return
         }
 
-        println("Found ${keysWithNullEmbeddings.size} attributes with missing embeddings. Populating now...")
+        log.info("Found {} attributes with missing embeddings. Populating now...", keysWithNullEmbeddings.size)
 
         // For each key, run the same UPDATE logic you use in createAttributeWithCategories
         dbQuery {
             for (key in keysWithNullEmbeddings) {
                 // Validate key length
                 if (key.length > 1000) {
-                    println("Skipping key with excessive length: ${key.take(50)}...")
+                    log.warn("Skipping key with excessive length: {}...", key.take(50))
                     continue
                 }
                 
@@ -77,7 +79,7 @@ class AttributesDaoImpl : AttributesDao {
                     }
             }
         }
-        println("Finished populating embeddings for: $keysWithNullEmbeddings")
+        log.info("Finished populating embeddings for {} attributes", keysWithNullEmbeddings.size)
     }
 
     suspend fun createAttributeWithCategories(
@@ -98,7 +100,7 @@ class AttributesDaoImpl : AttributesDao {
             // Step 2: Use pgai to generate and save the embedding for the new attribute.
             // Validate input length
             if (customUserAttrText.length > 10000) {
-                println("Custom attribute text too long: ${customUserAttrText.take(50)}...")
+                log.warn("Custom attribute text too long: {}...", customUserAttrText.take(50))
                 return@dbQuery null
             }
 
@@ -188,7 +190,7 @@ class AttributesDaoImpl : AttributesDao {
                     }
                 }
         }
-        println("@@@@@@@@@@@@@@ findComplementaryInterests result: $results")
+        log.debug("findComplementaryInterests result: {} items", results.size)
         return results
     }
 
@@ -282,7 +284,7 @@ class AttributesDaoImpl : AttributesDao {
                 .singleOrNull()
 
             if (existingAttribute != null) {
-                println("@@@@@@@@@ Attribute already exists: $attributeNameKey")
+                log.debug("Attribute already exists: {}", attributeNameKey)
                 return@dbQuery existingAttribute
             }
             val originalCustomUserText = attributeNameKey
@@ -305,7 +307,7 @@ class AttributesDaoImpl : AttributesDao {
 
             // 3. If creation returned null (race condition), try to fetch it again
             if (newAttribute == null) {
-                println("@@@@@@@@@ Attribute creation returned null for '$attributeNameKey', checking if it exists now...")
+                log.warn("Attribute creation returned null for '{}', checking if it exists now", attributeNameKey)
                 val retryFetch = AttributesMasterTable
                     .selectAll().where { AttributesMasterTable.attributeNameKey eq normalizedAttr }
                     .orWhere { AttributesMasterTable.customUserAttrText eq attributeNameKey }
@@ -313,10 +315,10 @@ class AttributesDaoImpl : AttributesDao {
                     .singleOrNull()
 
                 if (retryFetch != null) {
-                    println("@@@@@@@@@ Found attribute on retry: $attributeNameKey")
+                    log.info("Found attribute on retry: {}", attributeNameKey)
                     return@dbQuery retryFetch
                 } else {
-                    println("@@@@@@@@@ ERROR: Failed to create or find attribute: $attributeNameKey")
+                    log.error("Failed to create or find attribute: {}", attributeNameKey)
                     return@dbQuery null
                 }
             }
@@ -378,7 +380,7 @@ class AttributesDaoImpl : AttributesDao {
                     }
                 }
         }
-        println("@@@@@@@@@@@@ findSimilarInterestsForProfile result: $results")
+        log.debug("findSimilarInterestsForProfile result: {} items", results.size)
         return results
     }
 
@@ -419,7 +421,7 @@ class AttributesDaoImpl : AttributesDao {
         val minWeight = profileKeywords.values.minOrNull() ?: 0.0
         val weightRange = maxWeight - minWeight
 
-        //println("@@@@@@@@@@ Build Profile Vector: $profileKeywords (max: $maxWeight, min: $minWeight)")
+        log.trace("Build Profile Vector: max={}, min={}", maxWeight, minWeight)
 
         for ((keyword, originalWeight) in profileKeywords) {
             // Strategy 1: Normalize to [0, 1] range based on min/max

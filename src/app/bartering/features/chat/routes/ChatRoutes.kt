@@ -35,8 +35,10 @@ import java.util.Base64
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
+import org.slf4j.LoggerFactory
 
 fun Application.chatRoutes(connectionManager: ConnectionManager) {
+    val log = LoggerFactory.getLogger("app.bartering.features.chat.routes.ChatRoutes")
     // Connection manager to handle WebSocket connections
     // In production with multiple servers, replace with Redis-based implementation
     // for distributed connection management and cross-server message routing
@@ -88,7 +90,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     routing {
         webSocket("/chat") { // The WebSocket endpoint
             val currentConnection = ChatConnection(this)
-            println("New client connected! Connection ID: ${currentConnection.id}")
+            log.info("New client connected! Connection ID: {}", currentConnection.id)
             val usersDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
 
             // Example of getting locale from header
@@ -103,7 +105,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                     if (frame is Frame.Text) {
                         val text = frame.readText()
                         try {
-                            println("@@@@@@@@@@@@ ws try to decode auth request: $text")
+                            log.debug("WebSocket attempting to decode auth request: {}", text)
                             val authRequest = Json.decodeFromString<AuthRequest>(text)
 
                             // --- SIGNATURE-BASED AUTHENTICATION ---
@@ -146,7 +148,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             val registeredPublicKey = try {
                                 usersDao.getUserPublicKeyById(authRequest.userId)
                             } catch (e: Exception) {
-                                println("Error fetching public key for ${authRequest.userId}: ${e.message}")
+                                log.error("Error fetching public key for userId={}: {}", authRequest.userId, e.message)
                                 outgoing.send(
                                     Frame.Text(
                                         Json.encodeToString<SocketMessage>(
@@ -176,7 +178,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
 
                             // 3. Verify that the provided public key matches the registered one
                             if (authRequest.publicKey != registeredPublicKey) {
-                                println("Public key mismatch for ${authRequest.userId}")
+                                log.warn("Public key mismatch for userId={}", authRequest.userId)
                                 outgoing.send(
                                     Frame.Text(
                                         Json.encodeToString<SocketMessage>(
@@ -206,7 +208,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     Base64.getDecoder().decode(authRequest.signature)
 
                                 if (!signature.verify(signatureBytes)) {
-                                    println("Invalid signature for ${authRequest.userId}")
+                                    log.warn("Invalid signature for userId={}", authRequest.userId)
                                     outgoing.send(
                                         Frame.Text(
                                             Json.encodeToString<SocketMessage>(
@@ -220,8 +222,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     return@webSocket
                                 }
                             } catch (e: Exception) {
-                                println("Signature verification error for ${authRequest.userId}: ${e.message}")
-                                e.printStackTrace()
+                                log.error("Signature verification error for userId={}", authRequest.userId, e)
                                 outgoing.send(
                                     Frame.Text(
                                         Json.encodeToString<SocketMessage>(
@@ -241,7 +242,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             currentConnection.userPublicKey = authRequest.publicKey
 
                             val isNewConnection = connectionManager.getConnection(authRequest.userId) == null
-                            println("@@@@@@@@@ isNewConnection: $isNewConnection")
+                            log.debug("New connection check for userId={}: isNew={}", authRequest.userId, isNewConnection)
                             // Add connection to manager (handles closing old sessions automatically)
                             connectionManager.addConnection(
                                 authRequest.userId,
@@ -262,8 +263,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     )
                                 )
                             )
-                            println("User ${authRequest.userId} with peer ${authRequest.peerUserId} " +
-                                    "authenticated for connection ${currentConnection.id}.")
+                            log.info("User {} with peer {} authenticated for connection {}", 
+                                authRequest.userId, authRequest.peerUserId, currentConnection.id)
 
                             // Send my Public key to peer, if he/she is already online
                             if (isNewConnection && connectionManager.getConnection(authRequest.peerUserId) != null) {
@@ -296,7 +297,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
 
                             break // Exit auth loop
                         } catch (e: Exception) {
-                            println("Authentication error: ${e.localizedMessage}")
+                            log.error("Authentication error", e)
                             outgoing.send(Frame.Text(Json.encodeToString<SocketMessage>(socketSerializer,
                                 ErrorMessage("Invalid auth format: ${e.localizedMessage}"))))
                             close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid auth format"))
@@ -306,20 +307,20 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                 }
 
                 if (!isAuthenticated || currentConnection.userId == null) {
-                    println("Client failed to authenticate. Connection ID: ${currentConnection.id}")
+                    log.warn("Client failed to authenticate. Connection ID: {}", currentConnection.id)
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Authentication required"))
                     return@webSocket
                 }
 
                 // 2. Messaging Phase
                 val currentUserId = currentConnection.userId!!
-                println("User $currentUserId (${currentConnection.id}) entered messaging phase.")
+                log.info("User {} (connection {}) entered messaging phase", currentUserId, currentConnection.id)
 
                 // Deliver any pending offline messages to the newly connected user
                 val pendingMessages =
                     offlineMessageDao.getPendingMessages(currentUserId)
                 if (pendingMessages.isNotEmpty()) {
-                    println("Delivering ${pendingMessages.size} offline messages to ${currentUserId}")
+                    log.info("Delivering {} offline messages to userId={}", pendingMessages.size, currentUserId)
                     pendingMessages.forEach { offlineMsg ->
                         try {
                             val serverMessage = ServerChatMessage(
@@ -345,9 +346,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             // Use the original message timestamp (when it was sent to us while offline)
                             val stateKey = "$currentUserId:${offlineMsg.senderId}"
                             conversationState[stateKey] = java.time.Instant.ofEpochMilli(offlineMsg.timestamp)
-                            println("📊 Tracked offline message from ${offlineMsg.senderId} to $currentUserId")
+                            log.debug("📊 Tracked offline message from {} to {}", offlineMsg.senderId, currentUserId)
                         } catch (e: Exception) {
-                            println("Failed to deliver offline message ${offlineMsg.id}: ${e.message}")
+                            log.error("Failed to deliver offline message id={}", offlineMsg.id, e)
                         }
                     }
                 }
@@ -355,7 +356,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                 // Notify user about pending encrypted files
                 val pendingFiles = encryptedFileDao.getPendingFiles(currentUserId)
                 if (pendingFiles.isNotEmpty()) {
-                    println("Notifying ${currentUserId} about ${pendingFiles.size} pending files")
+                    log.info("Notifying userId={} about {} pending files", currentUserId, pendingFiles.size)
                     pendingFiles.forEach { fileDto ->
                         try {
                             val notification = FileNotificationMessage(
@@ -376,7 +377,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 )
                             )
                         } catch (e: Exception) {
-                            println("Failed to send file notification ${fileDto.id}: ${e.message}")
+                            log.error("Failed to send file notification id={}", fileDto.id, e)
                         }
                     }
                 }
@@ -384,11 +385,11 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                 for (frame in incoming) {
                     if (frame is Frame.Text) {
                         val receivedText = frame.readText()
-                        println("Received from $currentUserId: $receivedText")
+                        log.debug("Received from userId={}: {}", currentUserId, receivedText)
                         try {
                             val clientMessage = Json.decodeFromString<ClientChatMessage>(receivedText)
 
-                            println("@@@@@@@@@ clientMessage recipient: ${clientMessage.data.recipientId}")
+                            log.debug("Client message recipient: {}", clientMessage.data.recipientId)
                             val recipientConnection = connectionManager.getConnection(clientMessage.data.recipientId)
 
                             if (recipientConnection != null && recipientConnection.session.isActive) {
@@ -405,7 +406,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                         serverMessageId = UUID.randomUUID().toString(),
                                         senderName = clientMessage.data.senderName
                                     )
-                                    println("Relaying message from $currentUserId to ${clientMessage.data.recipientId}")
+                                    log.debug("Relaying message from {} to {}", currentUserId, clientMessage.data.recipientId)
                                     recipientConnection.session.send(
                                         Frame.Text(
                                             Json.encodeToString(
@@ -418,7 +419,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     // Track when recipient receives this message (for their response time)
                                     val recipientStateKey = "${clientMessage.data.recipientId}:$currentUserId"
                                     conversationState[recipientStateKey] = java.time.Instant.now()
-                                    println("📊 Tracked message from $currentUserId to ${clientMessage.data.recipientId}")
+                                    log.debug("📊 Tracked message from {} to {}", currentUserId, clientMessage.data.recipientId)
                                     
                                     // Track message count for transaction creation
                                     val conversationKey = listOf(currentUserId, clientMessage.data.recipientId).sorted().joinToString(":")
@@ -447,7 +448,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                         user2Id = clientMessage.data.recipientId,
                                                         estimatedValue = null
                                                     )
-                                                    println("✅ Created transaction $transactionId for conversation between $currentUserId and ${clientMessage.data.recipientId}")
+                                                    log.info("✅ Created transaction {} for conversation between {} and {}", 
+                                                        transactionId, currentUserId, clientMessage.data.recipientId)
                                                     
                                                     // Notify both users about the transaction
                                                     val timestamp = System.currentTimeMillis()
@@ -463,7 +465,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                             Frame.Text(Json.encodeToString(socketSerializer, notificationToSender))
                                                         )
                                                     } catch (e: Exception) {
-                                                        println("⚠️ Failed to notify sender: ${e.message}")
+                                                        log.warn("⚠️ Failed to notify sender", e)
                                                     }
                                                     // Notify recipient (if online)
                                                     try {
@@ -479,7 +481,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                             )
                                                         }
                                                     } catch (e: Exception) {
-                                                        println("⚠️ Failed to notify recipient: ${e.message}")
+                                                        log.warn("⚠️ Failed to notify recipient", e)
                                                     }
                                                     
                                                     // Reset message counts for this conversation
@@ -487,7 +489,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                     conversationMessageCounts.remove(recipientKey)
                                                 }
                                             } catch (e: Exception) {
-                                                println("⚠️ Failed to create transaction: ${e.message}")
+                                                log.error("⚠️ Failed to create transaction", e)
                                             }
                                         }
                                     }
@@ -505,9 +507,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                     messageReceivedAt = lastReceivedAt,
                                                     responseSentAt = java.time.Instant.now()
                                                 )
-                                                println("📊 Recorded response time for $currentUserId to ${clientMessage.data.recipientId}")
+                                                log.debug("📊 Recorded response time for {} to {}", currentUserId, clientMessage.data.recipientId)
                                             } catch (e: Exception) {
-                                                println("⚠️ Failed to record response time: ${e.message}")
+                                                log.warn("⚠️ Failed to record response time", e)
                                             }
                                         }
                                         // Clear the tracked timestamp after recording
@@ -515,8 +517,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     }
                                 }
                             } else {
-                                println("Recipient ${clientMessage.data.recipientId} not found or inactive. " +
-                                        "Message from $currentUserId not delivered.")
+                                log.debug("Recipient {} not found or inactive. Message from {} stored for offline delivery", 
+                                    clientMessage.data.recipientId, currentUserId)
 
                                 // Store message for offline delivery in database
                                 val offlineMessage = OfflineMessageDto(
@@ -530,7 +532,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
 
                                 val stored = offlineMessageDao.storeOfflineMessage(offlineMessage)
                                 if (stored) {
-                                    println("Message stored for offline delivery to ${clientMessage.data.recipientId}")
+                                    log.info("Message stored for offline delivery to userId={}", clientMessage.data.recipientId)
                                     
                                     // Send push notification to offline recipient
                                     cleanupScope.launch {
@@ -554,9 +556,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                         "senderId" to clientMessage.data.senderId)
                                                 )
                                             )
-                                            println("✅ Push notification sent to offline user ${clientMessage.data.recipientId}")
+                                            log.info("✅ Push notification sent to offline user {}", clientMessage.data.recipientId)
                                         } catch (e: Exception) {
-                                            println("⚠️ Failed to send push notification: ${e.message}")
+                                            log.warn("⚠️ Failed to send push notification", e)
                                         }
                                     }
                                     
@@ -570,7 +572,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                         )
                                     )
                                 } else {
-                                    println("Failed to store offline message for ${clientMessage.data.recipientId}")
+                                    log.error("Failed to store offline message for userId={}", clientMessage.data.recipientId)
                                     currentConnection.session.send(
                                         Frame.Text(
                                             Json.encodeToString<SocketMessage>(
@@ -583,8 +585,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 }
                             }
                         } catch (e: Exception) {
-                            e.printStackTrace()
-                            println("Error processing message from $currentUserId: ${e.localizedMessage}")
+                            log.error("Error processing message from userId={}", currentUserId, e)
                             currentConnection.session.send(Frame.Text(
                                 Json.encodeToString<SocketMessage>(socketSerializer,
                                 ErrorMessage("Error processing message: ${e.localizedMessage}"))))
@@ -592,10 +593,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                     }
                 }
             } catch (_: ClosedReceiveChannelException) {
-                println("Client ${currentConnection.userId ?: "ID: ${currentConnection.id}"} disconnected (channel closed).")
+                log.info("Client {} disconnected (channel closed)", currentConnection.userId ?: "ID: ${currentConnection.id}")
             } catch (e: Throwable) {
-                println("Error for ${currentConnection.userId ?: "ID: ${currentConnection.id}"}: ${e.localizedMessage}")
-                e.printStackTrace()
+                log.error("Error for {}", currentConnection.userId ?: "ID: ${currentConnection.id}", e)
             } finally {
                 currentConnection.userId?.let { userId ->
                     // Remove connection from manager (only if it's the current connection)
@@ -611,10 +611,10 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                     
                     val totalKeysRemoved = keysToRemove.size + messageCountKeys.size
                     if (totalKeysRemoved > 0) {
-                        println("🧹 Cleaned up $totalKeysRemoved conversation entries for $userId")
+                        log.debug("🧹 Cleaned up {} conversation entries for userId={}", totalKeysRemoved, userId)
                     }
                 }
-                println("Connection ID ${currentConnection.id} terminated.")
+                log.info("Connection ID {} terminated", currentConnection.id)
                 // No need to explicitly close session here if it's already closed by client or an error
             }
         }

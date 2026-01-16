@@ -140,7 +140,6 @@ fun Route.getOfferingsFromInterestsData() {
                 requestObj.userId
             )
 
-            println("@@@@@@@@ getOfferingsFromInterestsData $parsedInterestSuggestions")
             call.respond(parsedInterestSuggestions)
 
         } catch (e: Exception) {

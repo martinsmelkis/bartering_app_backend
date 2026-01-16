@@ -9,7 +9,10 @@ import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.dao.BarterTransactionDao
 import app.bartering.features.reviews.model.*
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.time.Instant
+
+private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes.TransactionRoutes")
 
 /**
  * Create a new barter transaction
@@ -55,7 +58,7 @@ fun Route.createTransactionRoute() {
             )
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Error creating transaction", e)
             call.respond(
                 HttpStatusCode.BadRequest,
                 mapOf("error" to "Invalid request: ${e.message}")
@@ -103,18 +106,42 @@ fun Route.updateTransactionStatusRoute() {
             }
 
             // Parse status
-            val status = TransactionStatus.fromString(request.status) ?: return@put call.respond(
+            val newStatus = TransactionStatus.fromString(request.status) ?: return@put call.respond(
                 HttpStatusCode.BadRequest,
                 mapOf("error" to "Invalid status: ${request.status}")
             )
 
+            // Validate state transitions - prevent invalid status changes
+            val currentStatus = transaction.status
+            if (!isValidStatusTransition(currentStatus, newStatus)) {
+                log.warn("Invalid status transition attempt for transaction {}: {} -> {} by user {}", 
+                    transactionId, currentStatus.value, newStatus.value, authenticatedUserId)
+                return@put call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf(
+                        "error" to "Invalid status transition: Cannot change from ${currentStatus.value} to ${newStatus.value}",
+                        "currentStatus" to currentStatus.value,
+                        "attemptedStatus" to newStatus.value
+                    )
+                )
+            }
+
+            // Prevent updating completedAt if already set (preserve original completion time)
+            val completedAt = if (newStatus == TransactionStatus.DONE && transaction.completedAt == null) {
+                Instant.now()
+            } else {
+                null // Don't update if already completed
+            }
+
             // Update status
-            val completedAt = if (status == TransactionStatus.DONE) Instant.now() else null
-            val success = transactionDao.updateTransactionStatus(transactionId, status, completedAt)
+            val success = transactionDao.updateTransactionStatus(transactionId, newStatus, completedAt)
 
             if (success) {
+                log.info("Transaction {} status updated from {} to {} by user {}", 
+                    transactionId, currentStatus.value, newStatus.value, authenticatedUserId)
                 call.respond(HttpStatusCode.OK, SuccessResponse(success = true))
             } else {
+                log.error("Failed to update transaction {} status to {}", transactionId, newStatus.value)
                 call.respond(
                     HttpStatusCode.InternalServerError,
                     mapOf("error" to "Failed to update transaction")
@@ -122,11 +149,57 @@ fun Route.updateTransactionStatusRoute() {
             }
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Error updating transaction status", e)
             call.respond(
                 HttpStatusCode.BadRequest,
                 mapOf("error" to "Invalid request: ${e.message}")
             )
+        }
+    }
+}
+
+/**
+ * Validates whether a status transition is allowed.
+ * Prevents invalid state changes that could corrupt data or analytics.
+ */
+private fun isValidStatusTransition(currentStatus: TransactionStatus, newStatus: TransactionStatus): Boolean {
+    // Same status is idempotent - allowed but should be logged
+    if (currentStatus == newStatus) {
+        return true // Allow, but caller should log this
+    }
+
+    // Define valid transitions based on business rules
+    return when (currentStatus) {
+        TransactionStatus.PENDING -> {
+            // From PENDING, can go to any status (user decides outcome)
+            true
+        }
+        TransactionStatus.DONE -> {
+            // Once DONE, cannot be changed (immutable completion)
+            // This prevents data corruption and preserves audit trail
+            false
+        }
+        TransactionStatus.CANCELLED -> {
+            // Cancelled transactions cannot be revived or changed
+            false
+        }
+        TransactionStatus.EXPIRED -> {
+            // Expired transactions cannot be changed
+            false
+        }
+        TransactionStatus.NO_DEAL -> {
+            // No deal is final
+            false
+        }
+        TransactionStatus.SCAM -> {
+            // SCAM status is serious and should only be changed by moderation
+            // In this API, regular users cannot change it
+            false
+        }
+        TransactionStatus.DISPUTED -> {
+            // Disputed transactions should only be resolved by moderation/admin
+            // For now, prevent user changes
+            false
         }
     }
 }
@@ -178,7 +251,7 @@ fun Route.getUserTransactionsRoute() {
             call.respond(HttpStatusCode.OK, responses)
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Error retrieving user transactions for userId={}", userId, e)
             call.respond(
                 HttpStatusCode.InternalServerError,
                 mapOf("error" to "Failed to retrieve transactions")
@@ -241,7 +314,7 @@ fun Route.getTransactionWithPartnerRoute() {
                 )
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            log.error("Error retrieving transaction with partnerId={}", partnerId, e)
             call.respond(
                 HttpStatusCode.InternalServerError,
                 mapOf("error" to "Failed to retrieve transaction: ${e.message}")

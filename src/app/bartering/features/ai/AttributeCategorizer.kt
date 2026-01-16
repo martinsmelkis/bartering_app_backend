@@ -7,8 +7,10 @@ import app.bartering.features.categories.CategoriesMasterTable
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.slf4j.LoggerFactory
 
 class AttributeCategorizer {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     /**
      * This should be called once on application startup.
@@ -22,11 +24,11 @@ class AttributeCategorizer {
                 .map { it[CategoriesMasterTable.id].value to it[CategoriesMasterTable.description]!! }
 
             if (categoriesToUpdate.isEmpty()) {
-                println("All category embeddings are already populated.")
+                log.info("All category embeddings are already populated")
                 return@dbQuery
             }
 
-            println("Found ${categoriesToUpdate.size} categories with missing embeddings. Populating now...")
+            log.info("Found {} categories with missing embeddings. Populating now", categoriesToUpdate.size)
 
             val updateSql = """
                 UPDATE categories
@@ -47,7 +49,7 @@ class AttributeCategorizer {
                     }
                     statement.executeBatch()
                 }
-            println("Finished populating category embeddings.")
+            log.info("Finished populating category embeddings")
         }
     }
 
@@ -76,7 +78,7 @@ class AttributeCategorizer {
                 statement[1] = newAttributeText
                 statement.executeQuery().use { rs ->
                     if (rs.next()) {
-                        println("@@@@@@@@@@@@@ bestCategoryMatchResponse for '$newAttributeText': ${rs.getString("category_key")}")
+                        log.debug("bestCategoryMatchResponse for '{}': {}", newAttributeText, rs.getString("category_key"))
                         bestMatch = rs.getInt("id") to rs.getString("category_key")
                     }
                 }
@@ -84,7 +86,7 @@ class AttributeCategorizer {
 
             val (categoryId, categoryKey) = bestMatch ?: findDefaultCategory()
 
-            println("@@@@@@@@ bestCategoryMatchResponse for '$newAttributeText': $categoryKey ($categoryId)")
+            log.debug("bestCategoryMatchResponse for '{}': {} ({})", newAttributeText, categoryKey, categoryId)
             listOf(CategoryLink(categoryId, 0.9.toBigDecimal()))
         }
     }

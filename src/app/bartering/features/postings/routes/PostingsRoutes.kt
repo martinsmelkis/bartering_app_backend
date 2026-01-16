@@ -16,10 +16,13 @@ import app.bartering.features.postings.service.LocalFileStorageService
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+
+private val log = LoggerFactory.getLogger("PostingsRoutes")
 
 fun Route.postingsRoutes() {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
@@ -32,7 +35,7 @@ fun Route.postingsRoutes() {
         else -> LocalFileStorageService()
     }
 
-    println("📁 Postings using image storage: ${imageStorage.javaClass.simpleName}")
+    log.info("Postings using image storage: {}", imageStorage.javaClass.simpleName)
 
     route("/api/v1/postings") {
 
@@ -83,7 +86,7 @@ fun Route.postingsRoutes() {
                                     if (bytes.size <= 10 * 1024 * 1024) {
                                         imageFiles.add(bytes to contentType)
                                     } else {
-                                        println("⚠️  Image too large: ${bytes.size / 1024 / 1024}MB (max 10MB)")
+                                        log.warn("Image too large: {}MB (max 10MB)", bytes.size / 1024 / 1024)
                                     }
                                 }
                             }
@@ -94,7 +97,7 @@ fun Route.postingsRoutes() {
                     }
 
                     // Log received data
-                    println("📥 Received posting data: userId=$userId, title=$title, desc length=${description?.length}, isOffer=$isOffer, images=${imageFiles.size}")
+                    log.debug("Received posting data: userId={}, title={}, desc length={}, isOffer={}, images={}", userId, title, description?.length, isOffer, imageFiles.size)
 
                     // Validate required fields
                     if (userId.isNullOrBlank() || title.isNullOrBlank() ||
@@ -119,7 +122,7 @@ fun Route.postingsRoutes() {
                             )
                             imageUrls.add(url)
                         } catch (e: Exception) {
-                            println("Failed to upload image $index: ${e.message}")
+                            log.error("Failed to upload image {}", index, e)
                             // Continue with other images
                         }
                     }
@@ -135,7 +138,7 @@ fun Route.postingsRoutes() {
                         attributes = emptyList()
                     )
 
-                    println("📝 Creating posting: userId=$userId, title=$title, imageCount=${imageUrls.size}")
+                    log.info("Creating posting: userId={}, title={}, imageCount={}", userId, title, imageUrls.size)
 
                     // Create posting
                     try {
@@ -143,7 +146,7 @@ fun Route.postingsRoutes() {
 
                         val posting = postingDao.getPosting(id!!)
                         if (posting != null) {
-                            println("✅ Posting created successfully: ${posting.id}")
+                            log.info("Posting created successfully: {}", posting.id)
                             call.respond(HttpStatusCode.Created, posting)
 
                             // Run matching in background to not block response
@@ -164,25 +167,25 @@ fun Route.postingsRoutes() {
                                             minMatchScore = 0.7
                                         )
                                         preferencesDao.savePostingPreference(posting.id, defaultRequest)
-                                        println("✅ Created default notification preference for posting ${posting.id}")
+                                        log.debug("Created default notification preference for posting {}", posting.id)
                                     }
                                     
                                     val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
                                     val attributeMatches = matchNotificationService.checkPostingAgainstUserAttributes(posting)
-                                    println("🔔 Found ${attributeMatches.size} attribute matches for posting ${posting.id}")
+                                    log.info("Found {} attribute matches for posting {}", attributeMatches.size, posting.id)
                                     
                                     // If this is an offer, check against interest postings
                                     if (posting.isOffer) {
                                         val postingMatches = matchNotificationService.checkPostingAgainstInterestPostings(posting)
-                                        println("🔔 Found ${postingMatches.size} posting matches for posting ${posting.id}")
+                                        log.info("Found {} posting matches for posting {}", postingMatches.size, posting.id)
                                     }
                                 } catch (e: Exception) {
-                                    println("❌ Error during match checking: ${e.message}")
+                                    log.error("Error during match checking", e)
                                     e.printStackTrace()
                                 }
                             }
                         } else {
-                            println("❌ Posting creation returned null")
+                            log.error("Posting creation returned null")
                             // Cleanup uploaded images on failure
                             imageStorage.deleteImages(imageUrls)
                             call.respond(
@@ -191,7 +194,7 @@ fun Route.postingsRoutes() {
                             )
                         }
                     } catch (e: Exception) {
-                        println("❌ Exception during posting creation: ${e.message}")
+                        log.error("Exception during posting creation", e)
                         e.printStackTrace()
                         // Cleanup uploaded images on failure
                         imageStorage.deleteImages(imageUrls)
@@ -235,19 +238,19 @@ fun Route.postingsRoutes() {
                                             minMatchScore = 0.7
                                         )
                                         preferencesDao.savePostingPreference(posting.id, defaultRequest)
-                                        println("✅ Created default notification preference for posting ${posting.id}")
+                                        log.debug("Created default notification preference for posting {}", posting.id)
                                     }
                                     
                                     val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
                                     val attributeMatches = matchNotificationService.checkPostingAgainstUserAttributes(posting)
-                                    println("🔔 Found ${attributeMatches.size} attribute matches for posting ${posting.id}")
+                                    log.info("Found {} attribute matches for posting {}", attributeMatches.size, posting.id)
                                     
                                     if (posting.isOffer) {
                                         val postingMatches = matchNotificationService.checkPostingAgainstInterestPostings(posting)
-                                        println("🔔 Found ${postingMatches.size} posting matches for posting ${posting.id}")
+                                        log.info("Found {} posting matches for posting {}", postingMatches.size, posting.id)
                                     }
                                 } catch (e: Exception) {
-                                    println("❌ Error during match checking: ${e.message}")
+                                    log.error("Error during match checking", e)
                                     e.printStackTrace()
                                 }
                             }
@@ -261,7 +264,7 @@ fun Route.postingsRoutes() {
                 }
 
             } catch (e: Exception) {
-                println("❌ Error creating posting: ${e.message}")
+                log.error("Error creating posting", e)
                 e.printStackTrace()
                 call.respond(
                     HttpStatusCode.InternalServerError,
@@ -322,7 +325,7 @@ fun Route.postingsRoutes() {
                                     if (bytes.size <= 10 * 1024 * 1024) {
                                         imageFiles.add(bytes to contentType)
                                     } else {
-                                        println("⚠️  Image too large: ${bytes.size / 1024 / 1024}MB (max 10MB)")
+                                        log.warn("Image too large: {}MB (max 10MB)", bytes.size / 1024 / 1024)
                                     }
                                 }
                             }
@@ -332,7 +335,7 @@ fun Route.postingsRoutes() {
                         part.dispose()
                     }
 
-                    println("📥 Updating posting $postingId: userId=$userId, title=$title, images=${imageFiles.size}")
+                    log.info("Updating posting {}: userId={}, title={}, images={}", postingId, userId, title, imageFiles.size)
 
                     // Validate required fields
                     if (userId.isNullOrBlank() || title.isNullOrBlank() ||
@@ -362,7 +365,7 @@ fun Route.postingsRoutes() {
                                 )
                                 newImageUrls.add(url)
                             } catch (e: Exception) {
-                                println("Failed to upload image $index: ${e.message}")
+                                log.error("Failed to upload image {}", index, e)
                             }
                         }
                     }
@@ -390,7 +393,7 @@ fun Route.postingsRoutes() {
                             try {
                                 imageStorage.deleteImages(oldImageUrls)
                             } catch (e: Exception) {
-                                println("⚠️  Failed to delete old images: ${e.message}")
+                                log.warn("Failed to delete old images", e)
                             }
                         }
 
@@ -432,7 +435,7 @@ fun Route.postingsRoutes() {
                 }
 
             } catch (e: Exception) {
-                println("❌ Error updating posting: ${e.message}")
+                log.error("Error updating posting", e)
                 e.printStackTrace()
                 call.respond(
                     HttpStatusCode.InternalServerError,

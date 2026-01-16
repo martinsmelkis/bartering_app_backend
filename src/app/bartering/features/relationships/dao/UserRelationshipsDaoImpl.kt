@@ -6,9 +6,11 @@ import app.bartering.features.relationships.db.UserRelationshipsTable
 import app.bartering.features.relationships.model.*
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.slf4j.LoggerFactory
 import java.time.format.DateTimeFormatter
 
 class UserRelationshipsDaoImpl : UserRelationshipsDao {
+    private val log = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createRelationship(
         fromUserId: String,
@@ -22,7 +24,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
                 it[UserRelationshipsTable.relationshipType] = relationshipType.value
             }.insertedCount > 0
         } catch (e: Exception) {
-            println("Error creating relationship: ${e.message}")
+            log.error("Error creating relationship from {} to {}", fromUserId, toUserId, e)
             false
         }
     }
@@ -39,7 +41,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
                         (UserRelationshipsTable.relationshipType eq relationshipType.value)
             } > 0
         } catch (e: Exception) {
-            println("Error removing relationship: ${e.message}")
+            log.error("Error removing relationship from {} to {}", fromUserId, toUserId, e)
             false
         }
     }
@@ -86,7 +88,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
         userId: String,
         relationshipType: RelationshipType
     ): List<String> = dbQuery {
-        println("@@@@@@@@@ relationshipsByType $userId $relationshipType")
+        log.debug("Getting relationships by type for userId={}, type={}", userId, relationshipType)
         UserRelationshipsTable
             .selectAll()
             .where {
@@ -166,7 +168,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
                     .count() > 0
 
                 if (!requestExists) {
-                    println("Friend request doesn't exist")
+                    log.warn("Friend request doesn't exist for fromUserId={}, toUserId={}", userId, friendUserId)
                     return@dbQuery false
                 }
 
@@ -192,7 +194,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
 
                 true
             } catch (e: Exception) {
-                println("Error accepting friend request: ${e.message}")
+                log.error("Error accepting friend request from {} to {}", userId, friendUserId, e)
                 false
             }
         }
@@ -206,7 +208,7 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
                             (relationshipType eq RelationshipType.FRIEND_REQUEST_SENT.value)
                 } > 0
             } catch (e: Exception) {
-                println("Error rejecting friend request: ${e.message}")
+                log.error("Error rejecting friend request from {} to {}", userId, friendUserId, e)
                 false
             }
         }

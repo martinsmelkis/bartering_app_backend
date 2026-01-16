@@ -7,6 +7,7 @@ import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.profile.db.UserPresenceTable
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.upsert
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -30,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ```
  */
 object UserActivityCache {
+    private val log = LoggerFactory.getLogger(this::class.java)
     
     // In-memory activity storage: userId -> (timestamp, activityType)
     private val activityMap = ConcurrentHashMap<String, ActivityRecord>()
@@ -64,18 +66,18 @@ object UserActivityCache {
      */
     fun init() {
         if (isInitialized.getAndSet(true)) {
-            println("⚠️ UserActivityCache already initialized")
+            log.warn("UserActivityCache already initialized")
             return
         }
         
-        println("🚀 Initializing UserActivityCache with ${SYNC_INTERVAL_SECONDS}s sync interval")
+        log.info("Initializing UserActivityCache with {}s sync interval", SYNC_INTERVAL_SECONDS)
         
         // Schedule periodic database sync
         syncScheduler.scheduleAtFixedRate({
             try {
                 syncToDatabase()
             } catch (e: Exception) {
-                println("❌ Error during activity sync: ${e.message}")
+                log.error("Error during activity sync", e)
                 e.printStackTrace()
             }
         }, SYNC_INTERVAL_SECONDS, SYNC_INTERVAL_SECONDS, TimeUnit.SECONDS)
@@ -85,11 +87,11 @@ object UserActivityCache {
             try {
                 cleanupInactiveUsers()
             } catch (e: Exception) {
-                println("❌ Error during cleanup: ${e.message}")
+                log.error("Error during cleanup", e)
             }
         }, 5, 5, TimeUnit.MINUTES)
         
-        println("✅ UserActivityCache initialized successfully")
+        log.info("UserActivityCache initialized successfully")
     }
     
     /**
@@ -203,7 +205,7 @@ object UserActivityCache {
             return
         }
         
-        println("📊 Syncing ${dirtyRecords.size} activity records to database...")
+        log.debug("Syncing {} activity records to database", dirtyRecords.size)
         
         // Use coroutine for async database write
         CoroutineScope(Dispatchers.IO).launch {
@@ -221,13 +223,13 @@ object UserActivityCache {
                             // Mark as clean (not dirty) after successful sync
                             activityMap[userId] = record.copy(isDirty = false)
                         } catch (e: Exception) {
-                            println("⚠️ Failed to sync activity for user $userId: ${e.message}")
+                            log.warn("Failed to sync activity for userId={}", userId, e)
                         }
                     }
                 }
-                println("✅ Activity sync complete")
+                log.debug("Activity sync complete")
             } catch (e: Exception) {
-                println("❌ Database sync failed: ${e.message}")
+                log.error("Database sync failed", e)
                 e.printStackTrace()
             }
         }
@@ -250,7 +252,7 @@ object UserActivityCache {
         
         if (toRemove.isNotEmpty()) {
             toRemove.forEach { activityMap.remove(it) }
-            println("🧹 Cleaned up ${toRemove.size} inactive users from cache")
+            log.debug("Cleaned up {} inactive users from cache", toRemove.size)
         }
     }
     
@@ -266,7 +268,7 @@ object UserActivityCache {
      * Should be called during application shutdown.
      */
     fun shutdown() {
-        println("🛑 Shutting down UserActivityCache...")
+        log.info("Shutting down UserActivityCache")
         
         // Sync any remaining dirty records
         forceSyncNow()
@@ -284,7 +286,7 @@ object UserActivityCache {
             syncScheduler.shutdownNow()
         }
         
-        println("✅ UserActivityCache shutdown complete")
+        log.info("UserActivityCache shutdown complete")
     }
     
     /**

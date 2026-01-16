@@ -13,7 +13,10 @@ import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.service.LocationPatternDetectionService
 import org.koin.java.KoinJavaComponent.inject
+import org.slf4j.LoggerFactory
 import kotlin.getValue
+
+private val log = LoggerFactory.getLogger("ProfileRoutes")
 
 fun Route.getProfilesNearbyRoute() {
 
@@ -49,7 +52,7 @@ fun Route.getProfilesNearbyRoute() {
 
         val sortedProfiles = allProfiles.sortedBy { it.distanceKm }.take(20)
 
-        println("@@@@@@@@@@ Send $sortedProfiles nearby profiles")
+        log.debug("Sending {} nearby profiles", sortedProfiles.size)
 
         call.respond(sortedProfiles)
     }
@@ -79,7 +82,7 @@ fun Route.createProfileRoute() {
     post("/api/v1/profile-create") {
         val user = call.receive<UserRegistrationDataDto>()
         userProfileDao.createProfile(user)
-        println("@@@@@@@@@@ User inserted into db: ${user.id}")
+        log.info("User inserted into db: {}", user.id)
         call.respond(HttpStatusCode.OK, "")
     }
 
@@ -232,7 +235,7 @@ fun Route.searchProfilesByKeywordRoute() {
                 customWeight = customWeight
             )
 
-            println("@@@@@@@@@@ Returning ${matchingProfiles.size} profiles for search: '$searchText' (weight: $customWeight)")
+            log.info("Returning {} profiles for search: '{}' (weight: {})", matchingProfiles.size, searchText, customWeight)
 
             call.respond(HttpStatusCode.OK, matchingProfiles)
 

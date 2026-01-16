@@ -1,12 +1,48 @@
 <configuration>
+    <!-- Console appender for development and production -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{YYYY-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-    <root level="trace">
+
+    <!-- Optional: File appender for production logs -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/application.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- Daily rollover -->
+            <fileNamePattern>logs/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <!-- Keep 30 days of history -->
+            <maxHistory>30</maxHistory>
+            <!-- Total size cap of 3GB -->
+            <totalSizeCap>3GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Environment-based configuration -->
+    <!-- Set LOG_LEVEL environment variable: DEBUG, INFO, WARN, ERROR -->
+    <!-- Default to INFO if not set -->
+    <variable name="LOG_LEVEL" value="${LOG_LEVEL:-INFO}" />
+
+    <!-- Root logger - uses environment variable -->
+    <root level="${LOG_LEVEL}">
         <appender-ref ref="STDOUT"/>
+        <!-- Uncomment for production file logging -->
+        <!-- <appender-ref ref="FILE"/> -->
     </root>
-    <logger name="org.eclipse.jetty" level="INFO"/>
-    <logger name="io.netty" level="INFO"/>
+
+    <!-- Reduce noise from third-party libraries -->
+    <logger name="org.eclipse.jetty" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="org.postgresql" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="INFO"/>
+    <logger name="org.flywaydb" level="INFO"/>
+    <logger name="io.ktor" level="INFO"/>
+    
+    <!-- Your application loggers - customize as needed -->
+    <logger name="app.bartering" level="${LOG_LEVEL}"/>
+    <logger name="app.bartering.features.chat" level="${LOG_LEVEL}"/>
 </configuration>

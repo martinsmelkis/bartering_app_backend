@@ -19,9 +19,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.io.readByteArray
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.*
+
+private val log = LoggerFactory.getLogger("app.bartering.features.encryptedfiles.routes.FileTransferRoutes")
 
 /**
  * REST endpoints for encrypted file upload/download
@@ -132,7 +135,7 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                         return@post
                     }
 
-                    println("Encrypted file uploaded: $fileId (${fileBytes.size} bytes) from $senderId to $recipientId")
+                    log.info("Encrypted file uploaded: {} ({} bytes) from {} to {}", fileId, fileBytes.size, senderId, recipientId)
 
                     // Notify recipient via WebSocket if online
                     val recipientConnection = connectionManager.getConnection(recipientId)
@@ -150,12 +153,12 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                             recipientConnection.session.send(
                                 Frame.Text(Json.encodeToString(socketSerializer, notification))
                             )
-                            println("File notification sent to online recipient: $recipientId")
+                            log.info("File notification sent to online recipient: {}", recipientId)
                         } catch (e: Exception) {
-                            println("Failed to send file notification to $recipientId: ${e.message}")
+                            log.warn("Failed to send file notification to {}", recipientId, e)
                         }
                     } else {
-                        println("Recipient $recipientId is offline. File will be available when they come online.")
+                        log.debug("Recipient {} is offline. File will be available when they come online", recipientId)
                     }
 
                     call.respond(
@@ -169,7 +172,7 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                     )
 
                 } catch (e: Exception) {
-                    println("Error uploading file: ${e.message}")
+                    log.error("Error uploading encrypted file", e)
                     e.printStackTrace()
                     call.respond(
                         HttpStatusCode.InternalServerError,
@@ -235,7 +238,7 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                         fileDao.markAsDownloaded(fileId)
                     }
 
-                    println("File downloaded: $fileId by $userId")
+                    log.info("File downloaded: {} by userId={}", fileId, userId)
 
                     // Send encrypted file
                     call.response.header(
@@ -251,7 +254,7 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                     )
 
                 } catch (e: Exception) {
-                    println("Error downloading file: ${e.message}")
+                    log.error("Error downloading encrypted file", e)
                     e.printStackTrace()
                     call.respond(
                         HttpStatusCode.InternalServerError,
@@ -297,7 +300,7 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                     )
 
                 } catch (e: Exception) {
-                    println("Error fetching pending files: ${e.message}")
+                    log.error("Error fetching pending files", e)
                     e.printStackTrace()
                     call.respond(
                         HttpStatusCode.InternalServerError,

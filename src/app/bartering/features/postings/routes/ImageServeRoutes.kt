@@ -4,6 +4,9 @@ import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import app.bartering.features.postings.service.LocalFileStorageService
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("ImageServeRoutes")
 
 /**
  * Routes for serving locally stored images.
@@ -19,7 +22,7 @@ fun Route.imageServeRoutes() {
             val userId = call.parameters["userId"]
             val fileName = call.parameters["fileName"]
 
-            println("📷 Image request: userId=$userId, fileName=$fileName")
+            log.debug("Image request: userId={}, fileName={}", userId, fileName)
 
             if (userId == null || fileName == null) {
                 call.respond(HttpStatusCode.BadRequest, "Invalid image URL")
@@ -29,7 +32,7 @@ fun Route.imageServeRoutes() {
             val imageUrl = "/api/v1/images/$userId/$fileName"
 
             val file = localStorage.getFile(imageUrl)
-            println("📷 Resolved file: ${file?.absolutePath}, exists: ${file?.exists()}")
+            log.debug("Resolved file: {}, exists: {}", file?.absolutePath, file?.exists())
 
             if (file == null || !file.exists()) {
                 call.respond(HttpStatusCode.NotFound, "Image not found")

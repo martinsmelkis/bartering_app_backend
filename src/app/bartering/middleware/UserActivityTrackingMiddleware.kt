@@ -3,6 +3,7 @@ package app.bartering.middleware
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import app.bartering.features.profile.cache.UserActivityCache
+import org.slf4j.LoggerFactory
 
 /**
  * Middleware that automatically tracks user activity for presence detection.
@@ -28,7 +29,10 @@ import app.bartering.features.profile.cache.UserActivityCache
  * ```
  */
 fun Application.installActivityTracking() {
-    println("🔧 Installing Activity Tracking Middleware...")
+
+    val log = LoggerFactory.getLogger("UserActivityTrackingMiddleware")
+
+    log.info("Installing Activity Tracking Middleware")
     
     intercept(ApplicationCallPipeline.Monitoring) {
         // Get authenticated user ID from request headers
@@ -46,7 +50,7 @@ fun Application.installActivityTracking() {
             } catch (e: Exception) {
                 // Silent fail - activity tracking should never break requests
                 // Only log in development/debug mode
-                // println("⚠️ Activity tracking error for user $userId: ${e.message}")
+                log.debug("Activity tracking error for userId={}", userId, e)
             }
         }
         
@@ -54,7 +58,7 @@ fun Application.installActivityTracking() {
         proceed()
     }
     
-    println("✅ Activity Tracking Middleware installed")
+    log.info("Activity Tracking Middleware installed")
 }
 
 /**

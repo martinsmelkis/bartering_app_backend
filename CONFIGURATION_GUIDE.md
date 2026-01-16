@@ -47,6 +47,13 @@ PostgreSQL password.
 PostgreSQL database name.
 
 - **Default**: `mainDatabase`
+
+### LOGBACK ###
+
+#### LOG_LEVEL
+
+DEBUG, INFO, WARN, ERROR
+
 ### FCM ###
 
 - FIREBASE_CREDENTIALS_PATH=/app
