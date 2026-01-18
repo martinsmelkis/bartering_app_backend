@@ -79,4 +79,10 @@ interface UserRelationshipsDao {
      * Gets all users who have blocked the specified user
      */
     suspend fun getBlockedByUsers(userId: String): List<String>
+
+    /**
+     * Gets all user IDs that have a blocked relationship with the specified user
+     * (both users that this user has blocked AND users who have blocked this user)
+     */
+    suspend fun getAllBlockedUserIds(userId: String): Set<String>
 }

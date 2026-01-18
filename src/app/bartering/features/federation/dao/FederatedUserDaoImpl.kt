@@ -139,9 +139,8 @@ class FederatedUserDaoImpl(
                 } else null,
                 attributes = profile.attributes.map { it.attributeId },
                 lastOnline = try {
-                    if (app.bartering.features.profile.cache.UserActivityCache.isOnline(profile.userId)) {
-                        Instant.now()
-                    } else null
+                    app.bartering.features.profile.cache.UserActivityCache.getLastSeen(profile.userId)
+                        ?.let { Instant.ofEpochMilli(it) }
                 } catch (e: Exception) {
                     null
                 }

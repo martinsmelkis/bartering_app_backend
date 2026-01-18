@@ -6,6 +6,7 @@ import app.bartering.features.encryptedfiles.db.EncryptedFilesTable
 import app.bartering.features.profile.db.UserRegistrationDataTable
 import app.bartering.features.authentication.dao.mapper.AuthenticationMapper
 import app.bartering.features.authentication.model.UserInfoDto
+import app.bartering.features.profile.cache.UserActivityCache
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.or
@@ -27,27 +28,32 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
     override suspend fun deleteUserAndAllData(userId: String): Boolean {
         return dbQuery {
             try {
-                // Step 1: Delete offline messages where user is sender or recipient
+                // Step 1: Remove user from activity cache to prevent foreign key violations
+                // during background sync operations
+                UserActivityCache.removeUser(userId)
+                
+                // Step 2: Delete offline messages where user is sender or recipient
                 // (These don't have FK constraints with CASCADE)
                 OfflineMessagesTable.deleteWhere { 
                     (OfflineMessagesTable.senderId eq userId) or 
                     (OfflineMessagesTable.recipientId eq userId)
                 }
                 
-                // Step 2: Delete encrypted files where user is sender or recipient
+                // Step 3: Delete encrypted files where user is sender or recipient
                 // (These don't have FK constraints with CASCADE)
                 EncryptedFilesTable.deleteWhere { 
                     (EncryptedFilesTable.senderId eq userId) or 
                     (EncryptedFilesTable.recipientId eq userId)
                 }
                 
-                // Step 3: Delete the user from user_registration_data
+                // Step 4: Delete the user from user_registration_data
                 // All related data will be automatically deleted due to ON DELETE CASCADE constraints:
                 // - user_profiles (FK: user_id -> user_registration_data.id)
                 // - user_attributes (FK: user_id -> user_registration_data.id)
                 // - user_relationships (FK: user_id_from, user_id_to -> user_registration_data.id)
                 // - user_postings (FK: user_id -> user_registration_data.id)
                 //   - posting_attributes_link (FK: posting_id -> user_postings.id)
+                // - user_presence (FK: user_id -> user_registration_data.id)
                 
                 val deletedCount = UserRegistrationDataTable.deleteWhere { 
                     UserRegistrationDataTable.id eq userId 

@@ -21,7 +21,7 @@ class AttributeCategorizer {
             val categoriesToUpdate = CategoriesMasterTable
                 .select(CategoriesMasterTable.id, CategoriesMasterTable.description)
                 .where { CategoriesMasterTable.parentId.isNull() and CategoriesMasterTable.embedding.isNull() and CategoriesMasterTable.description.isNotNull() }
-                .map { it[CategoriesMasterTable.id].value to it[CategoriesMasterTable.description]!! }
+                .map { it[CategoriesMasterTable.id].value to it[CategoriesMasterTable.description] }
 
             if (categoriesToUpdate.isEmpty()) {
                 log.info("All category embeddings are already populated")

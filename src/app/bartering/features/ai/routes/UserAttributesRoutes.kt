@@ -71,10 +71,10 @@ fun Route.getInterestsFromOnboardingData() {
         userProfileDao.updateSemanticProfile(userId, UserAttributeType.PROFILE)
 
         // TODO also give interest/interaction/popularity/search frequency a weight in suggestions
-        val parsedOfferingsSuggestions = attributesDao.findComplementaryInterests(
+        val parsedOfferingsSuggestions = attributesDao.parseInterestSuggestionsFromOnboardingData(
             extendedMap,
             userId = userId,
-            limit = 20
+            limit = 22
         )
 
         // --- Return a Success Response ---
@@ -134,9 +134,9 @@ fun Route.getOfferingsFromInterestsData() {
                 }
             }
 
-            val parsedInterestSuggestions = attributesDao.findSimilarInterestsForProfile(
+            val parsedInterestSuggestions = attributesDao.getComplementaryInterestSuggestions(
                 requestObj.attributesRelevancyData,
-                20,
+                22,
                 requestObj.userId
             )
 

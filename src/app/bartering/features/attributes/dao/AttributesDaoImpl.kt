@@ -139,7 +139,7 @@ class AttributesDaoImpl : AttributesDao {
         }
     }
 
-    override suspend fun findComplementaryInterests(
+    override suspend fun parseInterestSuggestionsFromOnboardingData(
         havesKeywords: Map<String, Double>,
         userId: String,
         limit: Int
@@ -157,7 +157,7 @@ class AttributesDaoImpl : AttributesDao {
         )
         SELECT
             a.attribute_key,
-            a.embedding <=> (SELECT embedding FROM profile_vector) AS similarity,
+            1 - (a.embedding <=> (SELECT embedding FROM profile_vector)) AS similarity,
             c.ui_style_hint
         FROM
             attributes a
@@ -171,7 +171,6 @@ class AttributesDaoImpl : AttributesDao {
             similarity DESC
         LIMIT ?;
     """.trimIndent()
-        //AND a.attribute_key NOT IN (${profileKeywords.keys.joinToString { "'$it'" }})
 
         val results = mutableListOf<AttributeSuggestion>()
 
@@ -327,7 +326,7 @@ class AttributesDaoImpl : AttributesDao {
         }
     }
 
-    override suspend fun findSimilarInterestsForProfile(
+    override suspend fun getComplementaryInterestSuggestions(
         profileKeywords: Map<String, Double>,
         limit: Int,
         userId: String
@@ -346,8 +345,8 @@ class AttributesDaoImpl : AttributesDao {
         )
         SELECT
             a.attribute_key,
-            ((0.6 * (1 - (a.embedding <=> (SELECT embedding FROM profile_vector))) + 
-            (0.4 * ((SELECT embedding FROM needs_vector) <=> a.embedding)))) AS similarity,
+            ((0.8 * (1 - (a.embedding <=> (SELECT embedding FROM profile_vector))) + 
+            (0.2 * ((SELECT embedding FROM needs_vector) <=> a.embedding)))) AS similarity,
             c.ui_style_hint
         FROM
             attributes a

@@ -62,6 +62,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     // Transaction DAO for creating trades when users chat
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     
+    // Relationships DAO for checking blocked status
+    val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by inject(app.bartering.features.relationships.dao.UserRelationshipsDaoImpl::class.java)
+    
     // Shared conversation state for tracking when users receive messages
     // Maps "userId:partnerId" -> timestamp when message was received
     // In production with multiple servers, use Redis for distributed state
@@ -236,7 +239,26 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 return@webSocket
                             }
 
-                            // 5. Authentication successful!
+                            // 5. Check if users have blocked each other
+                            val isBlockedByPeer = relationshipsDao.isBlocked(authRequest.peerUserId, authRequest.userId)
+                            val hasBlockedPeer = relationshipsDao.isBlocked(authRequest.userId, authRequest.peerUserId)
+                            
+                            if (isBlockedByPeer || hasBlockedPeer) {
+                                log.warn("Blocked relationship detected between {} and {}", authRequest.userId, authRequest.peerUserId)
+                                outgoing.send(
+                                    Frame.Text(
+                                        Json.encodeToString<SocketMessage>(
+                                            socketSerializer,
+                                            AuthResponse(false, "Cannot establish chat connection")
+                                        )
+                                    )
+                                )
+                                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY,
+                                    "Blocked relationship"))
+                                return@webSocket
+                            }
+
+                            // 6. Authentication successful!
                             currentConnection.userId = authRequest.userId
                             currentConnection.userName = authRequest.userName
                             currentConnection.userPublicKey = authRequest.publicKey
@@ -469,17 +491,15 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                                     }
                                                     // Notify recipient (if online)
                                                     try {
-                                                        recipientConnection?.let { conn ->
-                                                            val notificationToRecipient = TransactionCreatedMessage(
-                                                                transactionId = transactionId,
-                                                                partnerId = currentUserId,
-                                                                partnerName = currentConnection.userName ?: currentUserId,
-                                                                initiatedAt = timestamp
-                                                            )
-                                                            conn.session.send(
-                                                                Frame.Text(Json.encodeToString(socketSerializer, notificationToRecipient))
-                                                            )
-                                                        }
+                                                        val notificationToRecipient = TransactionCreatedMessage(
+                                                            transactionId = transactionId,
+                                                            partnerId = currentUserId,
+                                                            partnerName = currentConnection.userName ?: currentUserId,
+                                                            initiatedAt = timestamp
+                                                        )
+                                                        recipientConnection.session.send(
+                                                            Frame.Text(Json.encodeToString(socketSerializer, notificationToRecipient))
+                                                        )
                                                     } catch (e: Exception) {
                                                         log.warn("⚠️ Failed to notify recipient", e)
                                                     }

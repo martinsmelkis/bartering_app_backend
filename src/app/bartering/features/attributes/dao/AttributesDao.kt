@@ -16,13 +16,13 @@ interface AttributesDao {
      */
     suspend fun findOrCreate(attributeNameKey: String): Attribute?
 
-    suspend fun findSimilarInterestsForProfile(
+    suspend fun getComplementaryInterestSuggestions(
         profileKeywords: Map<String, Double>,
         limit: Int = 15,
         userId: String
     ): List<AttributeSuggestion>
 
-    suspend fun findComplementaryInterests(
+    suspend fun parseInterestSuggestionsFromOnboardingData(
         havesKeywords: Map<String, Double>,
         userId: String,
         limit: Int

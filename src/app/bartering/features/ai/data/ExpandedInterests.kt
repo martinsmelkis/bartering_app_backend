@@ -29,7 +29,7 @@ object ExpandedInterests {
 
         "Alternative medicine", "Biohacking", "Cold plunging", "Community gardening",
         "Cybersecurity", "Day trading", "Web Development", "Deep cleaning", "Digital nomadism",
-        "Recipes", "Bodybuilding", "Memes", "Metal detecting", "Minimalism",
+        "Recipes", "Bodybuilding", "Metal detecting", "Minimalism",
         "Pet grooming", "Podcasting", "Record collecting", "Marketing",
         "Tiny homes", "Upcycling", "Virtual reality", "PC building",
 

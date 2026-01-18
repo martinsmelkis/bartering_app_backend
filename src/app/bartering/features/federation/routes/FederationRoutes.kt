@@ -264,11 +264,11 @@ fun Route.federationRoutes() {
                 val federatedProfiles = nearbyUsers.map { userWithDistance ->
                     val profile = userWithDistance.profile
                     
-                    // Get online status from activity cache
-                    val isOnline = try {
-                        UserActivityCache.isOnline(profile.userId)
+                    // Get last online timestamp from activity cache
+                    val lastOnlineTimestamp = try {
+                        UserActivityCache.getLastSeen(profile.userId)
                     } catch (e: Exception) {
-                        false
+                        null
                     }
                     
                     FederatedUserProfile(
@@ -285,7 +285,7 @@ fun Route.federationRoutes() {
                             )
                         } else null,
                         attributes = profile.attributes.map { it.attributeId }, // Just the attribute IDs
-                        lastOnline = if (isOnline) java.time.Instant.now() else null
+                        lastOnline = lastOnlineTimestamp?.let { java.time.Instant.ofEpochMilli(it) }
                     )
                 }
 

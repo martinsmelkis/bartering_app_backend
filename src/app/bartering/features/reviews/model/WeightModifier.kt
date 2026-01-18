@@ -31,7 +31,7 @@ enum class WeightModifier(val value: String, val multiplier: Double) {
     TRUSTED_REVIEWER("trusted_reviewer", 1.3),
 
     /**
-     * Review from a new account (<14 days old).
+     * Review from a new account (<7 days old).
      */
     NEW_REVIEWER("new_reviewer", 0.6),
 

@@ -15,6 +15,7 @@ import app.bartering.features.postings.service.ImageStorageService
 import app.bartering.features.postings.service.LocalFileStorageService
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import io.ktor.utils.io.toByteArray
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -76,7 +77,7 @@ fun Route.postingImageUploadRoutes() {
 
                         is PartData.FileItem -> {
                             if (part.name == "images") {
-                                val bytes = part.streamProvider().readBytes()
+                                val bytes = part.provider().toByteArray()
                                 val contentType = part.contentType?.toString() ?: "image/jpeg"
                                 imageFiles.add(bytes to contentType)
                             }
@@ -106,7 +107,7 @@ fun Route.postingImageUploadRoutes() {
                 }
 
                 // Verify signature (simplified - you may need to adjust based on your auth mechanism)
-                val publicKey = profileDao.getUserPublicKeyById(userId!!)
+                val publicKey = profileDao.getUserPublicKeyById(userId)
                 if (publicKey == null) {
                     call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid user"))
                     return@post
@@ -118,7 +119,7 @@ fun Route.postingImageUploadRoutes() {
                     try {
                         val url = imageStorage.uploadImage(
                             imageData = bytes,
-                            userId = userId!!,
+                            userId = userId,
                             fileName = "image_$index.jpg",
                             contentType = contentType
                         )
@@ -131,15 +132,15 @@ fun Route.postingImageUploadRoutes() {
                 // Parse attributes if provided
                 val attributes = try {
                     attributesJson?.let { Json.decodeFromString<List<PostingAttributeDto>>(it) }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     null
                 }
 
                 // Create posting request
                 val postingRequest = UserPostingRequest(
-                    title = title!!,
-                    description = description!!,
-                    isOffer = isOffer!!,
+                    title = title,
+                    description = description,
+                    isOffer = isOffer,
                     value = value,
                     expiresAt = expiresAt,
                     imageUrls = imageUrls,
@@ -147,7 +148,7 @@ fun Route.postingImageUploadRoutes() {
                 )
 
                 // Create posting
-                val posting = postingDao.createPosting(userId!!, postingRequest)
+                val posting = postingDao.createPosting(userId, postingRequest)
 
                 if (posting != null) {
                     call.respond(HttpStatusCode.Created, posting)
@@ -187,7 +188,7 @@ fun Route.postingImageUploadRoutes() {
 
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem && part.name == "images") {
-                        val bytes = part.streamProvider().readBytes()
+                        val bytes = part.provider().toByteArray()
                         val contentType = part.contentType?.toString() ?: "image/jpeg"
                         imageFiles.add(bytes to contentType)
                     }

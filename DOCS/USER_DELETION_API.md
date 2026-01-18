@@ -133,15 +133,17 @@ curl -X DELETE "http://localhost:8081/api/v1/authentication/user/user123" \
 When a user is deleted, the following data is **permanently removed** from the system:
 
 ### Directly Deleted (Manual)
-1. **Offline Messages**: All messages where the user is sender or recipient
-2. **Encrypted Files**: All files where the user is sender or recipient
+1. **Activity Cache**: User removed from in-memory activity cache (prevents FK violations)
+2. **Offline Messages**: All messages where the user is sender or recipient
+3. **Encrypted Files**: All files where the user is sender or recipient
 
 ### Cascade Deleted (Database FK Constraints)
-3. **User Profile**: The user's profile information (name, location, etc.)
-4. **User Attributes**: All skill/interest attributes associated with the user
-5. **User Relationships**: All connections and blocks (both directions)
-6. **User Postings**: All marketplace offers and interests created by the user
-7. **Posting Attributes**: All attribute links for the user's postings
+4. **User Profile**: The user's profile information (name, location, etc.)
+5. **User Attributes**: All skill/interest attributes associated with the user
+6. **User Relationships**: All connections and blocks (both directions)
+7. **User Postings**: All marketplace offers and interests created by the user
+8. **Posting Attributes**: All attribute links for the user's postings
+9. **User Presence**: User activity tracking and online/offline status
 
 ### Summary of Deleted Records
 
@@ -153,6 +155,8 @@ When a user is deleted, the following data is **permanently removed** from the s
 | Relationships | `user_relationships` | CASCADE (FK) |
 | User Postings | `user_postings` | CASCADE (FK) |
 | Posting Attributes | `posting_attributes_link` | CASCADE (FK) |
+| User Presence | `user_presence` | CASCADE (FK) |
+| Activity Cache | In-memory cache | Manual (removed first) |
 | Offline Messages | `offline_messages` | Manual (sender/recipient) |
 | Encrypted Files | `encrypted_files` | Manual (sender/recipient) |
 
@@ -191,17 +195,21 @@ The deletion is implemented in `AuthenticationDaoImpl.deleteUserAndAllData()`:
 override suspend fun deleteUserAndAllData(userId: String): Boolean {
     return dbQuery {
         try {
-            // Step 1: Delete offline messages
+            // Step 1: Remove user from activity cache
+            // This prevents foreign key constraint violations during background sync
+            UserActivityCache.removeUser(userId)
+            
+            // Step 2: Delete offline messages
             OfflineMessagesTable.deleteWhere { 
                 (senderId eq userId) or (recipientId eq userId)
             }
             
-            // Step 2: Delete encrypted files
+            // Step 3: Delete encrypted files
             EncryptedFilesTable.deleteWhere { 
                 (senderId eq userId) or (recipientId eq userId)
             }
             
-            // Step 3: Delete user (cascades to related tables)
+            // Step 4: Delete user (cascades to related tables including user_presence)
             UserRegistrationDataTable.deleteWhere { 
                 id eq userId 
             }

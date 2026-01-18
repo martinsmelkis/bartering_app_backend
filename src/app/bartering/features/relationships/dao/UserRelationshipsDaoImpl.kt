@@ -266,4 +266,29 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
             }
             .map { it[UserRelationshipsTable.userIdFrom] }
     }
+
+    override suspend fun getAllBlockedUserIds(userId: String): Set<String> = dbQuery {
+        // Get users that this user has blocked
+        val blockedByMe = UserRelationshipsTable
+            .selectAll()
+            .where {
+                (UserRelationshipsTable.userIdFrom eq userId) and
+                        (UserRelationshipsTable.relationshipType eq RelationshipType.BLOCKED.value)
+            }
+            .map { it[UserRelationshipsTable.userIdTo] }
+            .toSet()
+
+        // Get users who have blocked this user
+        val blockedMe = UserRelationshipsTable
+            .selectAll()
+            .where {
+                (UserRelationshipsTable.userIdTo eq userId) and
+                        (UserRelationshipsTable.relationshipType eq RelationshipType.BLOCKED.value)
+            }
+            .map { it[UserRelationshipsTable.userIdFrom] }
+            .toSet()
+
+        // Return combined set (bidirectional blocking)
+        blockedByMe + blockedMe
+    }
 }

@@ -223,7 +223,17 @@ object UserActivityCache {
                             // Mark as clean (not dirty) after successful sync
                             activityMap[userId] = record.copy(isDirty = false)
                         } catch (e: Exception) {
-                            log.warn("Failed to sync activity for userId={}", userId, e)
+                            // Check if it's a foreign key constraint violation (user was deleted)
+                            val isForeignKeyError = e.message?.contains("foreign key constraint", ignoreCase = true) == true ||
+                                                   e.message?.contains("user_presence_user_id_fkey", ignoreCase = true) == true
+                            
+                            if (isForeignKeyError) {
+                                // User was deleted, remove from cache
+                                activityMap.remove(userId)
+                                log.debug("User {} was deleted, removed from activity cache", userId)
+                            } else {
+                                log.warn("Failed to sync activity for userId={}", userId, e)
+                            }
                         }
                     }
                 }
@@ -254,6 +264,28 @@ object UserActivityCache {
             toRemove.forEach { activityMap.remove(it) }
             log.debug("Cleaned up {} inactive users from cache", toRemove.size)
         }
+    }
+    
+    /**
+     * Remove a user from the activity cache.
+     * This should be called when a user is deleted from the system to prevent
+     * foreign key constraint violations during database sync.
+     * 
+     * @param userId The user ID to remove from the cache
+     */
+    fun removeUser(userId: String) {
+        activityMap.remove(userId)
+        log.debug("Removed userId={} from activity cache", userId)
+    }
+    
+    /**
+     * Remove multiple users from the activity cache.
+     * 
+     * @param userIds List of user IDs to remove from the cache
+     */
+    fun removeUsers(userIds: List<String>) {
+        userIds.forEach { activityMap.remove(it) }
+        log.debug("Removed {} users from activity cache", userIds.size)
     }
     
     /**

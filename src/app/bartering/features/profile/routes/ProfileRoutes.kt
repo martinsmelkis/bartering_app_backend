@@ -253,9 +253,37 @@ fun Route.searchProfilesByKeywordRoute() {
 fun Route.similarProfilesRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
 
-    post("/api/v1/similar-profiles") {
-        val user = call.receive<String>()
-        val profiles = userProfileDao.getSimilarProfiles(user)
+    get("/api/v1/similar-profiles") {
+        // Get userId from query parameters
+        val userId = call.request.queryParameters["userId"]
+        
+        if (userId.isNullOrBlank()) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Missing required parameter 'userId'")
+            )
+            return@get
+        }
+        
+        // Optional location parameters for geo-filtering
+        val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
+        val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
+        val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
+        
+        // Validate that both lat and lon are provided together
+        if ((lat != null && lon == null) || (lat == null && lon != null)) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Both 'lat' and 'lon' must be provided together")
+            )
+            return@get
+        }
+        
+        val profiles = userProfileDao.getSimilarProfiles(userId, lat, lon, radius)
+        
+        log.debug("Returning {} similar profiles for user {} (location filter: {})", 
+            profiles.size, userId, if (lat != null) "enabled" else "disabled")
+        
         call.respond(HttpStatusCode.OK, profiles)
     }
 
@@ -264,9 +292,37 @@ fun Route.similarProfilesRoute() {
 fun Route.complementaryProfilesRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
 
-    post("/api/v1/complementary-profiles") {
-        val user = call.receive<String>()
-        val profiles = userProfileDao.getHelpfulProfiles(user)
+    get("/api/v1/complementary-profiles") {
+        // Get userId from query parameters
+        val userId = call.request.queryParameters["userId"]
+        
+        if (userId.isNullOrBlank()) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Missing required parameter 'userId'")
+            )
+            return@get
+        }
+        
+        // Optional location parameters for geo-filtering
+        val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
+        val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
+        val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
+        
+        // Validate that both lat and lon are provided together
+        if ((lat != null && lon == null) || (lat == null && lon != null)) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Both 'lat' and 'lon' must be provided together")
+            )
+            return@get
+        }
+        
+        val profiles = userProfileDao.getHelpfulProfiles(userId, lat, lon, radius)
+        
+        log.debug("Returning {} complementary profiles for user {} (location filter: {})", 
+            profiles.size, userId, if (lat != null) "enabled" else "disabled")
+        
         call.respond(HttpStatusCode.OK, profiles)
     }
 

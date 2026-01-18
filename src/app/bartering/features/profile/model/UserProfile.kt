@@ -14,7 +14,7 @@ data class UserProfile(
     val attributes: List<UserAttributeDto>,
     val profileKeywordDataMap: Map<String, Double>?,
     val activePostingIds: List<String> = emptyList(),
-    val isOnline: Boolean = false,
+    val lastOnlineAt: Long? = null, // Timestamp in milliseconds when user was last online
     val preferredLanguage: String = "en"
 )
 
