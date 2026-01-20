@@ -46,6 +46,8 @@ import app.bartering.features.notifications.di.notificationsModule
 import app.bartering.features.reviews.di.reviewsModule
 import app.bartering.features.notifications.jobs.DigestNotificationJobManager
 import app.bartering.features.profile.cache.UserActivityCache
+import app.bartering.features.profile.tasks.InactiveUserCleanupTask
+import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
 import app.bartering.tests.TestRandom100UsersGenAndSimilarity
@@ -176,6 +178,19 @@ fun Application.module(testing: Boolean = false) {
     // Start digest notification jobs
     DigestNotificationJobManager.startJobs()
     log.info("✅ Digest notification jobs started")
+    
+    // Start inactive user cleanup task
+    val notificationOrchestrator: NotificationOrchestrator by inject(NotificationOrchestrator::class.java)
+    val enableAutoDelete = System.getenv("INACTIVE_USER_AUTO_DELETE")?.toBoolean() ?: false
+    val autoDeleteThreshold = System.getenv("INACTIVE_USER_AUTO_DELETE_THRESHOLD")?.toLong() ?: 180
+    
+    val inactiveUserCleanup = InactiveUserCleanupTask(
+        notificationOrchestrator = notificationOrchestrator,
+        enableAutoDelete = enableAutoDelete,
+        autoDeleteThresholdDays = autoDeleteThreshold
+    )
+    inactiveUserCleanup.start()
+    log.info("✅ Inactive user cleanup task started (auto-delete: $enableAutoDelete, threshold: $autoDeleteThreshold days)")
 
     install(StatusPages) {
         exception<Throwable> { call, cause ->

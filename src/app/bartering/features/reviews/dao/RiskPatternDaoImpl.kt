@@ -251,13 +251,15 @@ class RiskPatternDaoImpl : RiskPatternDao {
             // Check for location hopping (frequent changes)
             if (timeDiffHours < 24 && distance > 50_000) {
                 locationHoppingDetected = true
-                suspiciousPatterns.add("Location hopping: ${String.format("%.0f", distance / 1000)}km in ${String.format("%.1f", timeDiffHours)}h")
+                suspiciousPatterns.add("Location hopping: ${String.format("%.0f", distance / 1000)}" +
+                        "km in ${String.format("%.1f", timeDiffHours)}h")
             }
             
             // Check for impossible movement (> 500km in < 6 hours for profile changes)
             if (distance > 500_000 && timeDiffHours < 6) {
                 impossibleMovementDetected = true
-                suspiciousPatterns.add("Impossible movement: ${String.format("%.0f", distance / 1000)}km in ${String.format("%.1f", timeDiffHours)}h")
+                suspiciousPatterns.add("Impossible movement: ${String.format("%.0f", distance / 1000)}" +
+                        "km in ${String.format("%.1f", timeDiffHours)}h")
             }
         }
         
@@ -520,7 +522,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
     
     override suspend fun cleanupOldLocationChanges(olderThanDays: Int): Int = dbQuery {
         try {
-            val cutoffDate = java.time.Instant.now()
+            val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
             UserLocationChangesTable.deleteWhere {
@@ -535,7 +537,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
     
     override suspend fun cleanupOldRiskPatterns(olderThanDays: Int): Int = dbQuery {
         try {
-            val cutoffDate = java.time.Instant.now()
+            val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
             RiskPatternsTable.deleteWhere {

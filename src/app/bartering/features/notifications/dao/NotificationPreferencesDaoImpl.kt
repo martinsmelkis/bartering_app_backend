@@ -1,8 +1,6 @@
 package app.bartering.features.notifications.dao
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import app.bartering.features.notifications.db.*
 import app.bartering.features.notifications.model.*
 import org.jetbrains.exposed.sql.*
@@ -197,8 +195,7 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
         attributeId: String,
         request: UpdateAttributeNotificationPreferenceRequest
     ): AttributeNotificationPreference? = dbQuery {
-        val existing = getAttributePreference(userId, attributeId) ?: return@dbQuery null
-        
+
         AttributeNotificationPreferencesTable.update({
             (AttributeNotificationPreferencesTable.userId eq userId) and
             (AttributeNotificationPreferencesTable.attributeId eq attributeId)
@@ -272,8 +269,7 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
         postingId: String,
         request: UpdatePostingNotificationPreferenceRequest
     ): PostingNotificationPreference? = dbQuery {
-        val existing = getPostingPreference(postingId) ?: return@dbQuery null
-        
+
         PostingNotificationPreferencesTable.update({ PostingNotificationPreferencesTable.postingId eq postingId }) {
             request.notificationsEnabled?.let { enabled -> it[notificationsEnabled] = enabled }
             request.notificationFrequency?.let { freq -> it[notificationFrequency] = freq.name }

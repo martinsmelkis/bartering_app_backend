@@ -23,7 +23,6 @@ class NotificationOrchestrator(
     suspend fun sendNotification(
         userId: String,
         notification: NotificationData,
-        category: String = NotificationCategory.WISHLIST_MATCH,
         emailTemplate: EmailNotification? = null,
         pushNotification: PushNotification? = null
     ): Map<String, NotificationResult> {
@@ -82,19 +81,6 @@ class NotificationOrchestrator(
         }
         
         return results
-    }
-    
-    /**
-     * Send to multiple users
-     */
-    suspend fun sendBulkNotification(
-        userIds: List<String>,
-        notification: NotificationData,
-        category: String = NotificationCategory.SYSTEM_UPDATE
-    ): Map<String, Map<String, NotificationResult>> {
-        return userIds.associateWith { userId ->
-            sendNotification(userId, notification, category)
-        }
     }
     
     private fun buildDefaultEmail(

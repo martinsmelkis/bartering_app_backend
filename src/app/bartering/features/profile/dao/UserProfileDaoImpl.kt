@@ -7,6 +7,7 @@ import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
 import app.bartering.features.profile.model.*
+import app.bartering.features.profile.util.UserActivityFilter
 import org.jetbrains.exposed.sql.*
 import kotlinx.serialization.json.Json
 import net.postgis.jdbc.geometry.Point
@@ -35,7 +36,7 @@ class UserProfileDaoImpl : UserProfileDao {
     private val log = LoggerFactory.getLogger(this::class.java)
     
     // Inject relationships DAO for blocked user filtering
-    private val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by org.koin.java.KoinJavaComponent.inject(
+    private val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by inject(
         app.bartering.features.relationships.dao.UserRelationshipsDaoImpl::class.java
     )
 
@@ -146,7 +147,7 @@ class UserProfileDaoImpl : UserProfileDao {
         // Get last online timestamp from activity cache
         val lastOnlineAt = try {
             app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
 
@@ -198,17 +199,12 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Check if this is a new user profile (doesn't exist yet)
         val existingProfile = UserProfilesTable
-            .select(UserProfilesTable.userId, UserProfilesTable.name, UserProfilesTable.location)
+            .select(UserProfilesTable.userId, UserProfilesTable.name)
             .where { UserProfilesTable.userId eq userId }
             .singleOrNull()
 
         val isNewProfile = existingProfile == null
         val existingName = existingProfile?.getOrNull(UserProfilesTable.name)
-        val existingLocation = existingProfile?.getOrNull(UserProfilesTable.location)
-
-        // Track old location for change detection
-        val oldLatitude = existingLocation?.y // y is latitude in PostGIS
-        val oldLongitude = existingLocation?.x // x is longitude in PostGIS
 
         // Generate default username if needed (new user with no name provided)
         val finalName = when {
@@ -388,14 +384,24 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Found {} nearby profiles (before filtering)", results.size)
         
         // Filter out blocked users if excludeUserId is provided
-        val filteredResults = if (excludeUserId != null) {
+        val blockedFiltered = if (excludeUserId != null) {
             val blockedUserIds = relationshipsDao.getAllBlockedUserIds(excludeUserId)
-            results.filter { it.profile.userId !in blockedUserIds }.take(30)
+            results.filter { it.profile.userId !in blockedUserIds }
         } else {
-            results.take(30)
+            results
         }
         
-        log.debug("Returning {} nearby profiles (after filtering)", filteredResults.size)
+        // Filter out dormant users (inactive for 90+ days) from nearby searches
+        // Inactive users (30-90 days) are still shown but with lower priority
+        val activityFiltered = UserActivityFilter.filterByActivity(
+            profiles = blockedFiltered,
+            includeDormant = false,  // Hide users inactive for 90+ days
+            includeInactive = true   // Still show users inactive 30-90 days
+        )
+        
+        val filteredResults = activityFiltered.take(30)
+        
+        log.debug("Returning {} nearby profiles (after blocked + activity filtering)", filteredResults.size)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
@@ -539,7 +545,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Execute the main user search query
         TransactionManager.current().connection.prepareStatement(semanticSimilarityQuery, false).also { statement ->
-            queryParams.forEachIndexed { index, (columnType, value) ->
+            queryParams.forEachIndexed { index, (_, value) ->
                 // Use the actual value type - coordinates and radius are non-null when added to queryParams
                 statement[index + 1] = value!!
             }
@@ -589,9 +595,19 @@ class UserProfileDaoImpl : UserProfileDao {
         
         // Filter out blocked users
         val blockedUserIds = relationshipsDao.getAllBlockedUserIds(currentUserId)
-        val filteredResults = results.filter { it.profile.userId !in blockedUserIds }.take(20)
+        val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
         
-        log.debug("Returning {} similar profiles (after filtering)", filteredResults.size)
+        // For semantic matching, apply activity penalty instead of filtering
+        // This allows dormant users who are perfect matches to still appear,
+        // but active users get priority
+        val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
+        
+        // Re-sort by adjusted relevancy scores
+        val sorted = penalized.sortedByDescending { it.matchRelevancyScore ?: 0.0 }
+        
+        val filteredResults = sorted.take(20)
+        
+        log.debug("Returning {} similar profiles (after filtering + activity penalty)", filteredResults.size)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
@@ -854,9 +870,18 @@ class UserProfileDaoImpl : UserProfileDao {
         
         // Filter out blocked users
         val blockedUserIds = relationshipsDao.getAllBlockedUserIds(userId)
-        val filteredResults = results.filter { it.profile.userId !in blockedUserIds }.take(limit)
+        val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
         
-        log.info("Returning {} profiles (after filtering blocked users)", filteredResults.size)
+        // For keyword search, apply soft penalty to maintain result diversity
+        // while still prioritizing active users
+        val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
+        
+        // Re-sort by adjusted relevancy scores
+        val sorted = penalized.sortedByDescending { it.matchRelevancyScore ?: 0.0 }
+        
+        val filteredResults = sorted.take(limit)
+        
+        log.info("Returning {} profiles (after filtering + activity penalty)", filteredResults.size)
         
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
@@ -1565,6 +1590,7 @@ class UserProfileDaoImpl : UserProfileDao {
      * @param profiles List of profiles to boost
      * @return Same list with boosted scores and lastOnlineAt timestamps set
      */
+    // TODO boost based on reputation and interaction/activity/reply speed/badges
     private fun applyOnlineBoostAndStatus(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
         if (profiles.isEmpty()) return profiles
         
@@ -1595,9 +1621,9 @@ class UserProfileDaoImpl : UserProfileDao {
                 0.0
             }
             
-            if (boost > 0.0 && profileWithDistance.matchRelevancyScore != null) {
+            if (boost > 0.0) {
                 // Apply the boost to relevancy score
-                val boostedScore = (profileWithDistance.matchRelevancyScore + boost).coerceAtMost(1.0)
+                val boostedScore = ((profileWithDistance.matchRelevancyScore ?: (0.0 + boost))).coerceAtMost(1.0)
                 profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)
             } else {
                 profileWithDistance.copy(profile = updatedProfile)
@@ -1659,7 +1685,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     // Get last online timestamp from activity cache
                     val lastOnlineAt = try {
                         app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
                     

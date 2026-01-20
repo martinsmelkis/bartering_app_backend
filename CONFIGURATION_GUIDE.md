@@ -180,3 +180,49 @@ If services can't connect to Ollama:
 1. Verify Ollama is running: `docker ps | grep ollama`
 2. Check logs: `docker logs ollama_server`
 3. Verify the host is correct for your network mode
+
+## Example .env
+
+# Database Configuration
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_secure_password_here
+POSTGRES_DB=mainDatabase
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+
+# Environment
+ENVIRONMENT=development
+
+# Inactive User Management
+# Enable auto-deletion of users inactive for specified threshold
+INACTIVE_USER_AUTO_DELETE=false
+
+# Days of inactivity before auto-deletion (default: 180)
+INACTIVE_USER_AUTO_DELETE_THRESHOLD=180
+
+# Days before sending reactivation email (default: 60)
+INACTIVE_USER_REACTIVATION_EMAIL_DAYS=60
+
+# Days before sending deletion warning (default: 120)
+INACTIVE_USER_WARNING_EMAIL_DAYS=120
+
+# Firebase Configuration
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-credentials.json
+
+# Email Provider Configuration
+EMAIL_PROVIDER=aws_ses  # Options: sendgrid, aws_ses, smtp
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_SES_FROM_EMAIL=noreply@yourdomain.com
+
+# Push Notification Provider
+PUSH_PROVIDER=firebase  # Options: firebase, onesignal, aws_sns
+
+# AI Configuration
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_EMBED_MODEL=mxbai-embed-large
+
+# Server Configuration
+SERVER_PORT=8081
+SERVER_HOST=0.0.0.0

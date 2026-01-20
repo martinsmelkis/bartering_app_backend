@@ -121,7 +121,7 @@ fun Route.getOfferingsFromInterestsData() {
             userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.SEEKING)
 
             // Check for matching postings for each new SEEKING attribute
-            val matchNotificationService: app.bartering.features.notifications.service.MatchNotificationService by inject(app.bartering.features.notifications.service.MatchNotificationService::class.java)
+            val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
             for ((attributeKey, _) in requestObj.attributesRelevancyData) {
                 try {
                     // 1. Check existing postings that match this SEEKING attribute (user gets notified)

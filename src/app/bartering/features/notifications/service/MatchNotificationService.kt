@@ -651,8 +651,7 @@ class MatchNotificationService(
             // Send via orchestrator
             orchestrator.sendNotification(
                 userId = match.userId,
-                notification = notification,
-                category = NotificationCategory.WISHLIST_MATCH // Use available category
+                notification = notification
             )
             
             // Mark as sent
@@ -729,8 +728,7 @@ class MatchNotificationService(
                 
                 orchestrator.sendNotification(
                     userId = userId,
-                    notification = notification,
-                    category = NotificationCategory.SYSTEM_UPDATE // Use available category
+                    notification = notification
                 )
                 
                 // Mark all as sent
