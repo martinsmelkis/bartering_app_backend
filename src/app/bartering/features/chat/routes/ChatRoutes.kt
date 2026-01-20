@@ -444,7 +444,6 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     log.debug("📊 Tracked message from {} to {}", currentUserId, clientMessage.data.recipientId)
                                     
                                     // Track message count for transaction creation
-                                    val conversationKey = listOf(currentUserId, clientMessage.data.recipientId).sorted().joinToString(":")
                                     val senderKey = "$currentUserId:${clientMessage.data.recipientId}"
                                     val currentSenderCount = conversationMessageCounts.getOrDefault(senderKey, 0) + 1
                                     conversationMessageCounts[senderKey] = currentSenderCount

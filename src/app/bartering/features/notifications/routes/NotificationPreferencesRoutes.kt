@@ -255,8 +255,6 @@ fun Application.notificationPreferencesRoutes() {
                     
                     val created = mutableListOf<AttributeNotificationPreference>()
 
-                    // TODO Translate according to user language preference - add optional field
-                    //  to user_profile, check header and save - on notify check localization file
                     for (attributeId in batchRequest.attributeIds) {
                         val request = CreateAttributeNotificationPreferenceRequest(
                             attributeId = attributeId.normalizeAttributeForDBProcessing(),

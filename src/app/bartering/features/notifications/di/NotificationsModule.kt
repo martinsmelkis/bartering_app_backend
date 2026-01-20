@@ -60,7 +60,8 @@ val notificationsModule = module {
         MatchNotificationService(
             preferencesDao = get(),
             postingDao = get(),
-            orchestrator = get()
+            orchestrator = get(),
+            profileDao = get()
         )
     }
 

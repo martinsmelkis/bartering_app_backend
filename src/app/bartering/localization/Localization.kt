@@ -17,11 +17,11 @@ object Localization {
 
     fun getString(key: String, locale: Locale = Locale.ENGLISH, vararg args: Any): String {
         return try {
-            String.format(getBundle(locale).getString(key), *args)
+            String.format(locale, getBundle(locale).getString(key), *args)
         } catch (_: Exception) {
             // Fallback to English if key not found in specified locale or other error
             try {
-                String.format(getBundle(Locale.ENGLISH).getString(key), *args)
+                String.format(Locale.ENGLISH, getBundle(Locale.ENGLISH).getString(key), *args)
             } catch (_: Exception) {
                 key // return key as last resort
             }

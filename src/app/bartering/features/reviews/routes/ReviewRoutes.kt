@@ -22,6 +22,41 @@ import java.util.UUID
 private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes.ReviewRoutes")
 
 /**
+ * Get the real client IP address from request headers.
+ * When running behind a proxy (like Docker, nginx, etc.), the direct connection IP
+ * will be the proxy's IP. We need to check forwarding headers to get the real client IP.
+ * 
+ * Priority:
+ * 1. X-Forwarded-For (most common, can contain multiple IPs - we take the first one)
+ * 2. X-Real-IP (nginx standard)
+ * 3. Fallback to direct connection IP
+ */
+private fun io.ktor.server.application.ApplicationCall.getRealIpAddress(): String {
+    // X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+    // We want the first one (original client)
+    request.headers["X-Forwarded-For"]?.let { forwarded ->
+        val clientIp = forwarded.split(",").firstOrNull()?.trim()
+        if (!clientIp.isNullOrBlank() && clientIp != "unknown") {
+            log.debug("Client IP from X-Forwarded-For: {}", clientIp)
+            return clientIp
+        }
+    }
+    
+    // X-Real-IP is set by some proxies (nginx)
+    request.headers["X-Real-IP"]?.let { realIp ->
+        if (realIp.isNotBlank() && realIp != "unknown") {
+            log.debug("Client IP from X-Real-IP: {}", realIp)
+            return realIp
+        }
+    }
+    
+    // Fallback to direct connection IP (will be Docker IP if behind proxy)
+    val fallbackIp = request.origin.remoteAddress
+    log.debug("Client IP from origin.remoteAddress (fallback): {}", fallbackIp)
+    return fallbackIp
+}
+
+/**
  * Submit a review for a transaction
  */
 fun Route.submitReviewRoute() {
@@ -97,7 +132,7 @@ fun Route.submitReviewRoute() {
 
             // Extract request metadata for risk analysis
             val deviceFingerprint = call.request.headers["X-Device-Fingerprint"]
-            val ipAddress = call.request.origin.remoteAddress
+            val ipAddress = call.getRealIpAddress() // Get real client IP (handles Docker/proxy)
             val userAgent = call.request.headers["User-Agent"]
 
             // Track patterns for risk analysis (device and IP only, no GPS)

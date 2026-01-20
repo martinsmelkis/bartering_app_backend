@@ -50,6 +50,11 @@ kotlin {
     jvmToolchain(21)
 }
 
+// Set UTF-8 encoding for all compile tasks
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 tasks.withType(Jar).configureEach {
     manifest {
         attributes["Main-Class"] = "app.bartering.ApplicationKt"

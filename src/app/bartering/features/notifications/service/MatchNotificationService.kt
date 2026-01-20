@@ -8,9 +8,12 @@ import app.bartering.features.notifications.model.*
 import app.bartering.features.notifications.utils.NotificationDataBuilder
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.model.UserPosting
+import app.bartering.features.profile.dao.UserProfileDao
+import app.bartering.localization.Localization
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -20,9 +23,32 @@ import java.util.UUID
 class MatchNotificationService(
     private val preferencesDao: NotificationPreferencesDao,
     private val postingDao: UserPostingDao,
-    private val orchestrator: NotificationOrchestrator
+    private val orchestrator: NotificationOrchestrator,
+    private val profileDao: UserProfileDao
 ) {
     private val log = LoggerFactory.getLogger(this::class.java)
+    
+    /**
+     * Get localized attribute name from attributeId
+     */
+    private fun getLocalizedAttribute(attributeId: String, locale: Locale): String {
+        val key = "attr_$attributeId"
+        return Localization.getString(key, locale)
+    }
+    
+    /**
+     * Get user's preferred locale
+     */
+    private suspend fun getUserLocale(userId: String): Locale {
+        return try {
+            val profile = profileDao.getProfile(userId)
+            val langCode = profile?.preferredLanguage ?: "en"
+            Locale.forLanguageTag(langCode)
+        } catch (e: Exception) {
+            log.warn("Failed to get locale for user {}: {}", userId, e.message)
+            Locale.ENGLISH
+        }
+    }
     
     /**
      * Check a new posting against all users' attribute notification preferences
@@ -61,6 +87,14 @@ class MatchNotificationService(
                     )
                     
                     if (existingMatch == null) {
+                        val userLocale = getUserLocale(userId)
+                        val localizedAttribute = getLocalizedAttribute(preference.attributeId, userLocale)
+                        val localizedReason = Localization.getString(
+                            "match.posting_matches_interest",
+                            userLocale,
+                            localizedAttribute
+                        )
+                        
                         val match = MatchHistoryEntry(
                             id = UUID.randomUUID().toString(),
                             userId = userId,
@@ -70,7 +104,7 @@ class MatchNotificationService(
                             targetType = TargetType.POSTING,
                             targetId = posting.userId,
                             matchScore = matchScore,
-                            matchReason = "New posting matches your interest in '${preference.attributeId}'",
+                            matchReason = localizedReason,
                             matchedAt = Instant.now()
                         )
                         
@@ -136,6 +170,14 @@ class MatchNotificationService(
                 log.debug("Existing match found: {}", existingMatch)
                 
                 if (existingMatch == null) {
+                    val userLocale = getUserLocale(interestPosting.userId)
+                    val localizedReason = Localization.getString(
+                        "match.posting_matches_posting",
+                        userLocale,
+                        newPosting.title,
+                        interestPosting.title
+                    )
+                    
                     val match = MatchHistoryEntry(
                         id = UUID.randomUUID().toString(),
                         userId = interestPosting.userId,
@@ -145,7 +187,7 @@ class MatchNotificationService(
                         targetType = TargetType.POSTING,
                         targetId = newPosting.userId,
                         matchScore = matchScore,
-                        matchReason = "New posting '${newPosting.title}' matches your interest '${interestPosting.title}'",
+                        matchReason = localizedReason,
                         matchedAt = Instant.now()
                     )
                     
@@ -201,8 +243,17 @@ class MatchNotificationService(
                     targetType = TargetType.POSTING,
                     targetId = posting.id
                 )
-                
+
                 if (existingMatch == null) {
+                    val userLocale = getUserLocale(userId)
+                    val localizedAttribute = getLocalizedAttribute(attributeId, userLocale)
+                    val localizedReason = Localization.getString(
+                        "match.posting_matches_attribute",
+                        userLocale,
+                        posting.title,
+                        localizedAttribute
+                    )
+                    
                     val match = MatchHistoryEntry(
                         id = UUID.randomUUID().toString(),
                         userId = userId,
@@ -212,7 +263,7 @@ class MatchNotificationService(
                         targetType = TargetType.POSTING,
                         targetId = posting.userId,
                         matchScore = matchScore,
-                        matchReason = "Posting '${posting.title}' matches your interest in '$attributeId'",
+                        matchReason = localizedReason,
                         matchedAt = Instant.now()
                     )
                     
@@ -272,6 +323,15 @@ class MatchNotificationService(
                 )
                 
                 if (existingMatch == null) {
+                    val userLocale = getUserLocale(posting.userId)
+                    val localizedAttribute = getLocalizedAttribute(attributeId, userLocale)
+                    val localizedReason = Localization.getString(
+                        "match.user_offering_matches_posting",
+                        userLocale,
+                        localizedAttribute,
+                        posting.title
+                    )
+                    
                     val match = MatchHistoryEntry(
                         id = UUID.randomUUID().toString(),
                         userId = posting.userId, // Notify the posting owner
@@ -281,7 +341,7 @@ class MatchNotificationService(
                         targetType = TargetType.USER,
                         targetId = userId, // The user who added the offering
                         matchScore = matchScore,
-                        matchReason = "User offering '$attributeId' matches your posting '${posting.title}'",
+                        matchReason = localizedReason,
                         matchedAt = Instant.now()
                     )
                     
@@ -342,6 +402,15 @@ class MatchNotificationService(
                 )
                 
                 if (existingMatch == null) {
+                    val userLocale = getUserLocale(posting.userId)
+                    val localizedAttribute = getLocalizedAttribute(attributeId, userLocale)
+                    val localizedReason = Localization.getString(
+                        "match.user_seeking_matches_posting",
+                        userLocale,
+                        localizedAttribute,
+                        posting.title
+                    )
+                    
                     val match = MatchHistoryEntry(
                         id = UUID.randomUUID().toString(),
                         userId = posting.userId, // Notify the posting owner
@@ -351,7 +420,7 @@ class MatchNotificationService(
                         targetType = TargetType.USER,
                         targetId = userId, // The user who added the seeking attribute
                         matchScore = matchScore,
-                        matchReason = "User seeking '$attributeId' matches your posting '${posting.title}'",
+                        matchReason = localizedReason,
                         matchedAt = Instant.now()
                     )
                     
@@ -416,13 +485,13 @@ class MatchNotificationService(
         val titleWords = interestPosting.title.lowercase().split(" ").filter { it.length > 3 }
         val offerTitleWords = offerPosting.title.lowercase().split(" ").filter { it.length > 3 }
         val titleOverlap = titleWords.count { word -> offerTitleWords.any { it.contains(word) || word.contains(it) } }
-        score += (titleOverlap.toDouble() / titleWords.size.coerceAtLeast(1)) * 0.5
+        score += (titleOverlap.toDouble() / titleWords.size.coerceAtLeast(1)) * 0.6
 
         // Description similarity
         val descWords = interestPosting.description.lowercase().split(" ").filter { it.length > 3 }.take(20)
         val offerDescWords = offerPosting.description.lowercase().split(" ").filter { it.length > 3 }
         val descOverlap = descWords.count { word -> offerDescWords.any { it.contains(word) || word.contains(it) } }
-        score += (descOverlap.toDouble() / descWords.size.coerceAtLeast(1)) * 0.3
+        score += (descOverlap.toDouble() / descWords.size.coerceAtLeast(1)) * 0.4
 
         // 2. Attribute matching (30% weight)
         val interestAttrIds = interestPosting.attributes.map { it.attributeId }
@@ -448,7 +517,7 @@ class MatchNotificationService(
             // 1. Semantic similarity using embeddings (most important - 50% weight)
             val embeddingSimilarity = calculateEmbeddingSimilarity(interestPosting.id, offerPosting.id)
             if (embeddingSimilarity != null) {
-                score += embeddingSimilarity * 0.8
+                score += embeddingSimilarity * 0.85
                 log.debug("Embedding similarity between '{}' and '{}': {}", 
                     interestPosting.title, offerPosting.title, embeddingSimilarity)
             }
@@ -559,9 +628,16 @@ class MatchNotificationService(
             // Determine match type: if source is a posting (wishlist), it's a wishlist_match
             val notificationType = if (match.sourceType == SourceType.POSTING) "wishlist_match" else "match"
             
+            // Get localized default message if matchReason is null
+            val userLocale = getUserLocale(match.userId)
+            val finalMatchReason = match.matchReason ?: Localization.getString(
+                "match.default",
+                userLocale
+            )
+            
             val notification = NotificationDataBuilder.match(
                 matchId = match.id,
-                matchReason = match.matchReason ?: "A new posting matches your interests",
+                matchReason = finalMatchReason,
                 postingId = posting.id,
                 postingUserId = posting.userId,
                 postingTitle = posting.title,

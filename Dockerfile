@@ -24,6 +24,9 @@ RUN gradle shadowJar --no-daemon
 # Runtime stage
 FROM amazoncorretto:21
 
+# Set UTF-8 encoding for Java
+ENV JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8"
+
 EXPOSE 8081
 WORKDIR /app
 
@@ -33,4 +36,4 @@ COPY --from=build /home/gradle/src/build/libs/BarterAppBackend-all.jar /app/bart
 # Copy Firebase credentials from build stage if it exists
 COPY --from=build /home/gradle/src/*.json /app/ 
 
-ENTRYPOINT ["java","-jar","/app/barter-app-backend-api.jar"]
+ENTRYPOINT ["java","-Dfile.encoding=UTF-8","-jar","/app/barter-app-backend-api.jar"]
