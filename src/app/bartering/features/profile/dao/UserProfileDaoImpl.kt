@@ -39,19 +39,52 @@ class UserProfileDaoImpl : UserProfileDao {
     private val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by inject(
         app.bartering.features.relationships.dao.UserRelationshipsDaoImpl::class.java
     )
+    
+    // Inject reputation DAO for reputation-based boosting
+    private val reputationDao: app.bartering.features.reviews.dao.ReputationDao by inject(
+        app.bartering.features.reviews.dao.ReputationDao::class.java
+    )
 
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
         maxSize = 1000,
         ttlMinutes = 60
     )
-    
-    // Online boost configuration
+
+    // Boost configuration
     private companion object {
+        // Online activity boosts
         const val RECENT_ONLINE_BOOST = 0.05  // Boost score by 0.05 for users online < 10 minutes ago
         const val DAILY_ACTIVE_BOOST = 0.02   // Boost score by 0.02 for users active < 24 hours ago
         const val TEN_MINUTES_MILLIS = 10 * 60 * 1000L  // 10 minutes in milliseconds
         const val TWENTY_FOUR_HOURS_MILLIS = 24 * 60 * 60 * 1000L  // 24 hours in milliseconds
+        
+        // Reputation boosts (based on average rating)
+        const val EXCELLENT_RATING_BOOST = 0.08  // 4.8+ average rating
+        const val GREAT_RATING_BOOST = 0.05      // 4.5+ average rating
+        const val GOOD_RATING_BOOST = 0.02       // 4.0+ average rating
+        
+        // Trust level boosts
+        const val VERIFIED_TRUST_BOOST = 0.10    // Verified trust level
+        const val TRUSTED_BOOST = 0.07           // Trusted trust level
+        const val ESTABLISHED_BOOST = 0.04       // Established trust level
+        const val EMERGING_BOOST = 0.02          // Emerging trust level
+        
+        // Badge boosts (stackable, but capped)
+        const val TOP_RATED_BADGE_BOOST = 0.06
+        const val VETERAN_TRADER_BADGE_BOOST = 0.05
+        const val QUICK_RESPONDER_BADGE_BOOST = 0.04
+        const val DISPUTE_FREE_BADGE_BOOST = 0.04
+        const val FAST_TRADER_BADGE_BOOST = 0.03
+        const val COMMUNITY_CONNECTOR_BADGE_BOOST = 0.03
+        const val VERIFIED_BUSINESS_BADGE_BOOST = 0.05
+        const val IDENTITY_VERIFIED_BADGE_BOOST = 0.04
+        
+        // Trade activity boost
+        const val HIGH_TRADE_DIVERSITY_BOOST = 0.03  // Diversity score > 0.7
+        
+        // Maximum total boost to prevent over-boosting
+        const val MAX_TOTAL_BOOST = 0.25  // Cap at 0.25 total boost
     }
 
     override suspend fun createProfile(user: UserRegistrationDataDto): Unit = dbQuery {
@@ -382,7 +415,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
         log.debug("Found {} nearby profiles (before filtering)", results.size)
-        
+
         // Filter out blocked users if excludeUserId is provided
         val blockedFiltered = if (excludeUserId != null) {
             val blockedUserIds = relationshipsDao.getAllBlockedUserIds(excludeUserId)
@@ -390,7 +423,7 @@ class UserProfileDaoImpl : UserProfileDao {
         } else {
             results
         }
-        
+
         // Filter out dormant users (inactive for 90+ days) from nearby searches
         // Inactive users (30-90 days) are still shown but with lower priority
         val activityFiltered = UserActivityFilter.filterByActivity(
@@ -398,11 +431,11 @@ class UserProfileDaoImpl : UserProfileDao {
             includeDormant = false,  // Hide users inactive for 90+ days
             includeInactive = true   // Still show users inactive 30-90 days
         )
-        
+
         val filteredResults = activityFiltered.take(30)
-        
+
         log.debug("Returning {} nearby profiles (after blocked + activity filtering)", filteredResults.size)
-        
+
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
     }
@@ -474,11 +507,11 @@ class UserProfileDaoImpl : UserProfileDao {
                 -- Calculate profile similarity (my personality vs their personality)
                 (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))) as profile_similarity
                 ${if (latitude != null && longitude != null) {
-                    // Conditionally add the GEOGRAPHIC DISTANCE if location is provided.
-                    ", ST_Distance(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-                } else {
-                    ", NULL as distance_meters"
-                }
+            // Conditionally add the GEOGRAPHIC DISTANCE if location is provided.
+            ", ST_Distance(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+        } else {
+            ", NULL as distance_meters"
+        }
         }
             FROM
                 -- Find all other users...
@@ -495,28 +528,28 @@ class UserProfileDaoImpl : UserProfileDao {
                 -- Make sure the current user's profile exists to avoid errors.
                 AND EXISTS (SELECT 1 FROM current_user_profile WHERE ${myEmbeddingColumnType.name} IS NOT NULL)
                 ${
-                    // Conditionally add the GEOSPATIAL filter if location and radius are provided.
-                    if (latitude != null && longitude != null && radiusMeters != null) {
-                        // ST_DWithin is very fast because it uses the spatial index.
-                        "AND ST_DWithin(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography, ?)"
-                    } else {
-                        ""
-                    }
-                }
+            // Conditionally add the GEOSPATIAL filter if location and radius are provided.
+            if (latitude != null && longitude != null && radiusMeters != null) {
+                // ST_DWithin is very fast because it uses the spatial index.
+                "AND ST_DWithin(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography, ?)"
+            } else {
+                ""
+            }
+        }
             -- Order results primarily by how semantically similar they are (higher is better).
             ORDER BY
                 -- Weighted average: 70% attribute similarity, 30% profile similarity
                 (0.7 * (1 - (other_user_semantic_profile.${othersEmbeddingColumnType.name} <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile)))) +
                 ${
-                    if ((currentUserProfileType == UserAttributeType.SEEKING 
-                                && otherUsersProfileType == UserAttributeType.PROVIDING) ||
-                        (currentUserProfileType == UserAttributeType.PROVIDING 
-                                && otherUsersProfileType == UserAttributeType.SEEKING)) {
-                        "(0.3 * (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile)))"
-                    } else {
-                        "(0.3 * (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))))"
-                    }
-                }
+            if ((currentUserProfileType == UserAttributeType.SEEKING
+                        && otherUsersProfileType == UserAttributeType.PROVIDING) ||
+                (currentUserProfileType == UserAttributeType.PROVIDING
+                        && otherUsersProfileType == UserAttributeType.SEEKING)) {
+                "(0.3 * (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile)))"
+            } else {
+                "(0.3 * (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))))"
+            }
+        }
                 DESC,
                 distance_meters ASC NULLS LAST
             LIMIT 20;
@@ -592,23 +625,23 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
         log.debug("Found {} similar profiles (before filtering)", results.size)
-        
+
         // Filter out blocked users
         val blockedUserIds = relationshipsDao.getAllBlockedUserIds(currentUserId)
         val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
-        
+
         // For semantic matching, apply activity penalty instead of filtering
         // This allows dormant users who are perfect matches to still appear,
         // but active users get priority
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
-        
+
         // Re-sort by adjusted relevancy scores
         val sorted = penalized.sortedByDescending { it.matchRelevancyScore ?: 0.0 }
-        
+
         val filteredResults = sorted.take(20)
-        
+
         log.debug("Returning {} similar profiles (after filtering + activity penalty)", filteredResults.size)
-        
+
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
     }
@@ -773,8 +806,8 @@ class UserProfileDaoImpl : UserProfileDao {
         // Formula: multiplier = 0.5 + (customWeight - 10) * (1.2 - 0.5) / (100 - 10)
         val clampedWeight = customWeight.coerceIn(10, 100)
         val weightMultiplier = 0.5 + (clampedWeight - 10) * 0.7 / 90.0
-        
-        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {})", 
+
+        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {})",
             sanitizedSearchText, customWeight, weightMultiplier)
 
         // Stage 1: Fast keyword-only search (no embedding generation)
@@ -800,16 +833,17 @@ class UserProfileDaoImpl : UserProfileDao {
         // Stage 2: Semantic similarity search on user profiles
         if (useSemanticEnhancement) {
             val searchEmbedding = getOrGenerateEmbedding(sanitizedSearchText)
-            
+
             if (searchEmbedding != null) {
                 val semanticResults = executeSemanticProfileSearch(
                     userId,
                     searchEmbedding,
                     latitude,
                     longitude,
+                    radiusMeters,
                     weightMultiplier
                 )
-                
+
                 semanticResults.forEach { (profile, distance, score) ->
                     userProfiles.add(
                         UserProfileWithDistance(
@@ -820,7 +854,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     )
                     userAttributes[profile.userId] = mutableListOf()
                 }
-                
+
                 log.debug("Stage 2 complete: Found {} semantic profile matches", semanticResults.size)
 
                 // Stage 3: Semantic similarity search on user postings
@@ -832,7 +866,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     radiusMeters,
                     weightMultiplier
                 )
-                
+
                 postingResults.forEach { (profile, distance, score) ->
                     // Only add if not already in results
                     if (!userProfiles.any { it.profile.userId == profile.userId }) {
@@ -846,7 +880,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         userAttributes[profile.userId] = mutableListOf()
                     }
                 }
-                
+
                 log.debug("Stage 3 complete: Found {} posting matches", postingResults.size)
             }
         }
@@ -865,24 +899,24 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
 
-        log.info("Search complete: Found {} total profiles (before filtering) matching '{}' (semantic enhancement: {})", 
+        log.info("Search complete: Found {} total profiles (before filtering) matching '{}' (semantic enhancement: {})",
             results.size, searchText, useSemanticEnhancement)
-        
+
         // Filter out blocked users
         val blockedUserIds = relationshipsDao.getAllBlockedUserIds(userId)
         val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
-        
+
         // For keyword search, apply soft penalty to maintain result diversity
         // while still prioritizing active users
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
-        
+
         // Re-sort by adjusted relevancy scores
         val sorted = penalized.sortedByDescending { it.matchRelevancyScore ?: 0.0 }
-        
+
         val filteredResults = sorted.take(limit)
-        
+
         log.info("Returning {} profiles (after filtering + activity penalty)", filteredResults.size)
-        
+
         // Apply online boost and set online status
         applyOnlineBoostAndStatus(filteredResults)
     }
@@ -980,12 +1014,12 @@ class UserProfileDaoImpl : UserProfileDao {
                     COALESCE(ums.priority_bonus, 0) +
                     COALESCE(pms.posting_score, 0) as keyword_score
                     ${
-                        if (latitude != null && longitude != null) {
-                            ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-                        } else {
-                            ", NULL as distance_meters"
-                        }
-                    }
+            if (latitude != null && longitude != null) {
+                ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+            } else {
+                ", NULL as distance_meters"
+            }
+        }
                 FROM user_registration_data u
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_match_scores ums ON u.id = ums.user_id
@@ -1011,10 +1045,10 @@ class UserProfileDaoImpl : UserProfileDao {
         """.trimIndent()
 
         val keywordParams = mutableListOf<Pair<IColumnType<*>, Any?>>()
-        
+
         // Parameters for matching_attributes CTE (5 occurrences)
         repeat(5) { keywordParams.add(VarCharColumnType() to searchText) }
-        
+
         // Parameters for posting_match_scores CTE (10 occurrences)
         // Title: word_similarity, similarity, LIKE
         repeat(3) { keywordParams.add(VarCharColumnType() to searchText) }
@@ -1104,12 +1138,14 @@ class UserProfileDaoImpl : UserProfileDao {
 
     /**
      * Stage 2: Semantic similarity search on user profiles
+     * Optimized to filter by location first using spatial index before semantic matching
      */
     private suspend fun executeSemanticProfileSearch(
         userId: String,
         searchEmbedding: FloatArray,
         latitude: Double?,
         longitude: Double?,
+        radiusMeters: Double?,
         weightMultiplier: Double? = 1.0
     ): List<Triple<UserProfile, Double, Double>> = dbQuery {
         val embeddingArray = searchEmbedding.joinToString(",", "[", "]")
@@ -1145,12 +1181,12 @@ class UserProfileDaoImpl : UserProfileDao {
                         0.0
                     ) as profile_similarity
                     ${
-                        if (latitude != null && longitude != null) {
-                            ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-                        } else {
-                            ", NULL as distance_meters"
-                        }
-                    }
+            if (latitude != null && longitude != null) {
+                ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+            } else {
+                ", NULL as distance_meters"
+            }
+        }
                 FROM user_registration_data u
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_semantic_profiles usp ON u.id = usp.user_id
@@ -1158,6 +1194,14 @@ class UserProfileDaoImpl : UserProfileDao {
                     (usp.embedding_haves IS NOT NULL
                      OR usp.embedding_needs IS NOT NULL)
                     AND u.id != ?
+                    ${
+            // Pre-filter by location using spatial index for massive performance gain
+            if (latitude != null && longitude != null && radiusMeters != null) {
+                "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)"
+            } else {
+                ""
+            }
+        }
             )
             SELECT 
                 user_id,
@@ -1192,6 +1236,13 @@ class UserProfileDaoImpl : UserProfileDao {
         // Parameters for userId filtering (exclude self)
         params.add(VarCharColumnType() to userId)  // u.id != ?
 
+        // Parameters for spatial filtering (if location and radius provided)
+        if (latitude != null && longitude != null && radiusMeters != null) {
+            params.add(DoubleColumnType() to longitude)
+            params.add(DoubleColumnType() to latitude)
+            params.add(DoubleColumnType() to radiusMeters)
+        }
+
         val results = mutableListOf<Triple<UserProfile, Double, Double>>()
 
         TransactionManager.current().connection.prepareStatement(semanticQuery, false)
@@ -1209,7 +1260,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
                     if (semanticScore >= minimalSimilarity) {
                         val (longitude, latitude) = parseLocation(rs)
-                        
+
                         val profile = UserProfile(
                             userId = userId,
                             name = rs.getString("name"),
@@ -1218,7 +1269,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             attributes = emptyList(),
                             profileKeywordDataMap = mapOf()
                         )
-                        
+
                         results.add(Triple(
                             profile,
                             if (distanceMeters != 0.0) distanceMeters / 1000 else 0.0,
@@ -1254,12 +1305,12 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.location,
                 (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) as posting_similarity
                 ${
-                    if (latitude != null && longitude != null) {
-                        ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-                    } else {
-                        ", NULL as distance_meters"
-                    }
-                }
+            if (latitude != null && longitude != null) {
+                ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+            } else {
+                ", NULL as distance_meters"
+            }
+        }
             FROM user_postings p
             INNER JOIN user_profiles up ON p.user_id = up.user_id
             WHERE
@@ -1268,12 +1319,12 @@ class UserProfileDaoImpl : UserProfileDao {
                 AND (p.expires_at IS NULL OR p.expires_at > NOW())
                 AND p.user_id != ?
                 ${
-                    if (latitude != null && longitude != null && radiusMeters != null) {
-                        "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)"
-                    } else {
-                        ""
-                    }
-                }
+            if (latitude != null && longitude != null && radiusMeters != null) {
+                "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)"
+            } else {
+                ""
+            }
+        }
                 AND (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) > 0.65
             ORDER BY p.user_id, posting_similarity DESC
             LIMIT 20;
@@ -1285,7 +1336,7 @@ class UserProfileDaoImpl : UserProfileDao {
             params.add(DoubleColumnType() to longitude)
             params.add(DoubleColumnType() to latitude)
         }
-        
+
         // Parameters for userId filtering (exclude self)
         params.add(VarCharColumnType() to userId)  // p.user_id != ?
 
@@ -1313,7 +1364,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     log.trace("Posting similarity: {}", postingSimilarity)
                     if (postingSimilarity >= minimalSimilarity) {
                         val (longitude, latitude) = parseLocation(rs)
-                        
+
                         val profile = UserProfile(
                             userId = userId,
                             name = rs.getString("name"),
@@ -1322,7 +1373,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             attributes = emptyList(),
                             profileKeywordDataMap = mapOf()
                         )
-                        
+
                         results.add(Triple(
                             profile,
                             if (distanceMeters != 0.0) distanceMeters / 1000 else 0.0,
@@ -1358,12 +1409,12 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.name,
                 up.location as location
                 ${
-                    if (latitude != null && longitude != null) {
-                        ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-                    } else {
-                        ", NULL as distance_meters"
-                    }
-                }
+            if (latitude != null && longitude != null) {
+                ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+            } else {
+                ", NULL as distance_meters"
+            }
+        }
             FROM user_registration_data u
             INNER JOIN user_profiles up ON u.id = up.user_id
             WHERE u.id IN ($userIdList);
@@ -1470,7 +1521,7 @@ class UserProfileDaoImpl : UserProfileDao {
             }
 
             result
-    }
+        }
 
     /**
      * Fetches ui_style_hint for a list of attributes from their associated categories.
@@ -1513,7 +1564,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
     private suspend fun fetchAttributesForProfiles(userProfiles: List<UserProfileWithDistance>,
                                                    userAttributes: MutableMap<String, MutableList<UserAttributeDto>>)
-    : List<UserProfileWithDistance> {
+            : List<UserProfileWithDistance> {
         // Fetch attributes for all found users
         val userIds = userProfiles.map { it.profile.userId }
         if (userIds.isNotEmpty()) {
@@ -1575,62 +1626,169 @@ class UserProfileDaoImpl : UserProfileDao {
             return Pair(null, null)
         }
     }
-    
+
     /**
-     * Apply tiered online boost to user profiles based on recency.
-     * Users who were recently active get a boost to their relevancy score:
+     * Apply comprehensive boost to user profiles based on multiple factors:
+     * 
+     * ONLINE ACTIVITY:
      * - 0.05 boost if online within last 10 minutes
      * - 0.02 boost if active within last 24 hours
      * 
-     * This is extremely cheap:
-     * - Reads from in-memory cache (no database calls)
-     * - Simple HashMap lookup
-     * - Only processes users already in results
+     * REPUTATION (average rating):
+     * - 0.08 boost for 4.8+ rating (excellent)
+     * - 0.05 boost for 4.5+ rating (great)
+     * - 0.02 boost for 4.0+ rating (good)
+     * 
+     * TRUST LEVEL:
+     * - 0.10 boost for VERIFIED
+     * - 0.07 boost for TRUSTED
+     * - 0.04 boost for ESTABLISHED
+     * - 0.02 boost for EMERGING
+     * 
+     * BADGES (stackable):
+     * - 0.06 boost for TOP_RATED
+     * - 0.05 boost for VETERAN_TRADER, VERIFIED_BUSINESS
+     * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED
+     * - 0.03 boost for FAST_TRADER, COMMUNITY_CONNECTOR
+     * 
+     * TRADE DIVERSITY:
+     * - 0.03 boost for diversity score > 0.7
+     * 
+     * Total boost is capped at 0.25 to prevent over-boosting
      * 
      * @param profiles List of profiles to boost
      * @return Same list with boosted scores and lastOnlineAt timestamps set
      */
-    // TODO boost based on reputation and interaction/activity/reply speed/badges
-    private fun applyOnlineBoostAndStatus(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
+    private suspend fun applyOnlineBoostAndStatus(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
         if (profiles.isEmpty()) return profiles
         
         val currentTime = System.currentTimeMillis()
         
-        // Apply tiered boost based on recency and set lastOnlineAt timestamp
+        // Batch fetch reputation data for all users to minimize database calls
+        val userIds = profiles.map { it.profile.userId }
+        val reputationDataMap = mutableMapOf<String, Pair<app.bartering.features.reviews.dao.ReputationDto, List<app.bartering.features.reviews.model.ReputationBadge>>>()
+        
+        try {
+            userIds.forEach { userId ->
+                val reputation = reputationDao.getReputation(userId)
+                val badges = reputationDao.getUserBadges(userId)
+                if (reputation != null) {
+                    reputationDataMap[userId] = reputation to badges
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to fetch reputation data for boosting, continuing without reputation boost", e)
+        }
+        
+        // Apply comprehensive boost based on multiple factors
         return profiles.map { profileWithDistance ->
-            val lastOnlineAt = app.bartering.features.profile.cache.UserActivityCache.getLastSeen(profileWithDistance.profile.userId)
+            val userId = profileWithDistance.profile.userId
+            val lastOnlineAt = app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
             
             // Update the UserProfile with lastOnlineAt timestamp
             val updatedProfile = profileWithDistance.profile.copy(lastOnlineAt = lastOnlineAt)
             
-            // Calculate boost based on recency
-            val boost = if (lastOnlineAt != null && profileWithDistance.matchRelevancyScore != null) {
+            // Only calculate boost if there's a relevancy score to boost
+            if (profileWithDistance.matchRelevancyScore == null) {
+                return@map profileWithDistance.copy(profile = updatedProfile)
+            }
+            
+            var totalBoost = 0.0
+            
+            // 1. ONLINE ACTIVITY BOOST
+            if (lastOnlineAt != null) {
                 val timeSinceLastOnline = currentTime - lastOnlineAt
                 when {
                     timeSinceLastOnline < TEN_MINUTES_MILLIS -> {
-                        log.debug("User {} recently online (<10min), applying 0.05 boost", profileWithDistance.profile.userId)
-                        RECENT_ONLINE_BOOST
+                        totalBoost += RECENT_ONLINE_BOOST
+                        log.trace("User {} recently online (<10min), +{}", userId, RECENT_ONLINE_BOOST)
                     }
                     timeSinceLastOnline < TWENTY_FOUR_HOURS_MILLIS -> {
-                        log.debug("User {} active today (<24h), applying 0.02 boost", profileWithDistance.profile.userId)
-                        DAILY_ACTIVE_BOOST
+                        totalBoost += DAILY_ACTIVE_BOOST
+                        log.trace("User {} active today (<24h), +{}", userId, DAILY_ACTIVE_BOOST)
                     }
-                    else -> 0.0
                 }
-            } else {
-                0.0
             }
             
-            if (boost > 0.0) {
-                // Apply the boost to relevancy score
-                val boostedScore = ((profileWithDistance.matchRelevancyScore ?: (0.0 + boost))).coerceAtMost(1.0)
+            // 2. REPUTATION AND BADGES BOOST
+            val (reputation, badges) = reputationDataMap[userId] ?: (null to emptyList())
+            
+            if (reputation != null) {
+                // 2a. Average Rating Boost
+                when {
+                    reputation.averageRating >= 4.8 -> {
+                        totalBoost += EXCELLENT_RATING_BOOST
+                        log.trace("User {} has excellent rating ({}), +{}", userId, reputation.averageRating, EXCELLENT_RATING_BOOST)
+                    }
+                    reputation.averageRating >= 4.5 -> {
+                        totalBoost += GREAT_RATING_BOOST
+                        log.trace("User {} has great rating ({}), +{}", userId, reputation.averageRating, GREAT_RATING_BOOST)
+                    }
+                    reputation.averageRating >= 4.0 -> {
+                        totalBoost += GOOD_RATING_BOOST
+                        log.trace("User {} has good rating ({}), +{}", userId, reputation.averageRating, GOOD_RATING_BOOST)
+                    }
+                }
+                
+                // 2b. Trust Level Boost
+                when (reputation.trustLevel) {
+                    app.bartering.features.reviews.model.TrustLevel.VERIFIED -> {
+                        totalBoost += VERIFIED_TRUST_BOOST
+                        log.trace("User {} is VERIFIED, +{}", userId, VERIFIED_TRUST_BOOST)
+                    }
+                    app.bartering.features.reviews.model.TrustLevel.TRUSTED -> {
+                        totalBoost += TRUSTED_BOOST
+                        log.trace("User {} is TRUSTED, +{}", userId, TRUSTED_BOOST)
+                    }
+                    app.bartering.features.reviews.model.TrustLevel.ESTABLISHED -> {
+                        totalBoost += ESTABLISHED_BOOST
+                        log.trace("User {} is ESTABLISHED, +{}", userId, ESTABLISHED_BOOST)
+                    }
+                    app.bartering.features.reviews.model.TrustLevel.EMERGING -> {
+                        totalBoost += EMERGING_BOOST
+                        log.trace("User {} is EMERGING, +{}", userId, EMERGING_BOOST)
+                    }
+                    else -> {} // No boost for NEW
+                }
+                
+                // 2c. Trade Diversity Boost
+                if (reputation.tradeDiversityScore >= 0.7) {
+                    totalBoost += HIGH_TRADE_DIVERSITY_BOOST
+                    log.trace("User {} has high trade diversity ({}), +{}", userId, reputation.tradeDiversityScore, HIGH_TRADE_DIVERSITY_BOOST)
+                }
+            }
+            
+            // 2d. Badge Boosts (stackable)
+            badges.forEach { badge ->
+                val badgeBoost = when (badge) {
+                    app.bartering.features.reviews.model.ReputationBadge.TOP_RATED -> TOP_RATED_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.VETERAN_TRADER -> VETERAN_TRADER_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.VERIFIED_BUSINESS -> VERIFIED_BUSINESS_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.QUICK_RESPONDER -> QUICK_RESPONDER_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.DISPUTE_FREE -> DISPUTE_FREE_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.IDENTITY_VERIFIED -> IDENTITY_VERIFIED_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.FAST_TRADER -> FAST_TRADER_BADGE_BOOST
+                    app.bartering.features.reviews.model.ReputationBadge.COMMUNITY_CONNECTOR -> COMMUNITY_CONNECTOR_BADGE_BOOST
+                }
+                totalBoost += badgeBoost
+                log.trace("User {} has badge {}, +{}", userId, badge.value, badgeBoost)
+            }
+            
+            // Cap the total boost to prevent over-boosting
+            totalBoost = totalBoost.coerceAtMost(MAX_TOTAL_BOOST)
+            
+            if (totalBoost > 0.0) {
+                // Apply the boost to relevancy score (additive, then cap at 1.0)
+                val boostedScore = (profileWithDistance.matchRelevancyScore + totalBoost).coerceAtMost(1.0)
+                log.debug("User {} total boost: +{} (score: {} -> {})", userId, totalBoost, 
+                    profileWithDistance.matchRelevancyScore, boostedScore)
                 profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)
             } else {
                 profileWithDistance.copy(profile = updatedProfile)
             }
         }
     }
-    
+
     override suspend fun getAllUsers(
         federationEnabled: Boolean,
         updatedSince: java.time.Instant?,
@@ -1642,15 +1800,15 @@ class UserProfileDaoImpl : UserProfileDao {
             var query = UserProfilesTable
                 .selectAll()
                 .where { UserProfilesTable.federationEnabled eq federationEnabled }
-            
+
             // Apply updatedSince filter if provided
             if (updatedSince != null) {
                 query = query.andWhere { UserProfilesTable.updatedAt greater updatedSince }
             }
-            
+
             // Get total count before pagination
             val totalCount = query.count().toInt()
-            
+
             // Apply pagination
             val offset = (page * pageSize).toLong()
             val paginatedResults = if (offset > 0) {
@@ -1658,12 +1816,12 @@ class UserProfileDaoImpl : UserProfileDao {
             } else {
                 query.limit(pageSize).toList()
             }
-            
+
             // Convert to UserProfile objects
             val profiles = paginatedResults.mapNotNull { row ->
                 try {
                     val userId = row[UserProfilesTable.userId]
-                    
+
                     // Get attributes for this user
                     val attributes = UserAttributesTable
                         .selectAll()
@@ -1676,19 +1834,19 @@ class UserProfileDaoImpl : UserProfileDao {
                                 description = attrRow[UserAttributesTable.description]
                             )
                         }
-                    
+
                     // Parse location
                     val location = row[UserProfilesTable.location]
                     val latitude = location?.firstPoint?.y
                     val longitude = location?.firstPoint?.x
-                    
+
                     // Get last online timestamp from activity cache
                     val lastOnlineAt = try {
                         app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
                     } catch (_: Exception) {
                         null
                     }
-                    
+
                     UserProfile(
                         userId = userId,
                         name = row[UserProfilesTable.name] ?: "Unknown",
@@ -1704,9 +1862,9 @@ class UserProfileDaoImpl : UserProfileDao {
                     null
                 }
             }
-            
+
             Pair(profiles, totalCount)
-            
+
         } catch (e: Exception) {
             e.printStackTrace()
             Pair(emptyList(), 0)
