@@ -27,6 +27,16 @@ class LocalFileStorageService : ImageStorageService {
         private const val FULL_SUFFIX = "_full"
     }
 
+    /**
+     * Represents parsed components of an image path
+     */
+    private data class ImagePathInfo(
+        val userId: String,
+        val fileName: String,
+        val baseName: String,
+        val extension: String
+    )
+
     init {
         // Get upload directory from environment or use default
         val uploadPath = System.getenv("IMAGE_UPLOAD_DIR") ?: "uploads/images"
@@ -85,16 +95,15 @@ class LocalFileStorageService : ImageStorageService {
                 userDir.mkdirs()
             }
 
-            // Generate unique filename
+            // Generate unique filename components
             val extension = fileName.substringAfterLast(".", "jpg")
-            val uniqueId = UUID.randomUUID()
+            val uniqueId = UUID.randomUUID().toString()
             
-            // Create full-resolution file
-            val fullFileName = "${uniqueId}${FULL_SUFFIX}.$extension"
+            // Build file names using utility method
+            val fullFileName = buildFileName(uniqueId, extension, FULL_SUFFIX)
+            val thumbFileName = buildFileName(uniqueId, extension, THUMBNAIL_SUFFIX)
+            
             val fullFile = File(userDir, fullFileName)
-            
-            // Create thumbnail file
-            val thumbFileName = "${uniqueId}${THUMBNAIL_SUFFIX}.$extension"
             val thumbFile = File(userDir, thumbFileName)
 
             // Write full-resolution file to disk
@@ -102,20 +111,12 @@ class LocalFileStorageService : ImageStorageService {
                 output.write(imageData)
             }
             
-            // Generate and save thumbnail
-            try {
-                val inputStream = ByteArrayInputStream(imageData)
-                Thumbnails.of(inputStream)
-                    .size(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
-                    .keepAspectRatio(true)
-                    .outputFormat(extension)
-                    .toFile(thumbFile)
-                inputStream.close()
-                log.debug("Generated thumbnail for userId={}: {}", userId, thumbFileName)
-            } catch (e: Exception) {
-                log.warn("Failed to generate thumbnail for userId={}, will use full image as fallback", userId, e)
-                // If thumbnail generation fails, copy full image as thumbnail
+            // Generate and save thumbnail using utility method
+            if (!generateThumbnail(imageData, thumbFile, extension)) {
+                log.warn("Using full image as thumbnail fallback for userId={}", userId)
                 fullFile.copyTo(thumbFile, overwrite = true)
+            } else {
+                log.debug("Generated thumbnail for userId={}: {}", userId, thumbFileName)
             }
 
             // Return URL (base name without suffix)
@@ -138,45 +139,32 @@ class LocalFileStorageService : ImageStorageService {
         }
 
         try {
-            // Extract file path from URL
-            // URL format: /api/v1/images/userId/filename.jpg
-            val path = imageUrl.removePrefix(baseUrl).removePrefix("/")
-            val pathParts = path.split("/")
-            
-            if (pathParts.size != 2) {
+            // Parse URL using utility method
+            val pathInfo = parseImageUrl(imageUrl) ?: run {
                 log.warn("Invalid image URL format: {}", imageUrl)
                 return false
             }
             
-            val userId = pathParts[0]
-            val fileName = pathParts[1]
-            val userDir = File(uploadDir, userId)
+            val userDir = File(uploadDir, pathInfo.userId)
             
-            // Extract base name and extension
-            val extension = fileName.substringAfterLast(".", "jpg")
-            val baseName = fileName.substringBeforeLast(".")
-            
-            // Delete both thumbnail and full-resolution files
-            val thumbFileName = "${baseName}${THUMBNAIL_SUFFIX}.$extension"
-            val fullFileName = "${baseName}${FULL_SUFFIX}.$extension"
+            // Build file names for both versions
+            val thumbFileName = buildFileName(pathInfo.baseName, pathInfo.extension, THUMBNAIL_SUFFIX)
+            val fullFileName = buildFileName(pathInfo.baseName, pathInfo.extension, FULL_SUFFIX)
             
             val thumbFile = File(userDir, thumbFileName)
             val fullFile = File(userDir, fullFileName)
             
+            // Delete both files
             var deletedCount = 0
             
-            if (thumbFile.exists() && thumbFile.isFile) {
-                if (thumbFile.delete()) {
-                    log.info("Deleted thumbnail: {}", thumbFileName)
-                    deletedCount++
-                }
+            if (thumbFile.exists() && thumbFile.delete()) {
+                log.info("Deleted thumbnail: {}", thumbFileName)
+                deletedCount++
             }
             
-            if (fullFile.exists() && fullFile.isFile) {
-                if (fullFile.delete()) {
-                    log.info("Deleted full image: {}", fullFileName)
-                    deletedCount++
-                }
+            if (fullFile.exists() && fullFile.delete()) {
+                log.info("Deleted full image: {}", fullFileName)
+                deletedCount++
             }
             
             if (deletedCount == 0) {
@@ -184,13 +172,10 @@ class LocalFileStorageService : ImageStorageService {
                 return false
             }
 
-            // Clean up empty user directory
-            if (userDir.isDirectory && userDir.listFiles()?.isEmpty() == true) {
-                userDir.delete()
-                log.debug("Cleaned up empty directory: {}", userDir.name)
-            }
+            // Clean up empty directory
+            cleanupEmptyDirectory(userDir)
             
-            return true
+            return deletedCount > 0
 
         } catch (e: Exception) {
             log.error("Failed to delete image", e)
@@ -210,46 +195,25 @@ class LocalFileStorageService : ImageStorageService {
     fun getFile(imageUrl: String, size: String = "full"): File? {
         return try {
             log.debug("getFile called with URL: {}, size: {}", imageUrl, size)
-            log.trace("baseUrl: {}, uploadDir: {}", baseUrl, uploadDir.absolutePath)
+            
+            // Parse URL using utility method
+            val pathInfo = parseImageUrl(imageUrl) ?: return null
+            
+            // Determine size suffix using utility method
+            val suffix = getSizeSuffix(size)
+            
+            // Build actual file name
+            val actualFileName = buildFileName(pathInfo.baseName, pathInfo.extension, suffix)
+            val file = File(uploadDir, "${pathInfo.userId}/$actualFileName")
+            
+            log.trace("Resolved file path: {}, exists: {}", file.absolutePath, file.exists())
 
-            val path = imageUrl.removePrefix(baseUrl).removePrefix("/")
-            log.trace("Extracted path: {}", path)
-            
-            // Parse the path to get userId and fileName
-            val pathParts = path.split("/")
-            if (pathParts.size != 2) {
-                log.warn("Invalid path format: {}", path)
-                return null
-            }
-            
-            val userId = pathParts[0]
-            val fileName = pathParts[1]
-            
-            // Extract base name and extension
-            val extension = fileName.substringAfterLast(".", "jpg")
-            val baseName = fileName.substringBeforeLast(".")
-            
-            // Determine which file to serve based on size parameter
-            val suffix = when (size.lowercase()) {
-                "thumb", "thumbnail" -> THUMBNAIL_SUFFIX
-                "full", "original" -> FULL_SUFFIX
-                else -> {
-                    log.warn("Unknown size parameter: {}, defaulting to full", size)
-                    FULL_SUFFIX
-                }
-            }
-            
-            val actualFileName = "${baseName}${suffix}.$extension"
-            val file = File(uploadDir, "$userId/$actualFileName")
-            
-            log.trace("Full file path: {}, exists: {}, isFile: {}", file.absolutePath, file.exists(), file.isFile)
-
-            if (file.exists() && file.isFile && file.canonicalPath.startsWith(uploadDir.canonicalPath)) {
+            // Validate file using utility method
+            if (validateImageFile(file)) {
                 log.debug("File validation passed for: {}", file.name)
                 file
             } else {
-                log.warn("File validation failed - canonical: {}, uploadDir: {}", 
-                    file.canonicalPath, uploadDir.canonicalPath)
+                log.warn("File validation failed for: {}", file.absolutePath)
                 null
             }
         } catch (e: Exception) {
@@ -264,6 +228,110 @@ class LocalFileStorageService : ImageStorageService {
      */
     @Deprecated("Use getFile(imageUrl, size) instead", ReplaceWith("getFile(imageUrl, \"full\")"))
     fun getFile(imageUrl: String): File? = getFile(imageUrl, "full")
+
+    // ==================== Private Utility Methods ====================
+
+    /**
+     * Parse an image URL into its components
+     * @param imageUrl URL in format: /api/v1/images/userId/filename.jpg
+     * @return ImagePathInfo or null if invalid format
+     */
+    private fun parseImageUrl(imageUrl: String): ImagePathInfo? {
+        val path = imageUrl.removePrefix(baseUrl).removePrefix("/")
+        val pathParts = path.split("/")
+        
+        if (pathParts.size != 2) {
+            log.warn("Invalid path format: {}", path)
+            return null
+        }
+        
+        val userId = pathParts[0]
+        val fileName = pathParts[1]
+        val extension = fileName.substringAfterLast(".", "jpg")
+        val baseName = fileName.substringBeforeLast(".")
+        
+        return ImagePathInfo(userId, fileName, baseName, extension)
+    }
+
+    /**
+     * Build a file name with the appropriate size suffix
+     * @param baseName Base name without extension
+     * @param extension File extension
+     * @param suffix Size suffix (_thumb or _full)
+     * @return Complete filename
+     */
+    private fun buildFileName(baseName: String, extension: String, suffix: String): String {
+        return "${baseName}${suffix}.$extension"
+    }
+
+    /**
+     * Generate a thumbnail from image data
+     * @param imageData Original image bytes
+     * @param targetFile File to write thumbnail to
+     * @param extension Image format extension
+     * @return true if successful, false if failed
+     */
+    private fun generateThumbnail(imageData: ByteArray, targetFile: File, extension: String): Boolean {
+        return try {
+            val inputStream = ByteArrayInputStream(imageData)
+            Thumbnails.of(inputStream)
+                .size(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+                .keepAspectRatio(true)
+                .outputFormat(extension)
+                .toFile(targetFile)
+            inputStream.close()
+            true
+        } catch (e: Exception) {
+            log.warn("Failed to generate thumbnail: {}", targetFile.name, e)
+            false
+        }
+    }
+
+    /**
+     * Get the appropriate size suffix based on size parameter
+     * @param size Size parameter ("thumb", "thumbnail", "full", "original")
+     * @return Suffix constant
+     */
+    private fun getSizeSuffix(size: String): String {
+        return when (size.lowercase()) {
+            "thumb", "thumbnail" -> THUMBNAIL_SUFFIX
+            "full", "original" -> FULL_SUFFIX
+            else -> {
+                log.warn("Unknown size parameter: {}, defaulting to full", size)
+                FULL_SUFFIX
+            }
+        }
+    }
+
+    /**
+     * Validate that a file exists and is within the upload directory (security check)
+     * @param file File to validate
+     * @return true if valid, false otherwise
+     */
+    private fun validateImageFile(file: File): Boolean {
+        if (!file.exists() || !file.isFile) {
+            return false
+        }
+        
+        // Security check: ensure file is within upload directory
+        return try {
+            file.canonicalPath.startsWith(uploadDir.canonicalPath)
+        } catch (e: Exception) {
+            log.error("Error validating file: {}", file.absolutePath, e)
+            false
+        }
+    }
+
+    /**
+     * Clean up empty user directory after file deletion
+     * @param userDir User directory to check
+     */
+    private fun cleanupEmptyDirectory(userDir: File) {
+        if (userDir.isDirectory && userDir.listFiles()?.isEmpty() == true) {
+            userDir.delete()
+            log.debug("Cleaned up empty directory: {}", userDir.name)
+        }
+    }
 
     /**
      * Get storage statistics
