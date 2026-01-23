@@ -127,6 +127,9 @@ dependencies {
     implementation("software.amazon.awssdk:ses:$aws_ses_version")
     implementation("software.amazon.awssdk:auth:$aws_auth_version")
 
+    //////////////////// Image Processing ///////////////////////
+    implementation("net.coobird:thumbnailator:$thumbnailator_version")
+
     //////////////////# Tests #////////////////////
     testImplementation "io.ktor:ktor-server-tests:$ktor_server_tests_version"
     testImplementation("io.ktor:ktor-server-tests-jvm:$ktor_server_tests_version")

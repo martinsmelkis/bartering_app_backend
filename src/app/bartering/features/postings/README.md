@@ -180,6 +180,44 @@ Postings can be tagged with multiple attributes (skills, interests, categories):
 - Links postings to the broader attribute system
 - Supports relevancy scoring per attribute
 
+### Progressive Image Loading
+
+The system automatically generates thumbnail versions of uploaded images for optimal performance:
+
+- **Thumbnail**: 300x300px versions for list/grid views (fast loading)
+- **Full Resolution**: Original quality images for detail views
+- **Automatic Generation**: Both versions created on upload using Thumbnailator
+- **Smart Caching**: Aggressive cache headers for better client-side performance
+
+#### Image Serving API
+
+Images are served with a `size` query parameter:
+
+```
+GET /api/v1/images/{userId}/{fileName}?size=thumb   # 300x300px thumbnail
+GET /api/v1/images/{userId}/{fileName}?size=full    # Full resolution
+```
+
+**Accepted size values**: `thumb`, `thumbnail`, `full`, `original`
+
+**Client Implementation Strategy**:
+1. Display thumbnails in postings lists (lightweight, fast scrolling)
+2. Fetch full resolution only when user clicks/expands image
+3. Cache both versions locally for offline access
+
+**Storage Structure**:
+```
+uploads/images/
+  └── {userId}/
+      ├── {uuid}_thumb.jpg   # Thumbnail version
+      └── {uuid}_full.jpg    # Full resolution
+```
+
+**Cache Headers**:
+- Thumbnails: 1 year cache (`max-age=31536000`)
+- Full images: 30 days cache (`max-age=2592000`)
+- ETag support for efficient revalidation
+
 ### Automatic Expiration
 
 - Background task runs hourly to mark expired postings
@@ -279,7 +317,7 @@ expirationTask.start(GlobalScope) // Or use appropriate CoroutineScope
 
 ## Future Enhancements
 
-- [ ] Image upload and storage integration
+- [x] Image upload and storage integration with progressive loading
 - [ ] Posting analytics (views, interactions)
 - [ ] User ratings and reviews on completed trades
 - [ ] Posting templates for common offer types

@@ -17,21 +17,31 @@ fun Route.imageServeRoutes() {
 
     route("/api/v1/images") {
 
-        // Serve image file
+        // Serve image file with optional size parameter
+        // Supports ?size=thumb or ?size=full (default: full)
         get("/{userId}/{fileName}") {
             val userId = call.parameters["userId"]
             val fileName = call.parameters["fileName"]
+            val size = call.request.queryParameters["size"] ?: "full"
 
-            log.debug("Image request: userId={}, fileName={}", userId, fileName)
+            log.debug("Image request: userId={}, fileName={}, size={}", userId, fileName, size)
 
             if (userId == null || fileName == null) {
                 call.respond(HttpStatusCode.BadRequest, "Invalid image URL")
                 return@get
             }
 
+            // Validate size parameter
+            val validSizes = setOf("thumb", "thumbnail", "full", "original")
+            if (size.lowercase() !in validSizes) {
+                call.respond(HttpStatusCode.BadRequest, 
+                    "Invalid size parameter. Use 'thumb' or 'full'")
+                return@get
+            }
+
             val imageUrl = "/api/v1/images/$userId/$fileName"
 
-            val file = localStorage.getFile(imageUrl)
+            val file = localStorage.getFile(imageUrl, size)
             log.debug("Resolved file: {}, exists: {}", file?.absolutePath, file?.exists())
 
             if (file == null || !file.exists()) {
@@ -49,8 +59,16 @@ fun Route.imageServeRoutes() {
             }*/
 
             // Set cache headers for better performance
-            call.response.headers.append("Cache-Control", "public, max-age=31536000") // 1 year
-            call.response.headers.append("ETag", file.name)
+            // Different cache times for thumbnails vs full images
+            val maxAge = if (size in setOf("thumb", "thumbnail")) {
+                31536000 // 1 year for thumbnails
+            } else {
+                2592000 // 30 days for full images
+            }
+            
+            call.response.headers.append("Cache-Control", "public, max-age=$maxAge")
+            call.response.headers.append("ETag", "${file.name}-$size")
+            call.response.headers.append("Vary", "Accept-Encoding")
 
             call.respondFile(file)
         }
