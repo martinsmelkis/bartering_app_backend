@@ -175,7 +175,7 @@ class LocalFileStorageService : ImageStorageService {
             // Clean up empty directory
             cleanupEmptyDirectory(userDir)
             
-            return deletedCount > 0
+            return true
 
         } catch (e: Exception) {
             log.error("Failed to delete image", e)

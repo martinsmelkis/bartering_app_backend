@@ -459,14 +459,42 @@ fun Route.postingsRoutes() {
                 return@delete
             }
 
+            // Get posting first to access imageUrls before deletion
+            val posting = postingDao.getPosting(postingId)
+            
+            if (posting == null) {
+                call.respond(HttpStatusCode.NotFound, mapOf("error" to "Posting not found"))
+                return@delete
+            }
+            
+            // Verify ownership
+            if (posting.userId != authenticatedUserId) {
+                call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Unauthorized to delete this posting"))
+                return@delete
+            }
+
+            // Delete posting from database (soft delete)
             val success = postingDao.deletePosting(authenticatedUserId, postingId)
 
             if (success) {
-                call.respond(HttpStatusCode.OK, mapOf("message" to "Posting deleted"))
+                // Delete associated images asynchronously (don't block the response)
+                if (posting.imageUrls.isNotEmpty()) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        log.info("Deleting {} images for posting {}", posting.imageUrls.size, postingId)
+                        val deletedCount = imageStorage.deleteImages(posting.imageUrls)
+                        log.info("Deleted {}/{} images for posting {}", 
+                            deletedCount, posting.imageUrls.size, postingId)
+                    }
+                }
+                
+                call.respond(HttpStatusCode.OK, mapOf(
+                    "message" to "Posting deleted",
+                    "imagesDeleted" to posting.imageUrls.size
+                ))
             } else {
                 call.respond(
-                    HttpStatusCode.NotFound,
-                    mapOf("error" to "Posting not found or unauthorized")
+                    HttpStatusCode.InternalServerError,
+                    mapOf("error" to "Failed to delete posting")
                 )
             }
         }
