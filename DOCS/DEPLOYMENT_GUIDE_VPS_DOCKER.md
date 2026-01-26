@@ -540,8 +540,8 @@ sudo systemctl stop nginx
 
 # Get certificate
 sudo certbot certonly --standalone \
-  -d yourdomain.com \
-  -d www.yourdomain.com \
+  -d barters.lv \
+  -d www.barters.lv \
   --non-interactive \
   --agree-tos \
   -m your-email@example.com

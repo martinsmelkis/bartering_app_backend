@@ -77,39 +77,38 @@ fun main(args: Array<String>): Unit {
 @Suppress("unused") // Referenced in application.conf
 fun Application.module(testing: Boolean = false) {
 
-    install(CORS) {
-        anyHost()
-        /*allowOrigins { it ->
-            it.startsWith("http://localhost") || it.startsWith("http://127.0.0.1")
+    // CORS Configuration
+    // - Only needed for local development with different ports
+    val isDevelopment = System.getenv("ENVIRONMENT")?.lowercase() == "development"
+    
+    if (isDevelopment) {
+        install(CORS) {
+            anyHost()
+            // You MUST allow the OPTIONS method for preflight requests.
+            allowMethod(HttpMethod.Options)
+            // Also allow all the other methods your API uses.
+            allowMethod(HttpMethod.Post)
+            allowMethod(HttpMethod.Get)
+            allowMethod(HttpMethod.Put)
+            allowMethod(HttpMethod.Delete)
+
+            // You MUST explicitly allow the custom headers your Flutter app sends.
+            allowHeader("X-User-ID")
+            allowHeader("X-Timestamp")
+            allowHeader("X-Signature")
+
+            // Also allow common headers. `HttpHeaders.ContentType` is good practice.
+            allowHeader(HttpHeaders.ContentType)
+            allowHeader(HttpHeaders.Authorization) // Good to have if you add token auth later
+
+            // Allow cookies or other credentials to be sent. Good practice to have.
+            allowCredentials = true
+            // Some browsers may require this header for credentials to work.
+            allowHeader(HttpHeaders.AccessControlAllowCredentials)
         }
-         */
-        // For production, you would be more specific:
-        // allowHost("your-flutter-app-domain.com", schemes = listOf("https"))
-
-        // --- Methods ---
-        // You MUST allow the OPTIONS method for preflight requests.
-        allowMethod(HttpMethod.Options)
-        // Also allow all the other methods your API uses.
-        allowMethod(HttpMethod.Post)
-        allowMethod(HttpMethod.Get)
-        allowMethod(HttpMethod.Put)
-        allowMethod(HttpMethod.Delete)
-
-        // --- Headers ---
-        // You MUST explicitly allow the custom headers your Flutter app sends.
-        allowHeader("X-User-ID")
-        allowHeader("X-Timestamp")
-        allowHeader("X-Signature")
-
-        // Also allow common headers. `HttpHeaders.ContentType` is good practice.
-        allowHeader(HttpHeaders.ContentType)
-        allowHeader(HttpHeaders.Authorization) // Good to have if you add token auth later
-
-        // --- Miscellaneous ---
-        // Allow cookies or other credentials to be sent. Good practice to have.
-        allowCredentials = true
-        // Some browsers may require this header for credentials to work.
-        allowHeader(HttpHeaders.AccessControlAllowCredentials)
+        log.info("🔧 CORS enabled for development")
+    } else {
+        log.info("🔒 CORS disabled for production (same-domain nginx setup)")
     }
 
     Security.addProvider(BouncyCastleProvider())

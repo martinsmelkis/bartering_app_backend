@@ -59,9 +59,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Test1234}
       POSTGRES_DB: ${POSTGRES_DB:-mainDatabase}
-      IMAGE_UPLOAD_DIR: /uploads/images
-      IMAGE_BASE_URL: /api/v1/images
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      IMAGE_UPLOAD_DIR: ${IMAGE_UPLOAD_DIR:-/uploads/images}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-/api/v1/images}
       IMAGE_STORAGE_TYPE: local
+      LOG_LEVEL: ${LOG_LEVEL:-ERROR}
       # Firebase Push Notifications
       FIREBASE_CREDENTIALS_PATH: /app
       FIREBASE_CREDENTIALS_FILE: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json

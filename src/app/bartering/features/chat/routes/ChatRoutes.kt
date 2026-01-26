@@ -337,7 +337,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 receivedText.contains("\"senderId\"") && 
                                 !receivedText.contains("\"data\"")) {
                                 // This is a ReadReceiptRequest
-                                val readReceiptRequest = jsonParser.decodeFromString<app.bartering.features.chat.model.ReadReceiptRequest>(receivedText)
+                                val readReceiptRequest = jsonParser.decodeFromString<ReadReceiptRequest>(receivedText)
                                 log.debug("Read receipt from userId={} for message {}", currentUserId, readReceiptRequest.messageId)
                                 
                                 // Store receipt and notify sender
@@ -346,7 +346,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     messageId = readReceiptRequest.messageId,
                                     senderId = readReceiptRequest.senderId,
                                     recipientId = currentUserId,
-                                    status = app.bartering.features.chat.model.MessageStatus.READ,
+                                    status = MessageStatus.READ,
                                     senderConnection = senderConnection,
                                     readReceiptDao = readReceiptDao,
                                     serializer = socketSerializer,
@@ -391,7 +391,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     // Send SENT status to sender
                                     ChatUtils.sendMessageStatusUpdate(
                                         messageId = messageId,
-                                        status = app.bartering.features.chat.model.MessageStatus.SENT,
+                                        status = MessageStatus.SENT,
                                         session = currentConnection.session,
                                         serializer = socketSerializer,
                                         log = log
@@ -403,7 +403,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                             messageId = messageId,
                                             senderId = currentUserId,
                                             recipientId = clientMessage.data.recipientId,
-                                            status = app.bartering.features.chat.model.MessageStatus.DELIVERED,
+                                            status = MessageStatus.DELIVERED,
                                             senderConnection = currentConnection,
                                             readReceiptDao = readReceiptDao,
                                             serializer = socketSerializer,
@@ -462,7 +462,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     // Send SENT status to sender (not yet delivered)
                                     ChatUtils.sendMessageStatusUpdate(
                                         messageId = offlineMessage.id,
-                                        status = app.bartering.features.chat.model.MessageStatus.SENT,
+                                        status = MessageStatus.SENT,
                                         session = currentConnection.session,
                                         serializer = socketSerializer,
                                         log = log

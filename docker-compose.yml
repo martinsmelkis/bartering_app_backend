@@ -91,6 +91,8 @@ services:
       - IMAGE_UPLOAD_DIR=/uploads/images
       - IMAGE_BASE_URL=/api/v1/images
       - IMAGE_STORAGE_TYPE=local
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
       # Firebase Push Notifications
       - FIREBASE_CREDENTIALS_PATH=/app
       - FIREBASE_CREDENTIALS_FILE=barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json
