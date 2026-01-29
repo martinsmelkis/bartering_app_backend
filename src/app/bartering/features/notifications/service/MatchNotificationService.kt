@@ -6,6 +6,7 @@ import app.bartering.extensions.normalizeAttributeForDBProcessing
 import app.bartering.features.notifications.dao.NotificationPreferencesDao
 import app.bartering.features.notifications.model.*
 import app.bartering.features.notifications.utils.NotificationDataBuilder
+import app.bartering.features.notifications.utils.StopWordsFilter
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.model.UserPosting
 import app.bartering.features.profile.dao.UserProfileDao
@@ -443,20 +444,52 @@ class MatchNotificationService(
      * Calculate match score between an attribute and a posting
      * Uses simple text matching - in production would use vector embeddings
      */
-    private fun calculateMatchScore(attributeId: String, posting: UserPosting): Double {
+    private suspend fun calculateMatchScore(attributeId: String, posting: UserPosting): Double {
         var score = 0.0
         
-        // Exact match in title (highest weight)
-        if (posting.title.normalizeAttributeForDBProcessing().contains(attributeId, ignoreCase = true)) {
-            score += 0.6
+        // Get posting owner's locale for language-aware stopword filtering
+        val postingLocale = getUserLocale(posting.userId)
+        
+        // Extract meaningful words from the attribute ID for better matching
+        val attributeWords = StopWordsFilter.extractMeaningfulWords(
+            attributeId,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = postingLocale
+        )
+        
+        // Extract meaningful words from title and description
+        val titleWords = StopWordsFilter.extractMeaningfulWords(
+            posting.title,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = postingLocale
+        )
+        
+        val descriptionWords = StopWordsFilter.extractMeaningfulWords(
+            posting.description,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = postingLocale
+        )
+        
+        // Calculate word overlap for title (highest weight)
+        val titleMatches = attributeWords.count { attrWord ->
+            titleWords.any { it.contains(attrWord, ignoreCase = true) || attrWord.contains(it, ignoreCase = true) }
+        }
+        if (attributeWords.isNotEmpty()) {
+            score += (titleMatches.toDouble() / attributeWords.size) * 0.6
         }
         
-        // Exact match in description
-        if (posting.description.normalizeAttributeForDBProcessing().contains(attributeId, ignoreCase = true)) {
-            score += 0.4
+        // Calculate word overlap for description
+        val descMatches = attributeWords.count { attrWord ->
+            descriptionWords.any { it.contains(attrWord, ignoreCase = true) || attrWord.contains(it, ignoreCase = true) }
+        }
+        if (attributeWords.isNotEmpty()) {
+            score += (descMatches.toDouble() / attributeWords.size) * 0.4
         }
         
-        // Check posting attributes
+        // Check posting attributes - exact match
         for (postingAttr in posting.attributes) {
             if (postingAttr.attributeId.equals(attributeId, ignoreCase = true)) {
                 score += 0.5
@@ -481,15 +514,41 @@ class MatchNotificationService(
     private suspend fun calculatePostingMatchScore(interestPosting: UserPosting, offerPosting: UserPosting): Double {
         var score = 0.0
 
-        // Title similarity
-        val titleWords = interestPosting.title.lowercase().split(" ").filter { it.length > 3 }
-        val offerTitleWords = offerPosting.title.lowercase().split(" ").filter { it.length > 3 }
+        // Get user locales for language-aware stopword filtering
+        val interestLocale = getUserLocale(interestPosting.userId)
+        val offerLocale = getUserLocale(offerPosting.userId)
+
+        // Title similarity - filter out stopwords and transaction keywords
+        val titleWords = StopWordsFilter.extractMeaningfulWords(
+            interestPosting.title,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = interestLocale
+        )
+        val offerTitleWords = StopWordsFilter.extractMeaningfulWords(
+            offerPosting.title,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = offerLocale
+        )
+        
         val titleOverlap = titleWords.count { word -> offerTitleWords.any { it.contains(word) || word.contains(it) } }
         score += (titleOverlap.toDouble() / titleWords.size.coerceAtLeast(1)) * 0.6
 
-        // Description similarity
-        val descWords = interestPosting.description.lowercase().split(" ").filter { it.length > 3 }.take(20)
-        val offerDescWords = offerPosting.description.lowercase().split(" ").filter { it.length > 3 }
+        // Description similarity - filter out stopwords and transaction keywords
+        val descWords = StopWordsFilter.extractMeaningfulWords(
+            interestPosting.description,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = interestLocale
+        ).take(20)
+        val offerDescWords = StopWordsFilter.extractMeaningfulWords(
+            offerPosting.description,
+            minLength = 3,
+            includeTransactionKeywords = true,
+            locale = offerLocale
+        )
+        
         val descOverlap = descWords.count { word -> offerDescWords.any { it.contains(word) || word.contains(it) } }
         score += (descOverlap.toDouble() / descWords.size.coerceAtLeast(1)) * 0.4
 
@@ -517,7 +576,7 @@ class MatchNotificationService(
             // 1. Semantic similarity using embeddings (most important - 50% weight)
             val embeddingSimilarity = calculateEmbeddingSimilarity(interestPosting.id, offerPosting.id)
             if (embeddingSimilarity != null) {
-                score += embeddingSimilarity * 0.85
+                score += embeddingSimilarity * 0.4
                 log.debug("Embedding similarity between '{}' and '{}': {}", 
                     interestPosting.title, offerPosting.title, embeddingSimilarity)
             }

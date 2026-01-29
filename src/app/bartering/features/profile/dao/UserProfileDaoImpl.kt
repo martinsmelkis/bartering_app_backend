@@ -7,9 +7,11 @@ import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
 import app.bartering.features.profile.model.*
+import app.bartering.features.profile.util.JsonParserUtils
+import app.bartering.features.profile.util.LocationParser
+import app.bartering.features.profile.util.ProfileBoostCalculator
 import app.bartering.features.profile.util.UserActivityFilter
 import org.jetbrains.exposed.sql.*
-import kotlinx.serialization.json.Json
 import net.postgis.jdbc.geometry.Point
 import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.attributes.model.UserAttributeType
@@ -22,14 +24,11 @@ import app.bartering.utils.SecurityUtils
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.koin.java.KoinJavaComponent.inject
-import java.sql.ResultSet
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.collections.set
 import kotlin.getValue
 import kotlin.text.split
-import kotlin.text.substring
-import kotlin.text.toDouble
 import kotlin.text.trim
 
 class UserProfileDaoImpl : UserProfileDao {
@@ -50,42 +49,6 @@ class UserProfileDaoImpl : UserProfileDao {
         maxSize = 1000,
         ttlMinutes = 60
     )
-
-    // Boost configuration
-    private companion object {
-        // Online activity boosts
-        const val RECENT_ONLINE_BOOST = 0.05  // Boost score by 0.05 for users online < 10 minutes ago
-        const val DAILY_ACTIVE_BOOST = 0.02   // Boost score by 0.02 for users active < 24 hours ago
-        const val TEN_MINUTES_MILLIS = 10 * 60 * 1000L  // 10 minutes in milliseconds
-        const val TWENTY_FOUR_HOURS_MILLIS = 24 * 60 * 60 * 1000L  // 24 hours in milliseconds
-        
-        // Reputation boosts (based on average rating)
-        const val EXCELLENT_RATING_BOOST = 0.08  // 4.8+ average rating
-        const val GREAT_RATING_BOOST = 0.05      // 4.5+ average rating
-        const val GOOD_RATING_BOOST = 0.02       // 4.0+ average rating
-        
-        // Trust level boosts
-        const val VERIFIED_TRUST_BOOST = 0.10    // Verified trust level
-        const val TRUSTED_BOOST = 0.07           // Trusted trust level
-        const val ESTABLISHED_BOOST = 0.04       // Established trust level
-        const val EMERGING_BOOST = 0.02          // Emerging trust level
-        
-        // Badge boosts (stackable, but capped)
-        const val TOP_RATED_BADGE_BOOST = 0.06
-        const val VETERAN_TRADER_BADGE_BOOST = 0.05
-        const val QUICK_RESPONDER_BADGE_BOOST = 0.04
-        const val DISPUTE_FREE_BADGE_BOOST = 0.04
-        const val FAST_TRADER_BADGE_BOOST = 0.03
-        const val COMMUNITY_CONNECTOR_BADGE_BOOST = 0.03
-        const val VERIFIED_BUSINESS_BADGE_BOOST = 0.05
-        const val IDENTITY_VERIFIED_BADGE_BOOST = 0.04
-        
-        // Trade activity boost
-        const val HIGH_TRADE_DIVERSITY_BOOST = 0.03  // Diversity score > 0.7
-        
-        // Maximum total boost to prevent over-boosting
-        const val MAX_TOTAL_BOOST = 0.25  // Cap at 0.25 total boost
-    }
 
     override suspend fun createProfile(user: UserRegistrationDataDto): Unit = dbQuery {
         UserRegistrationDataTable.insert {
@@ -125,18 +88,10 @@ class UserProfileDaoImpl : UserProfileDao {
                     val preferredLanguage = rs.getString("preferred_language") ?: "en"
                     val keywordsJson = rs.getString("profile_keywords_with_weights")
 
-                    profileKeywords = if (keywordsJson != null) {
-                        try {
-                            Json.decodeFromString<Map<String, Double>>(keywordsJson)
-                        } catch (_: Exception) {
-                            emptyMap()
-                        }
-                    } else {
-                        emptyMap()
-                    }
+                    profileKeywords = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
                     // Parse location from string
-                    val (longitude, latitude) = parseLocation(rs)
+                    val (longitude, latitude) = LocationParser.parseLocation(rs)
 
                     profileData = Triple(name, longitude to latitude, preferredLanguage)
                 } else {
@@ -380,18 +335,10 @@ class UserProfileDaoImpl : UserProfileDao {
                 while (rs.next()) {
                     val foundUserId = rs.getString("user_id")
                     val keywordsJson = rs.getString("profile_keywords_with_weights")
-                    val mappedKeyWords: Map<String, Double>? = if (keywordsJson != null) {
-                        try {
-                            Json.decodeFromString<Map<String, Double>>(keywordsJson)
-                        } catch (_: Exception) {
-                            emptyMap()
-                        }
-                    } else {
-                        emptyMap()
-                    }
+                    val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
                     // Parse location from string since rs.getObject returns geography type
-                    val (longitude, latitude) = parseLocation(rs)
+                    val (longitude, latitude) = LocationParser.parseLocation(rs)
 
                     val distanceMeters = rs.getDouble("distance_meters")
 
@@ -437,7 +384,7 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Returning {} nearby profiles (after blocked + activity filtering)", filteredResults.size)
 
         // Apply online boost and set online status
-        applyOnlineBoostAndStatus(filteredResults)
+        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
     }
 
     override suspend fun getSimilarProfiles(
@@ -446,8 +393,38 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
-        findProfilesBySemanticSimilarity(userId, UserAttributeType.PROVIDING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters)
+        // Find users providing similar things (original logic)
+        val providingMatches = findProfilesBySemanticSimilarity(
+            userId, UserAttributeType.PROVIDING,
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+        )
+        
+        // Also find users seeking similar things (additional matching)
+        val seekingMatches = findProfilesBySemanticSimilarity(
+            userId, UserAttributeType.SEEKING,
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+        )
+        
+        // Search active postings for similar offerings
+        val postingMatches = findPostingsByUserSemanticSimilarity(
+            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+        )
+        
+        // Combine results with weighted scoring
+        val combinedResults = combineMatchResults(
+            mapOf(
+                "providing_profile" to providingMatches,
+                "seeking_profile" to seekingMatches,
+                "postings" to postingMatches
+            ),
+            weights = mapOf(
+                "providing_profile" to 0.5,  // 50% weight for similar offerings
+                "seeking_profile" to 0.3,     // 30% weight for similar needs
+                "postings" to 0.2             // 20% weight for active postings
+            )
+        )
+        
+        combinedResults.take(20)
     }
 
     override suspend fun getHelpfulProfiles(
@@ -456,8 +433,38 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
-        findProfilesBySemanticSimilarity(userId, UserAttributeType.SEEKING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters)
+        // Find users providing what I seek (original logic)
+        val providingMatches = findProfilesBySemanticSimilarity(
+            userId, UserAttributeType.SEEKING,
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+        )
+        
+        // Also find users seeking what I provide (bi-directional matching)
+        val seekingMatches = findProfilesBySemanticSimilarity(
+            userId, UserAttributeType.PROVIDING,
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+        )
+        
+        // Search active postings for relevant offers
+        val postingMatches = findPostingsByUserSemanticSimilarity(
+            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+        )
+        
+        // Combine results with weighted scoring
+        val combinedResults = combineMatchResults(
+            mapOf(
+                "providing_profile" to providingMatches,
+                "seeking_profile" to seekingMatches,
+                "postings" to postingMatches
+            ),
+            weights = mapOf(
+                "providing_profile" to 0.45,  // 45% weight for users providing what I need
+                "seeking_profile" to 0.35,     // 35% weight for users needing what I offer
+                "postings" to 0.2             // 20% weight for active postings
+            )
+        )
+        
+        combinedResults.take(20)
     }
 
     private suspend fun findProfilesBySemanticSimilarity(
@@ -586,15 +593,7 @@ class UserProfileDaoImpl : UserProfileDao {
             while (rs.next()) {
                 val foundUserId = rs.getString("user_id")
                 val keywordsJson = rs.getString("profile_keywords_with_weights")
-                val mappedKeyWords: Map<String, Double>? = if (keywordsJson != null) {
-                    try {
-                        Json.decodeFromString<Map<String, Double>>(keywordsJson)
-                    } catch (_: Exception) {
-                        emptyMap()
-                    }
-                } else {
-                    emptyMap()
-                }
+                val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
                 val attrSimilarityScore = rs.getDouble("attribute_similarity")
                 val profileSimilarityScore = rs.getDouble("profile_similarity")
 
@@ -603,7 +602,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 ) continue
 
                 // Parse location from string since rs.getObject returns geography type
-                val (longitude, latitude) = parseLocation(rs)
+                val (longitude, latitude) = LocationParser.parseLocation(rs)
 
                 userProfiles.add(
                     UserProfileWithDistance(
@@ -616,7 +615,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             profileKeywordDataMap = mappedKeyWords
                         ),
                         distanceKm = rs.getDouble("distance_meters") / 1000,
-                        matchRelevancyScore = profileSimilarityScore
+                        matchRelevancyScore = profileSimilarityScore + (attrSimilarityScore * 1.1)
                     )
                 )
                 userAttributes[foundUserId] = mutableListOf()
@@ -643,7 +642,180 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Returning {} similar profiles (after filtering + activity penalty)", filteredResults.size)
 
         // Apply online boost and set online status
-        applyOnlineBoostAndStatus(filteredResults)
+        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
+    }
+
+    /**
+     * Finds user profiles by matching active postings against the current user's semantic profile.
+     * This searches for users whose active postings semantically match what the current user needs/provides.
+     */
+    private suspend fun findPostingsByUserSemanticSimilarity(
+        currentUserId: String,
+        currentUserProfileType: UserAttributeType,
+        latitude: Double?,
+        longitude: Double?,
+        radiusMeters: Double?
+    ): List<UserProfileWithDistance> = dbQuery {
+        // Validate userId to prevent SQL injection
+        if (!SecurityUtils.isValidUUID(currentUserId)) {
+            log.warn("Invalid userId format: {}", currentUserId)
+            return@dbQuery emptyList()
+        }
+
+        val myEmbeddingColumnType = when (currentUserProfileType) {
+            UserAttributeType.SEEKING -> UserSemanticProfilesTable.embeddingNeeds
+            UserAttributeType.PROVIDING -> UserSemanticProfilesTable.embeddingHaves
+            UserAttributeType.SHARING -> UserSemanticProfilesTable.embeddingHaves
+            UserAttributeType.PROFILE -> UserSemanticProfilesTable.embeddingProfile
+        }
+
+        val postingMatchQuery = """
+            WITH current_user_profile AS (
+                SELECT ${myEmbeddingColumnType.name}
+                FROM user_semantic_profiles
+                WHERE user_id = ?
+            )
+            SELECT DISTINCT ON (p.user_id)
+                p.user_id,
+                up.name,
+                up.location,
+                up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                (1 - (p.embedding::vector <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile))) as posting_similarity
+                ${if (latitude != null && longitude != null) {
+                    ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+                } else {
+                    ", NULL as distance_meters"
+                }
+            }
+            FROM user_postings p
+            INNER JOIN user_profiles up ON p.user_id = up.user_id
+            WHERE
+                p.embedding IS NOT NULL
+                AND p.status = 'active'
+                AND (p.expires_at IS NULL OR p.expires_at > NOW())
+                AND p.user_id != ?
+                AND EXISTS (SELECT 1 FROM current_user_profile WHERE ${myEmbeddingColumnType.name} IS NOT NULL)
+                ${if (latitude != null && longitude != null && radiusMeters != null) {
+                    "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)"
+                } else {
+                    ""
+                }
+            }
+                AND (1 - (p.embedding::vector <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile))) > 0.65
+            ORDER BY p.user_id, posting_similarity DESC
+            LIMIT 20;
+        """.trimIndent()
+
+        val queryParams = mutableListOf<Pair<IColumnType<*>, Any?>>()
+        queryParams.add(VarCharColumnType() to currentUserId) // CTE parameter
+        
+        if (latitude != null && longitude != null) {
+            queryParams.add(DoubleColumnType() to longitude)
+            queryParams.add(DoubleColumnType() to latitude)
+        }
+        
+        queryParams.add(VarCharColumnType() to currentUserId) // WHERE p.user_id != ?
+        
+        if (latitude != null && longitude != null && radiusMeters != null) {
+            queryParams.add(DoubleColumnType() to longitude)
+            queryParams.add(DoubleColumnType() to latitude)
+            queryParams.add(DoubleColumnType() to radiusMeters)
+        }
+
+        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
+
+        TransactionManager.current().connection.prepareStatement(postingMatchQuery, false).also { statement ->
+            queryParams.forEachIndexed { index, (_, value) ->
+                statement[index + 1] = value!!
+            }
+            val rs = statement.executeQuery()
+            while (rs.next()) {
+                val foundUserId = rs.getString("user_id")
+                val keywordsJson = rs.getString("profile_keywords_with_weights")
+                val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
+                val postingSimilarity = rs.getDouble("posting_similarity")
+                    .let { if (it.isNaN() || it.isInfinite()) 0.0 else it }
+
+                if (postingSimilarity < 0.65) continue
+
+                val (longitude, latitude) = LocationParser.parseLocation(rs)
+
+                userProfiles.add(
+                    UserProfileWithDistance(
+                        profile = UserProfile(
+                            userId = foundUserId,
+                            name = rs.getString("name") ?: "",
+                            latitude = latitude,
+                            longitude = longitude,
+                            attributes = emptyList(),
+                            profileKeywordDataMap = mappedKeyWords
+                        ),
+                        distanceKm = rs.getDouble("distance_meters") / 1000,
+                        matchRelevancyScore = postingSimilarity
+                    )
+                )
+                userAttributes[foundUserId] = mutableListOf()
+            }
+        }
+
+        val results = fetchAttributesForProfiles(userProfiles, userAttributes)
+        log.debug("Found {} posting-based matches", results.size)
+
+        // Filter out blocked users
+        val blockedUserIds = relationshipsDao.getAllBlockedUserIds(currentUserId)
+        val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
+
+        // Apply activity penalty
+        val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
+
+        // Apply online boost and set online status
+        ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao)
+    }
+
+    /**
+     * Combines multiple lists of profile matches with different weights and removes duplicates.
+     * When the same user appears in multiple lists, keeps the highest weighted score.
+     */
+    private fun combineMatchResults(
+        resultSets: Map<String, List<UserProfileWithDistance>>,
+        weights: Map<String, Double>
+    ): List<UserProfileWithDistance> {
+        val combinedMap = mutableMapOf<String, UserProfileWithDistance>()
+
+        resultSets.forEach { (setName, profiles) ->
+            val weight = weights[setName] ?: 1.0
+            profiles.forEach { profile ->
+                val userId = profile.profile.userId
+                val weightedScore = (profile.matchRelevancyScore ?: 0.0) * weight
+
+                val existing = combinedMap[userId]
+                if (existing == null) {
+                    // First time seeing this user
+                    combinedMap[userId] = profile.copy(
+                        matchRelevancyScore = weightedScore
+                    )
+                } else {
+                    // User already in results - add scores and keep the most complete profile
+                    val combinedScore = (existing.matchRelevancyScore ?: 0.0) + weightedScore
+                    
+                    // Prefer profile with more attributes
+                    val betterProfile = if (profile.profile.attributes.size > existing.profile.attributes.size) {
+                        profile
+                    } else {
+                        existing
+                    }
+                    
+                    combinedMap[userId] = betterProfile.copy(
+                        matchRelevancyScore = combinedScore
+                    )
+                }
+            }
+        }
+
+        // Sort by combined score
+        return combinedMap.values
+            .sortedByDescending { it.matchRelevancyScore ?: 0.0 }
     }
 
     /**
@@ -918,7 +1090,7 @@ class UserProfileDaoImpl : UserProfileDao {
         log.info("Returning {} profiles (after filtering + activity penalty)", filteredResults.size)
 
         // Apply online boost and set online status
-        applyOnlineBoostAndStatus(filteredResults)
+        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
     }
 
     /**
@@ -1160,6 +1332,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     u.id as user_id,
                     up.name,
                     up.location as location,
+                    up.profile_keywords_with_weights::text as profile_keywords_with_weights,
                     COALESCE(
                         CASE 
                             WHEN usp.embedding_haves IS NOT NULL 
@@ -1207,6 +1380,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 user_id,
                 name,
                 location,
+                profile_keywords_with_weights,
                 haves_similarity,
                 needs_similarity,
                 profile_similarity,
@@ -1259,7 +1433,9 @@ class UserProfileDaoImpl : UserProfileDao {
                     val distanceMeters = rs.getDouble("distance_meters")
 
                     if (semanticScore >= minimalSimilarity) {
-                        val (longitude, latitude) = parseLocation(rs)
+                        val (longitude, latitude) = LocationParser.parseLocation(rs)
+                        val keywordsJson = rs.getString("profile_keywords_with_weights")
+                        val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
                         val profile = UserProfile(
                             userId = userId,
@@ -1267,7 +1443,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             latitude = latitude,
                             longitude = longitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mapOf()
+                            profileKeywordDataMap = mappedKeyWords
                         )
 
                         results.add(Triple(
@@ -1303,6 +1479,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 p.user_id,
                 up.name,
                 up.location,
+                up.profile_keywords_with_weights::text as profile_keywords_with_weights,
                 (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) as posting_similarity
                 ${
             if (latitude != null && longitude != null) {
@@ -1363,7 +1540,9 @@ class UserProfileDaoImpl : UserProfileDao {
 
                     log.trace("Posting similarity: {}", postingSimilarity)
                     if (postingSimilarity >= minimalSimilarity) {
-                        val (longitude, latitude) = parseLocation(rs)
+                        val (longitude, latitude) = LocationParser.parseLocation(rs)
+                        val keywordsJson = rs.getString("profile_keywords_with_weights")
+                        val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
                         val profile = UserProfile(
                             userId = userId,
@@ -1371,7 +1550,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             latitude = latitude,
                             longitude = longitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mapOf()
+                            profileKeywordDataMap = mappedKeyWords
                         )
 
                         results.add(Triple(
@@ -1407,7 +1586,8 @@ class UserProfileDaoImpl : UserProfileDao {
             SELECT
                 u.id as user_id,
                 up.name,
-                up.location as location
+                up.location as location,
+                up.profile_keywords_with_weights::text as profile_keywords_with_weights
                 ${
             if (latitude != null && longitude != null) {
                 ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
@@ -1436,7 +1616,9 @@ class UserProfileDaoImpl : UserProfileDao {
                 while (rs.next()) {
                     val foundUserId = rs.getString("user_id")
                     val distanceMeters = rs.getDouble("distance_meters")
-                    val (longitude, latitude) = parseLocation(rs)
+                    val (longitude, latitude) = LocationParser.parseLocation(rs)
+                    val keywordsJson = rs.getString("profile_keywords_with_weights")
+                    val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
                     val keywordScore = keywordResults.first { foundUserId == it.first }.second
                     userProfiles.add(
@@ -1447,7 +1629,7 @@ class UserProfileDaoImpl : UserProfileDao {
                                 latitude = latitude,
                                 longitude = longitude,
                                 attributes = emptyList(),
-                                profileKeywordDataMap = mapOf()
+                                profileKeywordDataMap = mappedKeyWords
                             ),
                             distanceKm = if (distanceMeters != 0.0) distanceMeters / 1000 else 0.0,
                             matchRelevancyScore = keywordScore
@@ -1612,181 +1794,6 @@ class UserProfileDaoImpl : UserProfileDao {
             )
         }
         return results
-    }
-
-    private fun parseLocation(rs: ResultSet): Pair<Double?, Double?> {
-        // Parse location from string
-        val lStr = rs.getObject("location")?.toString()
-        if (lStr != null && lStr.contains("POINT")) {
-            val locationStr =
-                lStr.substring(lStr.indexOf("POINT") + 6, lStr.indexOf(")"))
-            val coords = locationStr.split(" ")
-            return Pair(coords[0].trim().toDouble(), coords[1].trim().toDouble())
-        } else {
-            return Pair(null, null)
-        }
-    }
-
-    /**
-     * Apply comprehensive boost to user profiles based on multiple factors:
-     * 
-     * ONLINE ACTIVITY:
-     * - 0.05 boost if online within last 10 minutes
-     * - 0.02 boost if active within last 24 hours
-     * 
-     * REPUTATION (average rating):
-     * - 0.08 boost for 4.8+ rating (excellent)
-     * - 0.05 boost for 4.5+ rating (great)
-     * - 0.02 boost for 4.0+ rating (good)
-     * 
-     * TRUST LEVEL:
-     * - 0.10 boost for VERIFIED
-     * - 0.07 boost for TRUSTED
-     * - 0.04 boost for ESTABLISHED
-     * - 0.02 boost for EMERGING
-     * 
-     * BADGES (stackable):
-     * - 0.06 boost for TOP_RATED
-     * - 0.05 boost for VETERAN_TRADER, VERIFIED_BUSINESS
-     * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED
-     * - 0.03 boost for FAST_TRADER, COMMUNITY_CONNECTOR
-     * 
-     * TRADE DIVERSITY:
-     * - 0.03 boost for diversity score > 0.7
-     * 
-     * Total boost is capped at 0.25 to prevent over-boosting
-     * 
-     * @param profiles List of profiles to boost
-     * @return Same list with boosted scores and lastOnlineAt timestamps set
-     */
-    private suspend fun applyOnlineBoostAndStatus(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
-        if (profiles.isEmpty()) return profiles
-        
-        val currentTime = System.currentTimeMillis()
-        
-        // Batch fetch reputation data for all users to minimize database calls
-        val userIds = profiles.map { it.profile.userId }
-        val reputationDataMap = mutableMapOf<String, Pair<app.bartering.features.reviews.dao.ReputationDto, List<app.bartering.features.reviews.model.ReputationBadge>>>()
-        
-        try {
-            userIds.forEach { userId ->
-                val reputation = reputationDao.getReputation(userId)
-                val badges = reputationDao.getUserBadges(userId)
-                if (reputation != null) {
-                    reputationDataMap[userId] = reputation to badges
-                }
-            }
-        } catch (e: Exception) {
-            log.warn("Failed to fetch reputation data for boosting, continuing without reputation boost", e)
-        }
-        
-        // Apply comprehensive boost based on multiple factors
-        return profiles.map { profileWithDistance ->
-            val userId = profileWithDistance.profile.userId
-            val lastOnlineAt = app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
-            
-            // Update the UserProfile with lastOnlineAt timestamp
-            val updatedProfile = profileWithDistance.profile.copy(lastOnlineAt = lastOnlineAt)
-            
-            // Only calculate boost if there's a relevancy score to boost
-            if (profileWithDistance.matchRelevancyScore == null) {
-                return@map profileWithDistance.copy(profile = updatedProfile)
-            }
-            
-            var totalBoost = 0.0
-            
-            // 1. ONLINE ACTIVITY BOOST
-            if (lastOnlineAt != null) {
-                val timeSinceLastOnline = currentTime - lastOnlineAt
-                when {
-                    timeSinceLastOnline < TEN_MINUTES_MILLIS -> {
-                        totalBoost += RECENT_ONLINE_BOOST
-                        log.trace("User {} recently online (<10min), +{}", userId, RECENT_ONLINE_BOOST)
-                    }
-                    timeSinceLastOnline < TWENTY_FOUR_HOURS_MILLIS -> {
-                        totalBoost += DAILY_ACTIVE_BOOST
-                        log.trace("User {} active today (<24h), +{}", userId, DAILY_ACTIVE_BOOST)
-                    }
-                }
-            }
-            
-            // 2. REPUTATION AND BADGES BOOST
-            val (reputation, badges) = reputationDataMap[userId] ?: (null to emptyList())
-            
-            if (reputation != null) {
-                // 2a. Average Rating Boost
-                when {
-                    reputation.averageRating >= 4.8 -> {
-                        totalBoost += EXCELLENT_RATING_BOOST
-                        log.trace("User {} has excellent rating ({}), +{}", userId, reputation.averageRating, EXCELLENT_RATING_BOOST)
-                    }
-                    reputation.averageRating >= 4.5 -> {
-                        totalBoost += GREAT_RATING_BOOST
-                        log.trace("User {} has great rating ({}), +{}", userId, reputation.averageRating, GREAT_RATING_BOOST)
-                    }
-                    reputation.averageRating >= 4.0 -> {
-                        totalBoost += GOOD_RATING_BOOST
-                        log.trace("User {} has good rating ({}), +{}", userId, reputation.averageRating, GOOD_RATING_BOOST)
-                    }
-                }
-                
-                // 2b. Trust Level Boost
-                when (reputation.trustLevel) {
-                    app.bartering.features.reviews.model.TrustLevel.VERIFIED -> {
-                        totalBoost += VERIFIED_TRUST_BOOST
-                        log.trace("User {} is VERIFIED, +{}", userId, VERIFIED_TRUST_BOOST)
-                    }
-                    app.bartering.features.reviews.model.TrustLevel.TRUSTED -> {
-                        totalBoost += TRUSTED_BOOST
-                        log.trace("User {} is TRUSTED, +{}", userId, TRUSTED_BOOST)
-                    }
-                    app.bartering.features.reviews.model.TrustLevel.ESTABLISHED -> {
-                        totalBoost += ESTABLISHED_BOOST
-                        log.trace("User {} is ESTABLISHED, +{}", userId, ESTABLISHED_BOOST)
-                    }
-                    app.bartering.features.reviews.model.TrustLevel.EMERGING -> {
-                        totalBoost += EMERGING_BOOST
-                        log.trace("User {} is EMERGING, +{}", userId, EMERGING_BOOST)
-                    }
-                    else -> {} // No boost for NEW
-                }
-                
-                // 2c. Trade Diversity Boost
-                if (reputation.tradeDiversityScore >= 0.7) {
-                    totalBoost += HIGH_TRADE_DIVERSITY_BOOST
-                    log.trace("User {} has high trade diversity ({}), +{}", userId, reputation.tradeDiversityScore, HIGH_TRADE_DIVERSITY_BOOST)
-                }
-            }
-            
-            // 2d. Badge Boosts (stackable)
-            badges.forEach { badge ->
-                val badgeBoost = when (badge) {
-                    app.bartering.features.reviews.model.ReputationBadge.TOP_RATED -> TOP_RATED_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.VETERAN_TRADER -> VETERAN_TRADER_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.VERIFIED_BUSINESS -> VERIFIED_BUSINESS_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.QUICK_RESPONDER -> QUICK_RESPONDER_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.DISPUTE_FREE -> DISPUTE_FREE_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.IDENTITY_VERIFIED -> IDENTITY_VERIFIED_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.FAST_TRADER -> FAST_TRADER_BADGE_BOOST
-                    app.bartering.features.reviews.model.ReputationBadge.COMMUNITY_CONNECTOR -> COMMUNITY_CONNECTOR_BADGE_BOOST
-                }
-                totalBoost += badgeBoost
-                log.trace("User {} has badge {}, +{}", userId, badge.value, badgeBoost)
-            }
-            
-            // Cap the total boost to prevent over-boosting
-            totalBoost = totalBoost.coerceAtMost(MAX_TOTAL_BOOST)
-            
-            if (totalBoost > 0.0) {
-                // Apply the boost to relevancy score (additive, then cap at 1.0)
-                val boostedScore = (profileWithDistance.matchRelevancyScore + totalBoost).coerceAtMost(1.0)
-                log.debug("User {} total boost: +{} (score: {} -> {})", userId, totalBoost, 
-                    profileWithDistance.matchRelevancyScore, boostedScore)
-                profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)
-            } else {
-                profileWithDistance.copy(profile = updatedProfile)
-            }
-        }
     }
 
     override suspend fun getAllUsers(
