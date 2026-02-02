@@ -75,7 +75,7 @@ fun Route.getInterestsFromOnboardingData() {
         val parsedOfferingsSuggestions = attributesDao.parseInterestSuggestionsFromOnboardingData(
             extendedMap,
             userId = userId,
-            limit = 22
+            limit = 26
         )
 
         // --- Return a Success Response ---
@@ -137,7 +137,7 @@ fun Route.getOfferingsFromInterestsData() {
 
             val parsedInterestSuggestions = attributesDao.getComplementaryInterestSuggestions(
                 requestObj.attributesRelevancyData,
-                22,
+                26,
                 requestObj.userId
             )
 

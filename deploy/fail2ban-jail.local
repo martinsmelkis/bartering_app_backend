@@ -1,0 +1,98 @@
+# Fail2Ban Jail Configuration for Barter App
+# Place this file in /etc/fail2ban/jail.local
+#
+# Industry-standard fail2ban configuration for API protection
+# Automatically bans IPs that violate rate limits or authentication policies
+
+[DEFAULT]
+# Ban duration (in seconds)
+# Industry standard: 1 hour for first offense, increases with recidivism
+bantime = 3600
+
+# Time window to count failures (in seconds)
+# Industry standard: 10 minutes
+findtime = 600
+
+# Number of failures before ban
+# Industry standard: 5-10 attempts
+maxretry = 10
+
+# Ban action (iptables with notification)
+# Blocks HTTP, HTTPS, and WebSocket traffic
+banaction = iptables-multiport
+action = %(action_mwl)s
+
+# ============================================================================
+# NGINX RATE LIMIT JAIL
+# ============================================================================
+# Bans IPs that repeatedly trigger nginx rate limits
+# Indicates potential brute force or DDoS attack
+
+[nginx-ratelimit]
+enabled = true
+port = http,https
+filter = nginx-ratelimit
+logpath = /var/log/nginx/barter-app-error.log
+maxretry = 10
+findtime = 60
+bantime = 3600
+action = iptables-multiport[name=RateLimit, port="http,https", protocol=tcp]
+
+# ============================================================================
+# AUTHENTICATION FAILURE JAIL
+# ============================================================================
+# Bans IPs with repeated authentication failures
+# Protects against credential stuffing and brute force attacks
+
+[nginx-auth-barter]
+enabled = true
+port = http,https
+filter = nginx-auth
+logpath = /var/log/nginx/barter-app-access.log
+maxretry = 5
+findtime = 600
+bantime = 7200
+action = iptables-multiport[name=AuthFail, port="http,https", protocol=tcp]
+
+# ============================================================================
+# GENERIC NGINX BAD BOTS JAIL
+# ============================================================================
+# Blocks known bad bots and scanners
+
+[nginx-badbots]
+enabled = true
+port = http,https
+filter = nginx-badbots
+logpath = /var/log/nginx/barter-app-access.log
+maxretry = 2
+findtime = 600
+bantime = 86400
+action = iptables-multiport[name=BadBots, port="http,https", protocol=tcp]
+
+# ============================================================================
+# NGINX HTTP AUTH JAIL (if using basic auth)
+# ============================================================================
+
+[nginx-http-auth]
+enabled = false
+port = http,https
+filter = nginx-http-auth
+logpath = /var/log/nginx/barter-app-error.log
+maxretry = 3
+findtime = 600
+bantime = 3600
+
+# ============================================================================
+# RECIDIVISM JAIL (Ban repeat offenders for longer)
+# ============================================================================
+# Bans IPs that have been banned multiple times before
+# Progressive ban times: 1 day, 1 week, 1 month
+
+[recidive]
+enabled = true
+filter = recidive
+logpath = /var/log/fail2ban.log
+action = iptables-allports[name=recidive]
+bantime = 604800  ; 1 week
+findtime = 86400  ; 1 day
+maxretry = 3

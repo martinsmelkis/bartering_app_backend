@@ -173,9 +173,18 @@ fun Route.updateProfileRoute() {
 fun Route.searchProfilesByKeywordRoute() {
 
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
 
     // Route to search for user profiles by keyword
     get("/api/v1/profiles/search") {
+
+        // --- Authentication using signature verification ---
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            // Error response has already been sent by verifyRequestSignature
+            return@get
+        }
+
         // Get search text from query parameters
         val searchText = call.request.queryParameters["q"]
             ?: call.request.queryParameters["query"]
