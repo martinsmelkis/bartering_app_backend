@@ -8,7 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
-import kotlinx.coroutines.isActive
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import app.bartering.features.chat.cache.PublicKeyCache
@@ -231,9 +230,12 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             currentConnection.userName = authRequest.userName
                             currentConnection.userPublicKey = authRequest.publicKey
 
-                            val isNewConnection = connectionManager.getConnection(authRequest.userId) == null
-                            log.debug("New connection check for userId={}: isNew={}", authRequest.userId, isNewConnection)
-                            // Add connection to manager (handles closing old sessions automatically)
+                            // Check if this is the very first connection for this user
+                            val previousConnectionCount = connectionManager.getTotalConnectionCount()
+                            val isNewConnection = !connectionManager.isConnected(authRequest.userId)
+                            log.debug("New connection for userId={}: isFirstConnection={}, previousCount={}",
+                                authRequest.userId, isNewConnection, previousConnectionCount)
+                            // Add connection to manager (now supports multiple concurrent connections)
                             connectionManager.addConnection(
                                 authRequest.userId,
                                 currentConnection
@@ -256,13 +258,16 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 authRequest.userId, authRequest.peerUserId, currentConnection.id)
 
                             // Send my Public key to peer, if he/she is already online
-                            if (isNewConnection && connectionManager.getConnection(authRequest.peerUserId) != null) {
+                            if (isNewConnection && connectionManager.isConnected(authRequest.peerUserId)) {
                                 val serverMessage = P2PAuthMessage(
                                     senderId = authRequest.userId,
                                     publicKey = authRequest.publicKey,
                                 )
-                                connectionManager.getConnection(authRequest.peerUserId)?.session?.send(
-                                    Frame.Text(Json.encodeToString<SocketMessage>(socketSerializer, serverMessage)))
+                                // Broadcast to all peer's active connections
+                                connectionManager.broadcastToAllConnections(
+                                    authRequest.peerUserId,
+                                    Json.encodeToString<SocketMessage>(socketSerializer, serverMessage)
+                                )
                             }
 
                             // Get recipient public key with caching to prevent excessive DB lookups
@@ -359,67 +364,68 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             val clientMessage = Json.decodeFromString<ClientChatMessage>(receivedText)
 
                             log.debug("Client message recipient: {}", clientMessage.data.recipientId)
-                            val recipientConnection = connectionManager.getConnection(clientMessage.data.recipientId)
 
-                            if (recipientConnection != null && recipientConnection.session.isActive) {
+                            val messageId = UUID.randomUUID().toString()
+                            val serverMessage = ServerChatMessage(
+                                senderId = currentUserId,
+                                text = clientMessage.data.encryptedPayload ?: "",
+                                timestamp = System.currentTimeMillis(),
+                                recipientId = clientMessage.data.recipientId,
+                                serverMessageId = messageId,
+                                senderName = clientMessage.data.senderName
+                            )
+                            log.debug("Relaying message from {} to {}", currentUserId, clientMessage.data.recipientId)
 
-                                // If recipientConnection does not have auth flag then
-                                // set sender public key and set as true, then send P2PAuthMessage message first
-                                if (recipientConnection.recipientPublicKey != null) {
+                            // Check if recipient has ANY active connection
+                            val recipientHasActiveConnections = connectionManager.isConnected(clientMessage.data.recipientId)
 
-                                    val messageId = UUID.randomUUID().toString()
-                                    val serverMessage = ServerChatMessage(
-                                        senderId = currentUserId,
-                                        text = clientMessage.data.encryptedPayload ?: "",
-                                        timestamp = System.currentTimeMillis(),
-                                        recipientId = clientMessage.data.recipientId,
-                                        serverMessageId = messageId,
-                                        senderName = clientMessage.data.senderName
-                                    )
-                                    log.debug("Relaying message from {} to {}", currentUserId, clientMessage.data.recipientId)
-                                    
-                                    // Send the message to recipient
-                                    recipientConnection.session.send(
-                                        Frame.Text(
-                                            Json.encodeToString(
-                                                socketSerializer,
-                                                serverMessage
-                                            )
-                                        )
-                                    )
-                                    
-                                    // Send SENT status to sender
-                                    ChatUtils.sendMessageStatusUpdate(
+                            if (recipientHasActiveConnections) {
+                                // Send the message to ALL active connections for the recipient
+                                val messagePayload = Json.encodeToString(
+                                    socketSerializer,
+                                    serverMessage
+                                )
+                                val broadcastCount = connectionManager.broadcastToAllConnections(
+                                    clientMessage.data.recipientId,
+                                    messagePayload
+                                )
+
+                                log.debug("Message sent to {} connection(s) for user {}", broadcastCount, clientMessage.data.recipientId)
+
+                                // Send SENT status to sender
+                                ChatUtils.sendMessageStatusUpdate(
+                                    messageId = messageId,
+                                    status = MessageStatus.SENT,
+                                    session = currentConnection.session,
+                                    serializer = socketSerializer,
+                                    log = log
+                                )
+
+                                // Store DELIVERED receipt and notify sender (async)
+                                cleanupScope.launch {
+                                    ChatUtils.handleReadReceipt(
                                         messageId = messageId,
-                                        status = MessageStatus.SENT,
-                                        session = currentConnection.session,
+                                        senderId = currentUserId,
+                                        recipientId = clientMessage.data.recipientId,
+                                        status = MessageStatus.DELIVERED,
+                                        senderConnection = currentConnection,
+                                        readReceiptDao = readReceiptDao,
                                         serializer = socketSerializer,
                                         log = log
                                     )
-                                    
-                                    // Store DELIVERED receipt and notify sender (async)
-                                    cleanupScope.launch {
-                                        ChatUtils.handleReadReceipt(
-                                            messageId = messageId,
-                                            senderId = currentUserId,
-                                            recipientId = clientMessage.data.recipientId,
-                                            status = MessageStatus.DELIVERED,
-                                            senderConnection = currentConnection,
-                                            readReceiptDao = readReceiptDao,
-                                            serializer = socketSerializer,
-                                            log = log
-                                        )
-                                    }
-                                    
-                                    // Track when recipient receives this message (for their response time)
-                                    ChatUtils.trackMessageReceived(
-                                        userId = clientMessage.data.recipientId,
-                                        senderId = currentUserId,
-                                        conversationState = conversationState,
-                                        log = log
-                                    )
-                                    
-                                    // Track message count and create transaction if applicable
+                                }
+
+                                // Track when recipient receives this message (for their response time)
+                                ChatUtils.trackMessageReceived(
+                                    userId = clientMessage.data.recipientId,
+                                    senderId = currentUserId,
+                                    conversationState = conversationState,
+                                    log = log
+                                )
+
+                                // Track message count and create transaction if applicable
+                                val recipientConnection = connectionManager.getGeneralConnection(clientMessage.data.recipientId)
+                                if (recipientConnection != null) {
                                     ChatUtils.trackMessageAndCreateTransaction(
                                         senderId = currentUserId,
                                         recipientId = clientMessage.data.recipientId,
@@ -432,17 +438,17 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                         scope = cleanupScope,
                                         log = log
                                     )
-                                    
-                                    // Check if current user is responding to a previous message from recipient
-                                    ChatUtils.recordResponseTimeIfApplicable(
-                                        userId = currentUserId,
-                                        recipientId = clientMessage.data.recipientId,
-                                        conversationState = conversationState,
-                                        chatAnalyticsDao = chatAnalyticsDao,
-                                        scope = cleanupScope,
-                                        log = log
-                                    )
                                 }
+
+                                // Check if current user is responding to a previous message from recipient
+                                ChatUtils.recordResponseTimeIfApplicable(
+                                    userId = currentUserId,
+                                    recipientId = clientMessage.data.recipientId,
+                                    conversationState = conversationState,
+                                    chatAnalyticsDao = chatAnalyticsDao,
+                                    scope = cleanupScope,
+                                    log = log
+                                )
                             } else {
                                 log.debug("Recipient {} not found or inactive. Message from {} stored for offline delivery", 
                                     clientMessage.data.recipientId, currentUserId)

@@ -12,4 +12,5 @@ class ChatConnection(val session: DefaultWebSocketServerSession) {
     var userName: String? = null
     var userPublicKey: String? = null
     var recipientPublicKey: String? = null
+    var purpose: String = "general" // Purpose of this connection: "general", "direct-chat", etc.
 }
