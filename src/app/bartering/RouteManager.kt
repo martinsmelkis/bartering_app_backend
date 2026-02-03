@@ -17,16 +17,17 @@ import app.bartering.features.notifications.routes.notificationPreferencesRoutes
 import app.bartering.features.notifications.routes.pushNotificationRoutes
 import app.bartering.features.reviews.routes.*
 import io.ktor.server.routing.*
-
-// Shared ConnectionManager instance for both WebSocket and file transfer routes
-private val sharedConnectionManager = ConnectionManager()
+import org.koin.java.KoinJavaComponent.inject
 
 fun Application.routes() {
+    // Get ConnectionManager from Koin DI (shared instance for WebSocket and file transfer routes)
+    val connectionManager: ConnectionManager by inject(ConnectionManager::class.java)
+    
     authenticationRoutes()
     profileManagementRoutes()
     userAttributePreferencesRoutes()
-    chatRoutes(sharedConnectionManager)
-    fileTransferRoutes(sharedConnectionManager)
+    chatRoutes(connectionManager)
+    fileTransferRoutes(connectionManager)
     notificationPreferencesRoutes()
     pushNotificationRoutes()
     healthCheckRoutes()

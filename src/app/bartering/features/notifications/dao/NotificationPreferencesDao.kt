@@ -40,4 +40,5 @@ interface NotificationPreferencesDao {
     suspend fun markMatchNotificationSent(matchId: String): Boolean
     suspend fun getUnnotifiedMatches(userId: String, since: Instant?  = null): List<MatchHistoryEntry>
     suspend fun deleteOldMatches(olderThan: Instant): Int
+    suspend fun deleteAllUserMatches(userId: String): Int
 }

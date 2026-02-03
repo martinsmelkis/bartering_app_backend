@@ -441,6 +441,322 @@ class MatchNotificationService(
     }
     
     /**
+     * Check when a user adds a SEEKING or PROVIDING attribute against other users' profile attributes
+     * Notify users when someone within 10 miles adds a matching complementary skill
+     * (SEEKING users get notified about nearby PROVIDING users and vice versa)
+     */
+    suspend fun checkUserAttributeAgainstOtherUserProfiles(
+        userId: String, 
+        attributeId: String, 
+        attributeType: app.bartering.features.attributes.model.UserAttributeType
+    ): List<MatchHistoryEntry> {
+        val matches = mutableListOf<MatchHistoryEntry>()
+        
+        try {
+            // Get the user's profile to access their location
+            val userProfile = profileDao.getProfile(userId)
+            if (userProfile == null || userProfile.latitude == null || userProfile.longitude == null) {
+                log.debug("User {} has no location set, skipping profile attribute matching", userId)
+                return emptyList()
+            }
+            
+            // Copy to local variables to avoid smart cast issues
+            val userLatitude = userProfile.latitude
+            val userLongitude = userProfile.longitude
+            
+            if (userLatitude == null || userLongitude == null) {
+                log.debug("User {} has no location set, skipping profile attribute matching", userId)
+                return emptyList()
+            }
+            
+            // Determine the complementary attribute type to search for
+            val complementaryType = when (attributeType) {
+                app.bartering.features.attributes.model.UserAttributeType.SEEKING -> 
+                    app.bartering.features.attributes.model.UserAttributeType.PROVIDING
+                app.bartering.features.attributes.model.UserAttributeType.PROVIDING -> 
+                    app.bartering.features.attributes.model.UserAttributeType.SEEKING
+                else -> {
+                    log.debug("Attribute type {} not supported for profile matching", attributeType)
+                    return emptyList()
+                }
+            }
+            
+            // Find users with the complementary attribute within 10 miles (~16.09 km)
+            val matchingUsers = findUsersWithAttributeNearby(
+                attributeId = attributeId.normalizeAttributeForDBProcessing(),
+                attributeType = complementaryType,
+                latitude = userLatitude,
+                longitude = userLongitude,
+                radiusKm = 16.09, // 10 miles
+                excludeUserId = userId
+            )
+            
+            log.debug("Found {} users with complementary attribute {} within 10 miles", matchingUsers.size, attributeId)
+            
+            for (matchingUserProfile in matchingUsers) {
+                val matchingUserId = matchingUserProfile.profile.userId
+                
+                // Check if the matching user has notifications enabled for this attribute
+                val matchingUserPreference = preferencesDao.getAttributePreference(matchingUserId,
+                    attributeId.normalizeAttributeForDBProcessing())
+                
+                // Default: notifications enabled
+                val matchingUserNotificationsEnabled = matchingUserPreference?.notificationsEnabled ?: true
+                val matchingUserNotifyOnNewUsers = matchingUserPreference?.notifyOnNewUsers ?: false
+                val matchingUserNotificationFrequency = matchingUserPreference?.notificationFrequency 
+                    ?: NotificationFrequency.INSTANT
+                val minMatchScore = matchingUserPreference?.minMatchScore ?: 0.7
+                
+                if (!matchingUserNotificationsEnabled || !matchingUserNotifyOnNewUsers) {
+                    log.debug("User {} has notifications disabled for attribute {}", matchingUserId, attributeId)
+                    continue
+                }
+                
+                // Calculate match score based on relevancy and distance
+                val matchScore = calculateProfileAttributeMatchScore(
+                    matchingUserProfile = matchingUserProfile,
+                    attributeId = attributeId,
+                    distance = matchingUserProfile.distanceKm ?: 0.0
+                )
+                
+                if (matchScore < minMatchScore) {
+                    log.debug("Match score {} below threshold {} for user {}", matchScore, minMatchScore, matchingUserId)
+                    continue
+                }
+                
+                // Check if match already exists
+                val existingMatch = preferencesDao.findExistingMatch(
+                    userId = matchingUserId,
+                    sourceType = SourceType.ATTRIBUTE,
+                    sourceId = attributeId,
+                    targetType = TargetType.USER,
+                    targetId = userId
+                )
+                
+                if (existingMatch == null) {
+                    val userLocale = getUserLocale(matchingUserId)
+                    val localizedAttribute = getLocalizedAttribute(attributeId, userLocale)
+                    
+                    val localizedReason = when (attributeType) {
+                        app.bartering.features.attributes.model.UserAttributeType.SEEKING -> 
+                            Localization.getString(
+                                "match.user_providing_nearby",
+                                userLocale,
+                                userProfile.name,
+                                localizedAttribute
+                            )
+                        app.bartering.features.attributes.model.UserAttributeType.PROVIDING -> 
+                            Localization.getString(
+                                "match.user_seeking_nearby",
+                                userLocale,
+                                userProfile.name,
+                                localizedAttribute
+                            )
+                        else -> Localization.getString("match.default", userLocale)
+                    }
+                    
+                    val match = MatchHistoryEntry(
+                        id = UUID.randomUUID().toString(),
+                        userId = matchingUserId, // Notify the matching user
+                        matchType = MatchType.USER_MATCH,
+                        sourceType = SourceType.ATTRIBUTE,
+                        sourceId = attributeId,
+                        targetType = TargetType.USER,
+                        targetId = userId, // The user who just added the attribute
+                        matchScore = matchScore,
+                        matchReason = localizedReason,
+                        matchedAt = Instant.now()
+                    )
+                    
+                    preferencesDao.createMatch(match)
+                    matches.add(match)
+                    
+                    // Send notification based on frequency
+                    if (matchingUserNotificationFrequency == NotificationFrequency.INSTANT) {
+                        log.info("Notifying userId={} about profile match: {}", matchingUserId, match.matchReason)
+                        sendProfileMatchNotification(match, userProfile)
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            log.error("Failed to check user attribute against other profiles for userId={}, attributeId={}", 
+                userId, attributeId, e)
+        }
+        
+        return matches
+    }
+    
+    /**
+     * Find users with a specific attribute within a given radius
+     */
+    private suspend fun findUsersWithAttributeNearby(
+        attributeId: String,
+        attributeType: app.bartering.features.attributes.model.UserAttributeType,
+        latitude: Double,
+        longitude: Double,
+        radiusKm: Double,
+        excludeUserId: String
+    ): List<app.bartering.features.profile.model.UserProfileWithDistance> {
+        return withContext(Dispatchers.IO) {
+            newSuspendedTransaction(Dispatchers.IO) {
+                val radiusMeters = radiusKm * 1000.0
+                
+                // Raw SQL query to find users with the attribute within the radius
+                val query = """
+                    SELECT DISTINCT
+                        up.user_id,
+                        up.name,
+                        up.location,
+                        ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters,
+                        up.preferred_language
+                    FROM user_profiles up
+                    INNER JOIN user_attributes ua ON up.user_id = ua.user_id
+                    WHERE ua.attribute_id = ?
+                      AND ua.type = ?
+                      AND up.user_id != ?
+                      AND up.location IS NOT NULL
+                      AND ST_DWithin(
+                          up.location::geography,
+                          ST_MakePoint(?, ?)::geography,
+                          ?
+                      )
+                    ORDER BY distance_meters ASC
+                    LIMIT 50
+                """.trimIndent()
+                
+                val results = mutableListOf<app.bartering.features.profile.model.UserProfileWithDistance>()
+                
+                org.jetbrains.exposed.sql.transactions.TransactionManager.current().connection
+                    .prepareStatement(query, false).also { statement ->
+                        statement[1] = longitude
+                        statement[2] = latitude
+                        statement[3] = attributeId
+                        statement[4] = attributeType.name
+                        statement[5] = excludeUserId
+                        statement[6] = longitude
+                        statement[7] = latitude
+                        statement[8] = radiusMeters
+                        
+                        val rs = statement.executeQuery()
+                        while (rs.next()) {
+                            // Parse location using LocationParser utility to handle PostGIS POINT format
+                            val (parsedLongitude, parsedLatitude) = app.bartering.features.profile.util.LocationParser.parseLocation(rs)
+                            
+                            val distanceMeters = rs.getDouble("distance_meters")
+                            val distanceKm = distanceMeters / 1000.0
+
+                            println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Nearby attr check user: ${rs.getString("user_id")} ${distanceMeters}")
+                            val profile = app.bartering.features.profile.model.UserProfile(
+                                userId = rs.getString("user_id"),
+                                name = rs.getString("name") ?: "Unknown",
+                                latitude = parsedLatitude,
+                                longitude = parsedLongitude,
+                                attributes = emptyList(),
+                                profileKeywordDataMap = null,
+                                preferredLanguage = rs.getString("preferred_language") ?: "en"
+                            )
+                            
+                            results.add(
+                                app.bartering.features.profile.model.UserProfileWithDistance(
+                                    profile = profile,
+                                    distanceKm = distanceKm,
+                                    matchRelevancyScore = null
+                                )
+                            )
+                        }
+                    }
+                
+                results
+            }
+        }
+    }
+    
+    /**
+     * Calculate match score for profile attribute matching
+     * Factors in attribute relevancy and proximity
+     */
+    private fun calculateProfileAttributeMatchScore(
+        matchingUserProfile: app.bartering.features.profile.model.UserProfileWithDistance,
+        attributeId: String,
+        distance: Double
+    ): Double {
+        var score = 0.7 // Base score for attribute match
+        
+        // Distance bonus: closer users score higher
+        // Within 1 km: +0.2, within 5 km: +0.15, within 10 km: +0.1
+        val distanceBonus = when {
+            distance <= 1.0 -> 0.2
+            distance <= 5.0 -> 0.15
+            distance <= 10.0 -> 0.1
+            else -> 0.05
+        }
+        score += distanceBonus
+        
+        return score.coerceAtMost(1.0)
+    }
+    
+    /**
+     * Send notification for a profile match
+     */
+    private suspend fun sendProfileMatchNotification(match: MatchHistoryEntry, matchedUserProfile: app.bartering.features.profile.model.UserProfile) {
+        try {
+            // Get user's contacts for quiet hours check
+            val contacts = preferencesDao.getUserContacts(match.userId)
+            log.debug("User contacts: {}", contacts)
+            
+            // If contacts exist, check if notifications are enabled and quiet hours
+            if (contacts != null) {
+                if (!contacts.notificationsEnabled) {
+                    log.debug("Notifications disabled for user {}", match.userId)
+                    return
+                }
+                
+                // Check quiet hours
+                if (isInQuietHours(contacts.quietHoursStart, contacts.quietHoursEnd)) {
+                    log.debug("User {} is in quiet hours", match.userId)
+                    return
+                }
+            } else {
+                log.debug("No contacts configured for user {}, will attempt WebSocket fallback", match.userId)
+            }
+            
+            // Get localized default message if matchReason is null
+            val userLocale = getUserLocale(match.userId)
+            val finalMatchReason = match.matchReason ?: Localization.getString(
+                "match.default",
+                userLocale
+            )
+            
+            val notification = NotificationDataBuilder.match(
+                matchId = match.id,
+                matchReason = finalMatchReason,
+                postingId = null, // No posting for profile matches
+                postingUserId = matchedUserProfile.userId,
+                postingTitle = matchedUserProfile.name,
+                postingImageUrl = null,
+                matchScore = match.matchScore,
+                matchType = "profile_match"
+            )
+
+            log.info("Profile match found, sending notification")
+            
+            // Send via orchestrator
+            orchestrator.sendNotification(
+                userId = match.userId,
+                notification = notification
+            )
+            
+            // Mark as sent
+            preferencesDao.markMatchNotificationSent(match.id)
+            
+        } catch (e: Exception) {
+            log.error("Failed to send profile match notification", e)
+            e.printStackTrace()
+        }
+    }
+    
+    /**
      * Calculate match score between an attribute and a posting
      * Uses simple text matching - in production would use vector embeddings
      */
@@ -671,16 +987,24 @@ class MatchNotificationService(
      */
     private suspend fun sendMatchNotification(match: MatchHistoryEntry, posting: UserPosting) {
         try {
-            // Get user's contacts
+            // Get user's contacts for quiet hours check
             val contacts = preferencesDao.getUserContacts(match.userId)
             log.debug("User contacts: {}", contacts)
-            if (contacts == null || !contacts.notificationsEnabled) {
-                return
-            }
             
-            // Check quiet hours
-            if (isInQuietHours(contacts.quietHoursStart, contacts.quietHoursEnd)) {
-                return
+            // If contacts exist, check if notifications are enabled and quiet hours
+            if (contacts != null) {
+                if (!contacts.notificationsEnabled) {
+                    log.debug("Notifications disabled for user {}", match.userId)
+                    return
+                }
+                
+                // Check quiet hours
+                if (isInQuietHours(contacts.quietHoursStart, contacts.quietHoursEnd)) {
+                    log.debug("User {} is in quiet hours", match.userId)
+                    return
+                }
+            } else {
+                log.debug("No contacts configured for user {}, will attempt WebSocket fallback", match.userId)
             }
             
             // Create notification payload using builder

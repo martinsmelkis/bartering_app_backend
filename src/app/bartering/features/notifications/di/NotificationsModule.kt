@@ -46,12 +46,13 @@ val notificationsModule = module {
         }
     }
 
-    // Notification Orchestrator - Coordinates email and push services
+    // Notification Orchestrator - Coordinates email, push, and WebSocket services
     single {
         NotificationOrchestrator(
             emailService = get(),
             pushService = get(),
-            preferencesDao = get()
+            preferencesDao = get(),
+            connectionManager = get()
         )
     }
 

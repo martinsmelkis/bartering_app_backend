@@ -154,15 +154,10 @@ class UserProfileDaoImpl : UserProfileDao {
 
     override suspend fun getUserPublicKeyById(id: String): String? {
         val publicKey = dbQuery {
-            return@dbQuery try {
-                val selectRow = UserRegistrationDataTable.select(UserRegistrationDataTable.id,
-                    UserRegistrationDataTable.publicKey)
-                    .where(UserRegistrationDataTable.id eq id).first()
-                selectRow[UserRegistrationDataTable.publicKey]
-            } catch (e: NoSuchElementException) {
-                e.printStackTrace()
-                null
-            }
+            val selectRow = UserRegistrationDataTable.select(UserRegistrationDataTable.id,
+                UserRegistrationDataTable.publicKey)
+                .where(UserRegistrationDataTable.id eq id).firstOrNull()
+            selectRow?.get(UserRegistrationDataTable.publicKey)
         }
         return publicKey
     }

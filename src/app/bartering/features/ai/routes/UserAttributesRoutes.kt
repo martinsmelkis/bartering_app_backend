@@ -192,8 +192,22 @@ fun Route.parseOfferingsAndUpdateProfile() {
             val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
             for ((attributeKey, _) in requestObj.attributesRelevancyData) {
                 try {
-                    // Check existing SEEKING postings and notify their owners
+                    // 1. Check existing SEEKING postings and notify their owners
                     matchNotificationService.checkOfferingAgainstSeekingPostings(requestObj.userId, attributeKey)
+                    
+                    // 2. Profile attribute matching: notify nearby users with SEEKING this attribute
+                    matchNotificationService.checkUserAttributeAgainstOtherUserProfiles(
+                        requestObj.userId, 
+                        attributeKey, 
+                        UserAttributeType.PROVIDING
+                    )
+
+                    // 3. Profile attribute matching: notify nearby users with PROVIDING this attribute
+                    matchNotificationService.checkUserAttributeAgainstOtherUserProfiles(
+                        requestObj.userId,
+                        attributeKey,
+                        UserAttributeType.SEEKING
+                    )
                 } catch (e: Exception) {
                     application.log.error("Failed to check offering attribute '$attributeKey' against postings for user ${requestObj.userId}", e)
                     // Continue with other attributes even if one fails

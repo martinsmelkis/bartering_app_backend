@@ -403,6 +403,12 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
         }
     }
     
+    override suspend fun deleteAllUserMatches(userId: String): Int = dbQuery {
+        MatchHistoryTable.deleteWhere {
+            MatchHistoryTable.userId eq userId
+        }
+    }
+    
     // Helper functions to convert ResultRow to data classes
     
     private fun rowToUserContacts(row: ResultRow): UserNotificationContacts {

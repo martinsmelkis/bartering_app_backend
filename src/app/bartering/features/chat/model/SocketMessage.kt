@@ -77,3 +77,17 @@ data class TransactionCreatedMessage(
     val initiatedAt: Long,
     val message: String = "Trade conversation started"
 ) : SocketMessage()
+
+@Serializable
+data class MatchNotificationMessage(
+    val matchId: String,
+    val title: String,
+    val body: String,
+    val matchType: String, // "match", "wishlist_match", "profile_match"
+    val matchScore: Double? = null,
+    val postingId: String? = null,
+    val postingUserId: String? = null,
+    val postingTitle: String? = null,
+    val postingImageUrl: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+) : SocketMessage()

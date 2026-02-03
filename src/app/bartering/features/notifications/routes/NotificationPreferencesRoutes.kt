@@ -484,6 +484,19 @@ fun Application.notificationPreferencesRoutes() {
                     call.respond(HttpStatusCode.NotFound, NotificationPreferencesResponse(false, "Match not found"))
                 }
             }
+            
+            // Clear all matches for the user
+            delete("/matches") {
+                val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+                if (authenticatedUserId == null) return@delete
+                
+                val deletedCount = preferencesDao.deleteAllUserMatches(authenticatedUserId)
+                
+                call.respond(HttpStatusCode.OK, NotificationPreferencesResponse(
+                    success = true,
+                    message = "Cleared $deletedCount match(es)"
+                ))
+            }
         }
     }
 
