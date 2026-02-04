@@ -129,6 +129,13 @@ fun Route.getOfferingsFromInterestsData() {
                     
                     // 2. Check existing OFFERING postings and notify their owners
                     matchNotificationService.checkSeekingAgainstOfferingPostings(requestObj.userId, attributeKey)
+
+                    // 3. Profile attribute matching: notify nearby users with PROVIDING this attribute
+                    matchNotificationService.checkUserAttributeAgainstOtherUserProfiles(
+                        requestObj.userId,
+                        attributeKey,
+                        UserAttributeType.SEEKING
+                    )
                 } catch (e: Exception) {
                     application.log.error("Failed to check attribute '$attributeKey' against postings for user ${requestObj.userId}", e)
                     // Continue with other attributes even if one fails
@@ -200,13 +207,6 @@ fun Route.parseOfferingsAndUpdateProfile() {
                         requestObj.userId, 
                         attributeKey, 
                         UserAttributeType.PROVIDING
-                    )
-
-                    // 3. Profile attribute matching: notify nearby users with PROVIDING this attribute
-                    matchNotificationService.checkUserAttributeAgainstOtherUserProfiles(
-                        requestObj.userId,
-                        attributeKey,
-                        UserAttributeType.SEEKING
                     )
                 } catch (e: Exception) {
                     application.log.error("Failed to check offering attribute '$attributeKey' against postings for user ${requestObj.userId}", e)

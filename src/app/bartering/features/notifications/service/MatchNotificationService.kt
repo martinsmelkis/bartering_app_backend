@@ -535,17 +535,17 @@ class MatchNotificationService(
                 
                 if (existingMatch == null) {
                     val userLocale = getUserLocale(matchingUserId)
-                    val localizedAttribute = getLocalizedAttribute(attributeId, userLocale)
+                    val localizedAttribute = getLocalizedAttribute(attributeId.normalizeAttributeForDBProcessing(), userLocale)
                     
                     val localizedReason = when (attributeType) {
-                        app.bartering.features.attributes.model.UserAttributeType.SEEKING -> 
+                        app.bartering.features.attributes.model.UserAttributeType.PROVIDING ->
                             Localization.getString(
                                 "match.user_providing_nearby",
                                 userLocale,
                                 userProfile.name,
                                 localizedAttribute
                             )
-                        app.bartering.features.attributes.model.UserAttributeType.PROVIDING -> 
+                        app.bartering.features.attributes.model.UserAttributeType.SEEKING ->
                             Localization.getString(
                                 "match.user_seeking_nearby",
                                 userLocale,
