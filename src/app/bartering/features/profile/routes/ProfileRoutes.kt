@@ -205,6 +205,10 @@ fun Route.searchProfilesByKeywordRoute() {
         val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
         val userId = call.request.queryParameters["userId"] ?: ""
         val customWeight = call.request.queryParameters["weight"]?.toIntOrNull() ?: 50
+        
+        // Optional filters for seeking/offering attributes
+        val seeking = call.request.queryParameters["seeking"]?.toBoolean()
+        val offering = call.request.queryParameters["offering"]?.toBoolean()
 
         // Validate limit
         if (limit !in 1..100) {
@@ -241,10 +245,13 @@ fun Route.searchProfilesByKeywordRoute() {
                 longitude = lon,
                 radiusMeters = radius,
                 limit = limit,
-                customWeight = customWeight
+                customWeight = customWeight,
+                seeking = seeking,
+                offering = offering
             )
 
-            log.info("Returning {} profiles for search: '{}' (weight: {})", matchingProfiles.size, searchText, customWeight)
+            log.info("Returning {} profiles for search: '{}' (weight: {}, seeking: {}, offering: {})", 
+                matchingProfiles.size, searchText, customWeight, seeking, offering)
 
             call.respond(HttpStatusCode.OK, matchingProfiles)
 

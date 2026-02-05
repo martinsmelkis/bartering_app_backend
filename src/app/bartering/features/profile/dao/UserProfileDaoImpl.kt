@@ -953,7 +953,9 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?,
         limit: Int,
-        customWeight: Int
+        customWeight: Int,
+        seeking: Boolean?,
+        offering: Boolean?
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate input
         if (!SecurityUtils.isValidLength(searchText, 1, 1000)) {
@@ -974,8 +976,8 @@ class UserProfileDaoImpl : UserProfileDao {
         val clampedWeight = customWeight.coerceIn(10, 100)
         val weightMultiplier = 0.5 + (clampedWeight - 10) * 0.7 / 90.0
 
-        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {})",
-            sanitizedSearchText, customWeight, weightMultiplier)
+        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {}, seeking: {}, offering: {})",
+            sanitizedSearchText, customWeight, weightMultiplier, seeking, offering)
 
         // Stage 1: Fast keyword-only search (no embedding generation)
         val keywordResults = executeKeywordSearch(
@@ -985,7 +987,9 @@ class UserProfileDaoImpl : UserProfileDao {
             longitude,
             radiusMeters,
             limit,
-            weightMultiplier
+            weightMultiplier,
+            seeking,
+            offering
         )
 
         log.debug("Stage 1 complete: Found {} keyword matches", keywordResults.size)
@@ -1008,7 +1012,9 @@ class UserProfileDaoImpl : UserProfileDao {
                     latitude,
                     longitude,
                     radiusMeters,
-                    weightMultiplier
+                    weightMultiplier,
+                    seeking,
+                    offering
                 )
 
                 semanticResults.forEach { (profile, distance, score) ->
@@ -1089,6 +1095,31 @@ class UserProfileDaoImpl : UserProfileDao {
     }
 
     /**
+     * Builds a SQL filter for attribute types based on seeking/offering parameters
+     */
+    private fun buildAttributeTypeFilter(seeking: Boolean?, offering: Boolean?): String {
+        return when {
+            seeking == true && offering == true -> ""  // Both types allowed
+            seeking == true && offering == false -> "AND ua.type = 'SEEKING'"
+            seeking == false && offering == true -> "AND ua.type IN ('PROVIDING', 'SHARING')"
+            seeking == null && offering == null -> ""  // No filter when both are null
+            else -> ""  // Default: no filter
+        }
+    }
+
+    /**
+     * Builds a SQL filter for semantic embeddings based on seeking/offering parameters
+     */
+    private fun buildSemanticEmbeddingFilter(seeking: Boolean?, offering: Boolean?): String {
+        return when {
+            seeking == false && offering == false -> "FALSE"  // Neither type allowed
+            seeking == true && offering == false -> "usp.embedding_needs IS NOT NULL"
+            seeking == false && offering == true -> "usp.embedding_haves IS NOT NULL"
+            else -> "usp.embedding_haves IS NOT NULL OR usp.embedding_needs IS NOT NULL"  // Default: both
+        }
+    }
+
+    /**
      * Stage 1: Fast keyword-only search using trigram similarity
      * Searches user attributes AND user postings (title + description)
      * Posting matches have slightly higher weight (0.4-0.5) vs attribute matches (0.15-0.3)
@@ -1100,7 +1131,9 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?,
         limit: Int,
-        weightMultiplier: Double? = 1.0
+        weightMultiplier: Double? = 1.0,
+        seeking: Boolean? = true,
+        offering: Boolean? = true
     ): List<Pair<String, Double>> = dbQuery {
         val minimalSimilarity = 0.3 * (weightMultiplier ?: 1.0)
         val keywordOnlyQuery = """
@@ -1140,6 +1173,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 JOIN matching_attributes ma ON ua.attribute_id = ma.attribute_key
                 WHERE 
                     (ma.word_sim > 0.45 OR ma.trgm_sim > 0.45 OR ma.exact_match > 0)
+                    ${buildAttributeTypeFilter(seeking, offering)}
                 GROUP BY ua.user_id
             ),
             posting_match_scores AS (
@@ -1313,7 +1347,9 @@ class UserProfileDaoImpl : UserProfileDao {
         latitude: Double?,
         longitude: Double?,
         radiusMeters: Double?,
-        weightMultiplier: Double? = 1.0
+        weightMultiplier: Double? = 1.0,
+        seeking: Boolean? = null,
+        offering: Boolean? = null
     ): List<Triple<UserProfile, Double, Double>> = dbQuery {
         val embeddingArray = searchEmbedding.joinToString(",", "[", "]")
         val minimalSimilarity = 0.6 * (weightMultiplier ?: 1.0)
@@ -1328,22 +1364,24 @@ class UserProfileDaoImpl : UserProfileDao {
                     up.name,
                     up.location as location,
                     up.profile_keywords_with_weights::text as profile_keywords_with_weights,
-                    COALESCE(
+                    ${if (offering == false) "0.0" else 
+                        """COALESCE(
                         CASE 
                             WHEN usp.embedding_haves IS NOT NULL 
                             THEN 1 - ((SELECT embedding FROM search_embedding) <=> usp.embedding_haves)
                             ELSE 0.0
                         END,
                         0.0
-                    ) as haves_similarity,
-                    COALESCE(
+                    )"""} as haves_similarity,
+                    ${if (seeking == false) "0.0" else 
+                        """COALESCE(
                         CASE 
                             WHEN usp.embedding_needs IS NOT NULL 
                             THEN 1 - (usp.embedding_needs <=> (SELECT embedding FROM search_embedding))
                             ELSE 0.0
                         END,
                         0.0
-                    ) as needs_similarity,
+                    )"""} as needs_similarity,
                     COALESCE(
                         1 - ((SELECT embedding FROM search_embedding) <=> usp.embedding_profile),
                         0.0
@@ -1359,8 +1397,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_semantic_profiles usp ON u.id = usp.user_id
                 WHERE
-                    (usp.embedding_haves IS NOT NULL
-                     OR usp.embedding_needs IS NOT NULL)
+                    (${buildSemanticEmbeddingFilter(seeking, offering)})
                     AND u.id != ?
                     ${
             // Pre-filter by location using spatial index for massive performance gain

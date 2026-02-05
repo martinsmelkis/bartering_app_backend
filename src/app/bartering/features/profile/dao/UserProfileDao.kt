@@ -43,7 +43,9 @@ interface UserProfileDao {
         longitude: Double? = null,
         radiusMeters: Double? = null,
         limit: Int = 20,
-        customWeight: Int = 50
+        customWeight: Int = 50,
+        seeking: Boolean? = null,
+        offering: Boolean? = null
     ): List<UserProfileWithDistance>
 
     suspend fun getUserCreatedAt(userId: String): java.time.Instant?
