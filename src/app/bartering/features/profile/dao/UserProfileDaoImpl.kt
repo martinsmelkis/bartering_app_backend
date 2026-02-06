@@ -201,7 +201,8 @@ class UserProfileDaoImpl : UserProfileDao {
             else -> existingName
         }
 
-        val extendedMap: HashMap<String, Double> = hashMapOf()
+        // Use LinkedHashMap to preserve insertion order from sorted categories
+        val extendedMap: LinkedHashMap<String, Double> = linkedMapOf()
         if (request.profileKeywordDataMap?.isNotEmpty() == true) {
             val categoriesDao: CategoriesDaoImpl by inject(CategoriesDaoImpl::class.java)
             // Fetch main categories from the database, ordered by ID to maintain consistent order
@@ -225,9 +226,8 @@ class UserProfileDaoImpl : UserProfileDao {
                 table[location] = Point(request.longitude, request.latitude)
                     .also { p -> p.srid = 4326 }
             }
-            if (extendedMap.isNotEmpty()) {
-                table[profileKeywordDataMap] = extendedMap
-            }
+            // Always set profileKeywordDataMap to avoid null constraint violation
+            table[profileKeywordDataMap] = extendedMap
             request.preferredLanguage?.let { lang ->
                 table[UserProfilesTable.preferredLanguage] = lang
             }

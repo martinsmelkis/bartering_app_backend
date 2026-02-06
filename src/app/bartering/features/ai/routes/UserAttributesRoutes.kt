@@ -51,7 +51,8 @@ fun Route.getInterestsFromOnboardingData() {
         val mainCategories = categoriesDao.findAllMainCategoriesWithDescriptions()
             .sortedBy { it.id } // Sort by ID to maintain the order they were inserted
 
-        val extendedMap: HashMap<String, Double> = hashMapOf()
+        // Use LinkedHashMap to preserve insertion order when passing to updateProfile and parseInterestSuggestionsFromOnboardingData
+        val extendedMap: LinkedHashMap<String, Double> = linkedMapOf()
         request.onboardingKeyNamesToWeights.values.onEachIndexed { index, value ->
             try {
                 // Use the category description from the database (maintains order by ID)
@@ -64,6 +65,7 @@ fun Route.getInterestsFromOnboardingData() {
                 application.log.error("Failed to process onboarding keyword at index $index", t)
             }
         }
+        
         // --- AI Processing ---
         userProfileDao.updateProfile(request.userId, UserProfileUpdateRequest(
             profileKeywordDataMap = extendedMap))

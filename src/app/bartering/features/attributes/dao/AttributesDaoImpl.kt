@@ -157,7 +157,7 @@ class AttributesDaoImpl : AttributesDao {
         )
         SELECT
             a.attribute_key,
-            1 - (a.embedding <=> (SELECT embedding FROM profile_vector)) AS similarity,
+            a.embedding <=> (SELECT embedding FROM profile_vector) AS similarity,
             c.ui_style_hint
         FROM
             attributes a
