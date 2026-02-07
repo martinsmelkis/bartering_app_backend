@@ -38,6 +38,7 @@ import app.bartering.features.healthcheck.di.healthCheckModule
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.di.postingsModule
 import app.bartering.features.postings.tasks.PostingExpirationTask
+import app.bartering.features.postings.tasks.PostingHardDeletionTask
 import app.bartering.features.profile.di.profilesModule
 import app.bartering.features.reviews.dao.RiskPatternDao
 import app.bartering.features.reviews.tasks.ReviewRiskTrackingCleanupTask
@@ -170,6 +171,11 @@ fun Application.module(testing: Boolean = false) {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
     val expirationTask = PostingExpirationTask(postingDao)
     expirationTask.start(GlobalScope)
+    
+    // Start posting hard deletion task (GDPR data minimization - deletes postings expired for 30+ days)
+    val hardDeletionTask = PostingHardDeletionTask(postingDao, gracePeriodDays = 30, intervalHours = 24)
+    hardDeletionTask.start(GlobalScope)
+    log.info("✅ Posting hard deletion task started (grace period: 30 days)")
     
     // Start risk tracking data cleanup task
     val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)

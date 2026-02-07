@@ -5,21 +5,27 @@ import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.postings.db.PostingAttributesLinkTable
 import app.bartering.features.postings.db.UserPostingsTable
 import app.bartering.features.postings.model.*
+import app.bartering.features.postings.service.ImageStorageService
 import app.bartering.utils.SecurityUtils
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.*
 
 class UserPostingDaoImpl : UserPostingDao {
     private val log = LoggerFactory.getLogger(this::class.java)
+    private val imageStorage: ImageStorageService by inject(ImageStorageService::class.java)
 
     override suspend fun createPosting(userId: String, request: UserPostingRequest): String? {
         return try {
             val postingId = request.id ?: UUID.randomUUID().toString()
             val now = Instant.now()
+            
+            // Set default expiry to 30 days if not provided (GDPR data minimization)
+            val expiryDate = request.expiresAt ?: now.plusSeconds(30L * 24 * 60 * 60) // 30 days
 
             // First, create the posting in a transaction
             dbQuery {
@@ -29,7 +35,7 @@ class UserPostingDaoImpl : UserPostingDao {
                     it[title] = request.title
                     it[description] = request.description
                     it[value] = request.value?.toBigDecimal()
-                    it[expiresAt] = request.expiresAt
+                    it[expiresAt] = expiryDate
                     it[imageUrls] = request.imageUrls
                     it[isOffer] = request.isOffer
                     it[status] = PostingStatus.ACTIVE.name.lowercase()
@@ -670,6 +676,73 @@ class UserPostingDaoImpl : UserPostingDao {
         }) {
             it[status] = PostingStatus.EXPIRED.name.lowercase()
         }
+    }
+    
+    override suspend fun hardDeleteExpiredPostings(gracePeriodDays: Int): Int {
+        val cutoffDate = Instant.now().minusSeconds(gracePeriodDays.toLong() * 24 * 60 * 60)
+        
+        // First, fetch all postings that should be deleted (with their image URLs)
+        val postingsToDelete = dbQuery {
+            UserPostingsTable
+                .selectAll()
+                .where {
+                    ((UserPostingsTable.status eq PostingStatus.EXPIRED.name.lowercase()) or
+                     (UserPostingsTable.status eq PostingStatus.DELETED.name.lowercase())) and
+                    (UserPostingsTable.updatedAt less cutoffDate)
+                }
+                .map { row ->
+                    row[UserPostingsTable.id] to row[UserPostingsTable.imageUrls]
+                }
+        }
+        
+        if (postingsToDelete.isEmpty()) {
+            log.debug("No postings to hard delete")
+            return 0
+        }
+        
+        log.info("Hard deleting ${postingsToDelete.size} postings expired for more than $gracePeriodDays days")
+        
+        var deletedCount = 0
+        
+        // Delete each posting with its associated data
+        for ((postingId, imageUrls) in postingsToDelete) {
+            try {
+                // Delete images from storage
+                if (imageUrls.isNotEmpty()) {
+                    try {
+                        imageStorage.deleteImages(imageUrls)
+                        log.debug("Deleted ${imageUrls.size} images for posting $postingId")
+                    } catch (e: Exception) {
+                        log.error("Failed to delete images for posting $postingId", e)
+                        // Continue with posting deletion even if image deletion fails
+                    }
+                }
+                
+                // Delete posting and its associated data in a transaction
+                dbQuery {
+                    // Delete attribute links first (foreign key constraint)
+                    PostingAttributesLinkTable.deleteWhere { 
+                        PostingAttributesLinkTable.postingId eq postingId 
+                    }
+                    
+                    // Delete the posting itself
+                    val deleted = UserPostingsTable.deleteWhere { 
+                        UserPostingsTable.id eq postingId 
+                    }
+                    
+                    if (deleted > 0) {
+                        deletedCount++
+                        log.debug("Hard deleted posting $postingId")
+                    }
+                }
+            } catch (e: Exception) {
+                log.error("Failed to hard delete posting $postingId", e)
+                // Continue with other postings even if one fails
+            }
+        }
+        
+        log.info("Successfully hard deleted $deletedCount postings")
+        return deletedCount
     }
 
     private fun toUserPosting(postingRow: ResultRow, attributeRows: List<ResultRow>): UserPosting {
