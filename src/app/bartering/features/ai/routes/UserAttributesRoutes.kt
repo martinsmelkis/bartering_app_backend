@@ -18,6 +18,7 @@ import app.bartering.features.profile.model.OnboardingDataRequest
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
+import app.bartering.utils.ValidationUtils
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
 import kotlin.collections.component1
@@ -41,6 +42,14 @@ fun Route.getInterestsFromOnboardingData() {
 
         if (userId != request.userId) {
             return@post call.respond(HttpStatusCode.Forbidden, "User ID mismatch.")
+        }
+
+        // Validate input size to prevent DoS
+        if (!ValidationUtils.validateMapSize(request.onboardingKeyNamesToWeights)) {
+            return@post call.respond(
+                HttpStatusCode.BadRequest,
+                "Too many attributes. Maximum allowed: ${ValidationUtils.MAX_ATTRIBUTES_PER_REQUEST}"
+            )
         }
 
         val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
@@ -102,6 +111,14 @@ fun Route.getOfferingsFromInterestsData() {
 
             if (authenticatedUserId != requestObj.userId) {
                 return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
+            }
+
+            // Validate input size to prevent DoS
+            if (!ValidationUtils.validateMapSize(requestObj.attributesRelevancyData)) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    "Too many attributes. Maximum allowed: ${ValidationUtils.MAX_ATTRIBUTES_PER_REQUEST}"
+                )
             }
 
             // --- Persist the Parsed Offerings to the Database ---
@@ -174,6 +191,14 @@ fun Route.parseOfferingsAndUpdateProfile() {
 
             if (authenticatedUserId != requestObj.userId) {
                 return@post call.respond(HttpStatusCode.Forbidden, "You are not authorized to access this resource.")
+            }
+
+            // Validate input size to prevent DoS
+            if (!ValidationUtils.validateMapSize(requestObj.attributesRelevancyData)) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    "Too many attributes. Maximum allowed: ${ValidationUtils.MAX_ATTRIBUTES_PER_REQUEST}"
+                )
             }
 
             val attributesDao: AttributesDaoImpl by inject(AttributesDaoImpl::class.java)
@@ -249,16 +274,26 @@ private suspend fun updateUserAttributesFromMap(
 
     for ((attributeNameKey, relevancy) in attributesMap) {
         try {
+            // Validate attribute key
+            val sanitizedKey = ValidationUtils.validateAttributeKey(attributeNameKey)
+            if (sanitizedKey == null) {
+                application.log.warn("Invalid attribute key rejected: $attributeNameKey")
+                continue
+            }
+
+            // Validate and clamp relevancy value
+            val validatedRelevancy = ValidationUtils.validateRelevancy(relevancy)
+
             // Each findOrCreate gets its own transaction and is committed before continuing
-            val attribute = attributesDao.findOrCreate(attributeNameKey)
+            val attribute = attributesDao.findOrCreate(sanitizedKey)
 
             if (attribute == null) {
-                application.log.warn("Could not find or create attribute for key: $attributeNameKey")
+                application.log.warn("Could not find or create attribute for key: $sanitizedKey")
                 continue
             }
 
             println("@@@@@@@@@@@ Validated attribute exists: ${attribute.attributeNameKey}")
-            validAttributes.add(attribute.attributeNameKey to relevancy)
+            validAttributes.add(attribute.attributeNameKey to validatedRelevancy)
 
         } catch (e: Exception) {
             application.log.error(

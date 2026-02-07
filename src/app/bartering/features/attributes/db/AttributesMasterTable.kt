@@ -26,7 +26,9 @@ fun AttributesMasterTable.embeddingField(name: String, dimensions: Int): Column<
  * val id = integer("id").autoIncrement() and val primaryKey = PrimaryKey(id) is added by Base class
  **/
 object AttributesMasterTable : IntIdTable("attributes") {
-    val attributeNameKey = varchar("attribute_key", 100).uniqueIndex() // e.g., "graphic_design_service", "handmade_pottery"
+    // e.g., "graphic_design_service", "handmade_pottery"
+    val attributeNameKey = varchar("attribute_key", 100).uniqueIndex()
+    // "attr_" + attributeNameKey. Maps to resources/locales/messages_xx.properties
     val localizationKey = varchar("localization_key", 150).uniqueIndex()
 
     // The embedding vector, used by semantic search and matching
@@ -39,5 +41,5 @@ object AttributesMasterTable : IntIdTable("attributes") {
 
     // For custom, user-added attribute types
     val isApproved = bool("is_approved").default(false)
-    val customUserAttrText = varchar("custom_user_attr_text", 100)
+    val customUserAttrText = varchar("custom_user_attr_text", 100) // UTF-8 Text
 }

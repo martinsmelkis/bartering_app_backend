@@ -86,7 +86,8 @@ class AttributesDaoImpl : AttributesDao {
         attributeKey: String,
         localizationKey: String,
         categoryLinks: List<CategoryLink>,
-        customUserAttrText: String
+        customUserAttrText: String,
+        isApproved: Boolean = false
     ): Attribute? {
         return dbQuery {
             // Step 1: Insert the main attribute. If it already exists, do nothing and return null for this flow.
@@ -94,7 +95,7 @@ class AttributesDaoImpl : AttributesDao {
                 it[AttributesMasterTable.attributeNameKey] = attributeKey
                 it[AttributesMasterTable.localizationKey] = localizationKey
                 it[AttributesMasterTable.customUserAttrText] = customUserAttrText
-                it[isApproved] = true // New user-generated attributes require approval.
+                it[AttributesMasterTable.isApproved] = isApproved
             }?.value ?: return@dbQuery null // Exit if the attribute already existed.
 
             // Step 2: Use pgai to generate and save the embedding for the new attribute.
@@ -166,6 +167,7 @@ class AttributesDaoImpl : AttributesDao {
         LEFT JOIN categories c ON acl.category_id = c.id
         WHERE
             a.embedding IS NOT NULL
+            AND a.is_approved = true
             
         ORDER BY
             similarity DESC
@@ -269,8 +271,10 @@ class AttributesDaoImpl : AttributesDao {
         return "SELECT scalar_mult((${combinedVectorSql}), ${finalScalar}::real) AS embedding"
     }
 
-    override suspend fun findOrCreate(attributeNameKey: String):
-            Attribute? {
+    override suspend fun findOrCreate(
+        attributeNameKey: String,
+        isApproved: Boolean
+    ): Attribute? {
 
         return dbQuery {
 
@@ -301,7 +305,8 @@ class AttributesDaoImpl : AttributesDao {
                 normalizedAttr,
                 localizationKey,
                 mostRelevantCategoryLinks,
-                originalCustomUserText
+                originalCustomUserText,
+                isApproved
             )
 
             // 3. If creation returned null (race condition), try to fetch it again
@@ -356,6 +361,7 @@ class AttributesDaoImpl : AttributesDao {
         LEFT JOIN categories c ON acl.category_id = c.id
         WHERE
             a.embedding IS NOT NULL
+            AND a.is_approved = true
         ORDER BY
             similarity DESC
         LIMIT ?;

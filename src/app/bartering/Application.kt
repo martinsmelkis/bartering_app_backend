@@ -155,9 +155,12 @@ fun Application.module(testing: Boolean = false) {
     val attributesDao: AttributesDao by inject<AttributesDaoImpl>(AttributesDaoImpl::class.java)
     runBlocking { // Use runBlocking for a one-time startup task
         AttributeCategorizer().initialize()
+        // Initialize all ExpandedInterests attributes as approved
+        log.info("Initializing ${ExpandedInterests.all.size} approved attributes from ExpandedInterests...")
         ExpandedInterests.all.forEach {
-            attributesDao.findOrCreate(it)
+            attributesDao.findOrCreate(it, isApproved = true)
         }
+        log.info("✅ ExpandedInterests attributes initialized as approved")
         attributesDao.populateMissingEmbeddings()
         // Uncomment to run tests:
         //TestRandom100UsersGenAndSimilarity.execute()  // Random user generation test

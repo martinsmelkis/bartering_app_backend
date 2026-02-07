@@ -9,12 +9,13 @@ import app.bartering.features.attributes.model.AttributeSuggestion
 interface AttributesDao {
 
     /**
-     * Finds an attribute by its unique key. If it doesn't exist, it creates a new, unapproved one.
+     * Finds an attribute by its unique key. If it doesn't exist, it creates a new one.
      * This is the core function for supporting user-generated custom attributes.
      * @param attributeNameKey The machine-readable key (e.g., "board_games").
+     * @param isApproved Whether the attribute should be approved (true for ExpandedInterests, false for user-generated).
      * @return The existing or newly created Attribute data object.
      */
-    suspend fun findOrCreate(attributeNameKey: String): Attribute?
+    suspend fun findOrCreate(attributeNameKey: String, isApproved: Boolean = false): Attribute?
 
     suspend fun getComplementaryInterestSuggestions(
         profileKeywords: Map<String, Double>,

@@ -487,7 +487,7 @@ class MatchNotificationService(
                 attributeType = complementaryType,
                 latitude = userLatitude,
                 longitude = userLongitude,
-                radiusKm = 16.09, // 10 miles
+                radiusKm = 16.09, // 10 miles TODO make it configurable?
                 excludeUserId = userId
             )
             
