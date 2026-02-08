@@ -129,6 +129,7 @@ dependencies {
 
     //////////////////// Image Processing ///////////////////////
     implementation("net.coobird:thumbnailator:$thumbnailator_version")
+    implementation("org.sejda.imageio:webp-imageio:$webp_imageio_version") // WebP support for ImageIO
 
     //////////////////# Tests #////////////////////
     testImplementation "io.ktor:ktor-server-tests:$ktor_server_tests_version"

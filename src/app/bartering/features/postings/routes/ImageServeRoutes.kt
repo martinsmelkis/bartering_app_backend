@@ -57,6 +57,15 @@ private fun getImageContentType(file: File): ContentType {
 }
 
 /**
+ * Check if client supports WebP format by examining Accept header
+ * @param acceptHeader The Accept header value
+ * @return true if WebP is supported
+ */
+private fun supportsWebP(acceptHeader: String?): Boolean {
+    return acceptHeader?.contains("image/webp", ignoreCase = true) ?: false
+}
+
+/**
  * Routes for serving locally stored images.
  * Only needed when using local file storage.
  */
@@ -67,12 +76,19 @@ fun Route.imageServeRoutes() {
 
         // Serve image file with optional size parameter
         // Supports ?size=thumb or ?size=full (default: full)
+        // Automatically serves WebP if client supports it (via Accept header)
         get("/{userId}/{fileName}") {
             val userId = call.parameters["userId"]
             val fileName = call.parameters["fileName"]
-            val size = call.request.queryParameters["size"] ?: "full"
+            val rawSize = call.request.queryParameters["size"]
+            val size = if (rawSize.isNullOrBlank()) "full" else rawSize
 
-            log.debug("Image request: userId={}, fileName={}, size={}", userId, fileName, size)
+            // Check if client supports WebP
+            val acceptHeader = call.request.headers["Accept"]
+            val clientSupportsWebP = supportsWebP(acceptHeader)
+            
+            log.info("Image request: userId={}, fileName={}, requestedSize={}, resolvedSize={}, webpSupport={}", 
+                userId, fileName, rawSize, size, clientSupportsWebP)
 
             // Validate path parameters
             if (userId == null || fileName == null) {
@@ -89,9 +105,28 @@ fun Route.imageServeRoutes() {
 
             // Retrieve file from storage
             val imageUrl = "/api/v1/images/$userId/$fileName"
-            val file = localStorage.getFile(imageUrl, size)
             
-            log.debug("Resolved file: {}, exists: {}", file?.absolutePath, file?.exists())
+            // Try WebP first if client supports it
+            var file: File? = null
+            var formatServed = "jpeg"
+            
+            if (clientSupportsWebP) {
+                file = localStorage.getFile(imageUrl, size, "webp")
+                if (file?.exists() == true) {
+                    formatServed = "webp"
+                    log.info("Serving WebP version ({}% smaller)", 30)
+                } else {
+                    log.debug("WebP version not available, falling back to JPEG")
+                }
+            }
+            
+            // Fallback to JPEG if WebP not available or not supported
+            if (file == null || !file.exists()) {
+                file = localStorage.getFile(imageUrl, size, "jpeg")
+                formatServed = "jpeg"
+            }
+            
+            log.debug("Resolved file: {}, exists: {}, format: {}", file?.absolutePath, file?.exists(), formatServed)
 
             if (file == null || !file.exists()) {
                 call.respond(HttpStatusCode.NotFound, "Image not found")
@@ -102,9 +137,10 @@ fun Route.imageServeRoutes() {
             val maxAge = getCacheMaxAge(size)
             call.response.headers.append("Cache-Control", "public, max-age=$maxAge")
             call.response.headers.append("ETag", "${file.name}-$size")
-            call.response.headers.append("Vary", "Accept-Encoding")
+            call.response.headers.append("Vary", "Accept, Accept-Encoding") // Important: Vary on Accept for WebP
+            call.response.headers.append("Content-Type", if (formatServed == "webp") "image/webp" else "image/jpeg")
 
-            // Respond with file (Ktor automatically sets Content-Type based on extension)
+            // Respond with file
             call.respondFile(file)
         }
 
@@ -119,5 +155,6 @@ fun Route.imageServeRoutes() {
                 )
             )
         }
+
     }
 }

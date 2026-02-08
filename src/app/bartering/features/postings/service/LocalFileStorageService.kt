@@ -25,6 +25,8 @@ class LocalFileStorageService : ImageStorageService {
         private const val THUMBNAIL_SIZE = 300 // 300x300px thumbnails
         private const val THUMBNAIL_SUFFIX = "_thumb"
         private const val FULL_SUFFIX = "_full"
+        private const val WEBP_QUALITY = 0.85f // 85% quality for WebP (good balance)
+        private const val JPEG_QUALITY = 0.90f // 90% quality for JPEG
     }
 
     /**
@@ -99,30 +101,49 @@ class LocalFileStorageService : ImageStorageService {
             val extension = fileName.substringAfterLast(".", "jpg")
             val uniqueId = UUID.randomUUID().toString()
             
-            // Build file names using utility method
-            val fullFileName = buildFileName(uniqueId, extension, FULL_SUFFIX)
-            val thumbFileName = buildFileName(uniqueId, extension, THUMBNAIL_SUFFIX)
+            // Build file names for JPEG versions
+            val fullFileName = buildFileName(uniqueId, "jpg", FULL_SUFFIX)
+            val thumbFileName = buildFileName(uniqueId, "jpg", THUMBNAIL_SUFFIX)
             
             val fullFile = File(userDir, fullFileName)
             val thumbFile = File(userDir, thumbFileName)
 
-            // Write full-resolution file to disk
+            // Write full-resolution JPEG to disk
             fullFile.outputStream().use { output ->
                 output.write(imageData)
             }
             
-            // Generate and save thumbnail using utility method
-            if (!generateThumbnail(imageData, thumbFile, extension)) {
+            // Generate and save JPEG thumbnail
+            if (!generateThumbnail(imageData, thumbFile, "jpg")) {
                 log.warn("Using full image as thumbnail fallback for userId={}", userId)
                 fullFile.copyTo(thumbFile, overwrite = true)
             } else {
-                log.debug("Generated thumbnail for userId={}: {}", userId, thumbFileName)
+                log.debug("Generated JPEG thumbnail for userId={}: {}", userId, thumbFileName)
+            }
+            
+            // Generate WebP versions (modern format, ~30% smaller)
+            val fullWebPFile = File(userDir, buildFileName(uniqueId, "webp", FULL_SUFFIX))
+            val thumbWebPFile = File(userDir, buildFileName(uniqueId, "webp", THUMBNAIL_SUFFIX))
+            
+            // Generate full-size WebP
+            if (generateWebPVersion(imageData, fullWebPFile, false)) {
+                log.debug("Generated WebP full version: {}", fullWebPFile.name)
+            } else {
+                log.warn("Failed to generate WebP full version, JPEG fallback available")
+            }
+            
+            // Generate thumbnail WebP
+            if (generateWebPVersion(imageData, thumbWebPFile, true)) {
+                log.debug("Generated WebP thumbnail: {}", thumbWebPFile.name)
+            } else {
+                log.warn("Failed to generate WebP thumbnail, JPEG fallback available")
             }
 
-            // Return URL (base name without suffix)
-            val baseFileName = "$uniqueId.$extension"
+            // Return URL (base name without suffix, always .jpg)
+            // The actual format (JPEG or WebP) will be determined by Accept header when serving
+            val baseFileName = "$uniqueId.jpg"
             val imageUrl = "$baseUrl/$userId/$baseFileName"
-            log.info("Uploaded image for userId={}: {} -> {}", userId, baseFileName, imageUrl)
+            log.info("Uploaded image for userId={}: {} -> {} (JPEG + WebP versions created)", userId, baseFileName, imageUrl)
 
             return imageUrl
 
@@ -147,23 +168,32 @@ class LocalFileStorageService : ImageStorageService {
             
             val userDir = File(uploadDir, pathInfo.userId)
             
-            // Build file names for both versions
-            val thumbFileName = buildFileName(pathInfo.baseName, pathInfo.extension, THUMBNAIL_SUFFIX)
-            val fullFileName = buildFileName(pathInfo.baseName, pathInfo.extension, FULL_SUFFIX)
+            // Build file names for both JPEG and WebP versions
+            val thumbJpegFile = File(userDir, buildFileName(pathInfo.baseName, "jpg", THUMBNAIL_SUFFIX))
+            val fullJpegFile = File(userDir, buildFileName(pathInfo.baseName, "jpg", FULL_SUFFIX))
+            val thumbWebPFile = File(userDir, buildFileName(pathInfo.baseName, "webp", THUMBNAIL_SUFFIX))
+            val fullWebPFile = File(userDir, buildFileName(pathInfo.baseName, "webp", FULL_SUFFIX))
             
-            val thumbFile = File(userDir, thumbFileName)
-            val fullFile = File(userDir, fullFileName)
-            
-            // Delete both files
+            // Delete all files
             var deletedCount = 0
             
-            if (thumbFile.exists() && thumbFile.delete()) {
-                log.info("Deleted thumbnail: {}", thumbFileName)
+            if (thumbJpegFile.exists() && thumbJpegFile.delete()) {
+                log.info("Deleted JPEG thumbnail: {}", thumbJpegFile.name)
                 deletedCount++
             }
             
-            if (fullFile.exists() && fullFile.delete()) {
-                log.info("Deleted full image: {}", fullFileName)
+            if (fullJpegFile.exists() && fullJpegFile.delete()) {
+                log.info("Deleted JPEG full image: {}", fullJpegFile.name)
+                deletedCount++
+            }
+            
+            if (thumbWebPFile.exists() && thumbWebPFile.delete()) {
+                log.info("Deleted WebP thumbnail: {}", thumbWebPFile.name)
+                deletedCount++
+            }
+            
+            if (fullWebPFile.exists() && fullWebPFile.delete()) {
+                log.info("Deleted WebP full image: {}", fullWebPFile.name)
                 deletedCount++
             }
             
@@ -186,15 +216,16 @@ class LocalFileStorageService : ImageStorageService {
     override fun isInitialized(): Boolean = initialized
 
     /**
-     * Get the physical file from a URL with optional size parameter
+     * Get the physical file from a URL with optional size and format parameters
      * Used by the image serving route
      * 
      * @param imageUrl The base image URL (without size suffix)
      * @param size The size variant to retrieve ("thumb" or "full")
+     * @param format The desired format ("webp" or "jpeg")
      */
-    fun getFile(imageUrl: String, size: String = "full"): File? {
+    fun getFile(imageUrl: String, size: String = "full", format: String = "jpeg"): File? {
         return try {
-            log.debug("getFile called with URL: {}, size: {}", imageUrl, size)
+            log.info("getFile called with URL: {}, requestedSize: {}, format: {}", imageUrl, size, format)
             
             // Parse URL using utility method
             val pathInfo = parseImageUrl(imageUrl) ?: return null
@@ -202,11 +233,18 @@ class LocalFileStorageService : ImageStorageService {
             // Determine size suffix using utility method
             val suffix = getSizeSuffix(size)
             
+            // Determine file extension based on format
+            val fileExtension = when (format.lowercase()) {
+                "webp" -> "webp"
+                else -> "jpg" // Default to JPEG
+            }
+            
             // Build actual file name
-            val actualFileName = buildFileName(pathInfo.baseName, pathInfo.extension, suffix)
+            val actualFileName = buildFileName(pathInfo.baseName, fileExtension, suffix)
             val file = File(uploadDir, "${pathInfo.userId}/$actualFileName")
             
-            log.trace("Resolved file path: {}, exists: {}", file.absolutePath, file.exists())
+            log.info("Resolved to file: {}, exists: {}, size: {}KB", 
+                file.name, file.exists(), if (file.exists()) file.length() / 1024 else 0)
 
             // Validate file using utility method
             if (validateImageFile(file)) {
@@ -230,6 +268,36 @@ class LocalFileStorageService : ImageStorageService {
     fun getFile(imageUrl: String): File? = getFile(imageUrl, "full")
 
     // ==================== Private Utility Methods ====================
+
+    /**
+     * Generate a WebP version from image data
+     * @param imageData Original image bytes
+     * @param targetFile File to write WebP to
+     * @param isThumbnail Whether to generate thumbnail size (300x300) or full size
+     * @return true if successful, false if failed
+     */
+    private fun generateWebPVersion(imageData: ByteArray, targetFile: File, isThumbnail: Boolean): Boolean {
+        return try {
+            val inputStream = ByteArrayInputStream(imageData)
+            val builder = Thumbnails.of(inputStream)
+                .outputFormat("webp")
+                .outputQuality(WEBP_QUALITY.toDouble())
+            
+            if (isThumbnail) {
+                builder.size(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+                    .keepAspectRatio(true)
+            } else {
+                builder.scale(1.0) // Keep original size
+            }
+            
+            builder.toFile(targetFile)
+            inputStream.close()
+            true
+        } catch (e: Exception) {
+            log.warn("Failed to generate WebP version: {}", targetFile.name, e)
+            false
+        }
+    }
 
     /**
      * Parse an image URL into its components
@@ -293,14 +361,22 @@ class LocalFileStorageService : ImageStorageService {
      * @return Suffix constant
      */
     private fun getSizeSuffix(size: String): String {
-        return when (size.lowercase()) {
-            "thumb", "thumbnail" -> THUMBNAIL_SUFFIX
-            "full", "original" -> FULL_SUFFIX
+        val trimmedSize = size.trim().lowercase()
+        val suffix = when (trimmedSize) {
+            "thumb", "thumbnail" -> {
+                log.info("Serving THUMBNAIL version (300x300)")
+                THUMBNAIL_SUFFIX
+            }
+            "full", "original", "" -> {
+                log.info("Serving FULL resolution version")
+                FULL_SUFFIX
+            }
             else -> {
-                log.warn("Unknown size parameter: {}, defaulting to full", size)
+                log.warn("Unknown size parameter: '{}', defaulting to full", size)
                 FULL_SUFFIX
             }
         }
+        return suffix
     }
 
     /**
