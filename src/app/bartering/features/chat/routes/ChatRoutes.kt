@@ -120,7 +120,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                         val text = frame.readText()
                         try {
                             log.debug("WebSocket attempting to decode auth request: {}", text)
-                            val authRequest = Json.decodeFromString<AuthRequest>(text)
+                            val authRequest = jsonParser.decodeFromString<AuthRequest>(text)
 
                             // --- SIGNATURE-BASED AUTHENTICATION ---
                             // Verify that the user owns the private key corresponding to their public key
@@ -361,7 +361,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             }
                             
                             // Otherwise, it's a standard chat message
-                            val clientMessage = Json.decodeFromString<ClientChatMessage>(receivedText)
+                            val clientMessage = jsonParser.decodeFromString<ClientChatMessage>(receivedText)
 
                             log.debug("Client message recipient: {}", clientMessage.data.recipientId)
 

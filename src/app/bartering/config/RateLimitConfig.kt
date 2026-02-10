@@ -69,11 +69,11 @@ fun Application.configureRateLimiting() {
         // ====================================================================
         // EXPENSIVE DATABASE QUERIES - MODERATE LIMITS
         // ====================================================================
-        // Semantic search, vector similarity, complex joins
-        // Industry standard: 10-20 per minute per user
+        // Semantic search, vector similarity, complex joins, nearby searches
+        // Industry standard: 30-60 per minute per user (increased from 10-20 for better UX)
         
         register(RateLimitName("expensive_query")) {
-            rateLimiter(limit = 15, refillPeriod = 60.seconds)
+            rateLimiter(limit = 45, refillPeriod = 60.seconds)
             requestKey { call ->
                 val userId = call.request.headers["X-User-ID"]
                 val ip = call.request.origin.remoteAddress
