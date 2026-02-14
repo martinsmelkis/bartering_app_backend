@@ -388,21 +388,43 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
+        // Count nearby users to adjust thresholds dynamically
+        val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
+            countNearbyUsers(userId, latitude, longitude, radiusMeters)
+        } else {
+            countTotalActiveUsers(userId)
+        }
+        
+        log.debug("Found {} nearby users for similar profiles search (userId={})", nearbyUserCount, userId)
+        
+        // Adjust threshold multiplier based on user density
+        val thresholdMultiplier = when {
+            nearbyUserCount < 10 -> 0.75
+            nearbyUserCount < 20 -> 0.9
+            else -> 1.0
+        }
+        
+        log.debug("Using threshold multiplier {} for similar profiles (nearbyUsers={})", 
+            thresholdMultiplier, nearbyUserCount)
+        
         // Find users providing similar things (original logic)
         val providingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.PROVIDING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Also find users seeking similar things (additional matching)
         val seekingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.SEEKING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Search active postings for similar offerings
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Combine results with weighted scoring
@@ -428,21 +450,43 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
+        // Count nearby users to adjust thresholds dynamically
+        val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
+            countNearbyUsers(userId, latitude, longitude, radiusMeters)
+        } else {
+            countTotalActiveUsers(userId)
+        }
+        
+        log.debug("Found {} nearby users for complementary profiles search (userId={})", nearbyUserCount, userId)
+        
+        // Adjust threshold multiplier based on user density
+        val thresholdMultiplier = when {
+            nearbyUserCount < 10 -> 0.75
+            nearbyUserCount < 20 -> 0.9
+            else -> 1.0
+        }
+        
+        log.debug("Using threshold multiplier {} for complementary profiles (nearbyUsers={})", 
+            thresholdMultiplier, nearbyUserCount)
+        
         // Find users providing what I seek (original logic)
         val providingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.SEEKING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Also find users seeking what I provide (bi-directional matching)
         val seekingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.PROVIDING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Search active postings for relevant offers
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
+            thresholdMultiplier = thresholdMultiplier
         )
         
         // Combine results with weighted scoring
@@ -468,7 +512,8 @@ class UserProfileDaoImpl : UserProfileDao {
         otherUsersProfileType: UserAttributeType,
         latitude: Double?,
         longitude: Double?,
-        radiusMeters: Double?
+        radiusMeters: Double?,
+        thresholdMultiplier: Double = 1.0
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
@@ -649,7 +694,8 @@ class UserProfileDaoImpl : UserProfileDao {
         currentUserProfileType: UserAttributeType,
         latitude: Double?,
         longitude: Double?,
-        radiusMeters: Double?
+        radiusMeters: Double?,
+        thresholdMultiplier: Double = 1.0
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
@@ -1133,9 +1179,11 @@ class UserProfileDaoImpl : UserProfileDao {
         limit: Int,
         weightMultiplier: Double? = 1.0,
         seeking: Boolean? = true,
-        offering: Boolean? = true
+        offering: Boolean? = true,
+        thresholdMultiplier: Double = 1.0
     ): List<Pair<String, Double>> = dbQuery {
         val minimalSimilarity = 0.3 * (weightMultiplier ?: 1.0)
+        val keywordThreshold = 0.25 * thresholdMultiplier
         val keywordOnlyQuery = """
             WITH matching_attributes AS (
                 -- PRE-FILTER: Find only attributes that match, using GIN index
@@ -1240,7 +1288,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 user_id,
                 keyword_score
             FROM combined_scores
-            WHERE keyword_score > 0.25
+            WHERE keyword_score > $keywordThreshold
             ORDER BY keyword_score DESC
             LIMIT ?;
         """.trimIndent()
@@ -1349,10 +1397,12 @@ class UserProfileDaoImpl : UserProfileDao {
         radiusMeters: Double?,
         weightMultiplier: Double? = 1.0,
         seeking: Boolean? = null,
-        offering: Boolean? = null
+        offering: Boolean? = null,
+        thresholdMultiplier: Double = 1.0
     ): List<Triple<UserProfile, Double, Double>> = dbQuery {
         val embeddingArray = searchEmbedding.joinToString(",", "[", "]")
-        val minimalSimilarity = 0.6 * (weightMultiplier ?: 1.0)
+        // Apply threshold multiplier: lower for sparse areas
+        val minimalSimilarity = 0.6 * (weightMultiplier ?: 1.0) * thresholdMultiplier
 
         val semanticQuery = """
             WITH search_embedding AS (
@@ -1429,7 +1479,7 @@ class UserProfileDaoImpl : UserProfileDao {
                      0.4 * ((haves_similarity + needs_similarity + profile_similarity) / 
                             NULLIF((CASE WHEN haves_similarity > 0 THEN 1 ELSE 0 END +
                                     CASE WHEN needs_similarity > 0 THEN 1 ELSE 0 END +
-                                    CASE WHEN profile_similarity > 0 THEN 1 ELSE 0 END), 0))) > 0.6
+                                    CASE WHEN profile_similarity > 0 THEN 1 ELSE 0 END), 0))) > ${0.6 * thresholdMultiplier}
             ORDER BY semantic_score DESC, distance_meters ASC NULLS LAST
             LIMIT 25;
         """.trimIndent()
@@ -1499,10 +1549,12 @@ class UserProfileDaoImpl : UserProfileDao {
         latitude: Double?,
         longitude: Double?,
         radiusMeters: Double?,
-        weightMultiplier: Double? = 1.0
+        weightMultiplier: Double? = 1.0,
+        thresholdMultiplier: Double = 1.0
     ): List<Triple<UserProfile, Double, Double>> = dbQuery {
         val embeddingArray = searchEmbedding.joinToString(",", "[", "]")
-        val minimalSimilarity = 0.65 * (weightMultiplier ?: 1.0)
+        // Apply threshold multiplier: lower for sparse areas
+        val minimalSimilarity = 0.65 * (weightMultiplier ?: 1.0) * thresholdMultiplier
         val postingQuery = """
             WITH search_embedding AS (
                 SELECT '$embeddingArray'::vector as embedding
@@ -1534,7 +1586,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 ""
             }
         }
-                AND (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) > 0.65
+                AND (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) > ${0.65 * thresholdMultiplier}
             ORDER BY p.user_id, posting_similarity DESC
             LIMIT 20;
         """.trimIndent()
@@ -1907,6 +1959,75 @@ class UserProfileDaoImpl : UserProfileDao {
         } catch (e: Exception) {
             e.printStackTrace()
             Pair(emptyList(), 0)
+        }
+    }
+
+    /**
+     * Counts the number of active users within the specified radius.
+     * Used to dynamically adjust search thresholds based on user density.
+     */
+    private suspend fun countNearbyUsers(
+        userId: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Double
+    ): Int = dbQuery {
+        try {
+            val query = """
+                SELECT COUNT(DISTINCT u.id) as user_count
+                FROM user_registration_data u
+                INNER JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id != ?
+                    AND ST_DWithin(
+                        up.location::geography,
+                        ST_MakePoint(?, ?)::geography,
+                        ?
+                    )
+            """.trimIndent()
+
+            TransactionManager.current().connection.prepareStatement(query, false)
+                .also { statement ->
+                    statement[1] = userId
+                    statement[2] = longitude
+                    statement[3] = latitude
+                    statement[4] = radiusMeters
+                    val rs = statement.executeQuery()
+                    if (rs.next()) {
+                        return@dbQuery rs.getInt("user_count")
+                    }
+                }
+            0
+        } catch (e: Exception) {
+            log.error("Error counting nearby users", e)
+            0
+        }
+    }
+
+    /**
+     * Counts total active users in the system (excluding the current user).
+     * Used when no location filter is specified.
+     */
+    private suspend fun countTotalActiveUsers(userId: String): Int = dbQuery {
+        try {
+            val query = """
+                SELECT COUNT(DISTINCT u.id) as user_count
+                FROM user_registration_data u
+                INNER JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id != ?
+            """.trimIndent()
+
+            TransactionManager.current().connection.prepareStatement(query, false)
+                .also { statement ->
+                    statement[1] = userId
+                    val rs = statement.executeQuery()
+                    if (rs.next()) {
+                        return@dbQuery rs.getInt("user_count")
+                    }
+                }
+            0
+        } catch (e: Exception) {
+            log.error("Error counting total active users", e)
+            0
         }
     }
 
