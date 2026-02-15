@@ -41,4 +41,17 @@ object AiConfig {
         log.info("Using Ollama embed model: $model")
         model
     }
+
+    /**
+     * The model to use for translation operations.
+     *
+     * Defaults to "llama3.2:3b" for fast, lightweight translations.
+     * Override with OLLAMA_TRANSLATION_MODEL environment variable if needed.
+     */
+    val translationModel: String by lazy {
+        val model = System.getenv("OLLAMA_TRANSLATION_MODEL")
+            ?: config.getString("ai.ollama.translationModel")
+        log.info("Using Ollama translation model: $model")
+        model
+    }
 }

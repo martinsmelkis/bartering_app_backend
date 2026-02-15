@@ -410,21 +410,18 @@ class UserProfileDaoImpl : UserProfileDao {
         // Find users providing similar things (original logic)
         val providingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.PROVIDING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
         )
         
         // Also find users seeking similar things (additional matching)
         val seekingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.SEEKING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
         )
         
         // Search active postings for similar offerings
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
         )
         
         // Combine results with weighted scoring
@@ -472,21 +469,18 @@ class UserProfileDaoImpl : UserProfileDao {
         // Find users providing what I seek (original logic)
         val providingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.SEEKING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
         )
         
         // Also find users seeking what I provide (bi-directional matching)
         val seekingMatches = findProfilesBySemanticSimilarity(
             userId, UserAttributeType.PROVIDING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
         )
         
         // Search active postings for relevant offers
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters,
-            thresholdMultiplier = thresholdMultiplier
+            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters
         )
         
         // Combine results with weighted scoring
@@ -512,8 +506,7 @@ class UserProfileDaoImpl : UserProfileDao {
         otherUsersProfileType: UserAttributeType,
         latitude: Double?,
         longitude: Double?,
-        radiusMeters: Double?,
-        thresholdMultiplier: Double = 1.0
+        radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
@@ -694,8 +687,7 @@ class UserProfileDaoImpl : UserProfileDao {
         currentUserProfileType: UserAttributeType,
         latitude: Double?,
         longitude: Double?,
-        radiusMeters: Double?,
-        thresholdMultiplier: Double = 1.0
+        radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
@@ -1224,6 +1216,29 @@ class UserProfileDaoImpl : UserProfileDao {
                     ${buildAttributeTypeFilter(seeking, offering)}
                 GROUP BY ua.user_id
             ),
+            attribute_description_scores AS (
+                -- Search in user attribute descriptions (negligible performance impact with GIN index)
+                -- Low weight (0.05-0.1) since this is a secondary matching signal
+                SELECT 
+                    ua.user_id,
+                    SUM(
+                        GREATEST(
+                            COALESCE(word_similarity(?, ua.description), 0) * 0.28,
+                            COALESCE(similarity(?, ua.description), 0) * 0.28,
+                            CASE WHEN LOWER(ua.description) LIKE LOWER('%' || ? || '%') THEN 0.3 ELSE 0.0 END
+                        ) * 
+                        CASE 
+                            WHEN ua.relevancy > 0.90 THEN 2.0
+                            WHEN ua.relevancy > 0.75 THEN 1.8
+                            ELSE 1.2
+                        END
+                    ) as description_score
+                FROM user_attributes ua
+                WHERE 
+                    ua.description % ?
+                    OR LOWER(ua.description) LIKE LOWER('%' || ? || '%')
+                GROUP BY ua.user_id
+            ),
             posting_match_scores AS (
                 -- Search in user postings (title and description) - SLIGHTLY HIGHER WEIGHT
                 SELECT 
@@ -1258,10 +1273,11 @@ class UserProfileDaoImpl : UserProfileDao {
                     u.id as user_id,
                     up.name,
                     up.location,
-                    -- Combine attribute and posting scores
+                    -- Combine attribute, posting, and description scores
                     COALESCE(ums.attribute_score, 0) + 
                     COALESCE(ums.priority_bonus, 0) +
-                    COALESCE(pms.posting_score, 0) as keyword_score
+                    COALESCE(pms.posting_score, 0) +
+                    COALESCE(ads.description_score, 0) as keyword_score
                     ${
             if (latitude != null && longitude != null) {
                 ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
@@ -1273,8 +1289,9 @@ class UserProfileDaoImpl : UserProfileDao {
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_match_scores ums ON u.id = ums.user_id
                 LEFT JOIN posting_match_scores pms ON u.id = pms.user_id
+                LEFT JOIN attribute_description_scores ads ON u.id = ads.user_id
                 WHERE 
-                    (ums.user_id IS NOT NULL OR pms.user_id IS NOT NULL)
+                    (ums.user_id IS NOT NULL OR pms.user_id IS NOT NULL OR ads.user_id IS NOT NULL)
                     AND u.id != ?
                     ${
             if (latitude != null && longitude != null && radiusMeters != null) {
@@ -1297,6 +1314,12 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Parameters for matching_attributes CTE (5 occurrences)
         repeat(5) { keywordParams.add(VarCharColumnType() to searchText) }
+
+        // Parameters for attribute_description_scores CTE (5 occurrences)
+        // word_similarity, similarity, LIKE
+        repeat(3) { keywordParams.add(VarCharColumnType() to searchText) }
+        // WHERE clause: description %, description LIKE
+        repeat(2) { keywordParams.add(VarCharColumnType() to searchText) }
 
         // Parameters for posting_match_scores CTE (10 occurrences)
         // Title: word_similarity, similarity, LIKE

@@ -14,13 +14,17 @@ import app.bartering.features.attributes.model.AttributesRequest
 import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.categories.dao.CategoriesDaoImpl
 import app.bartering.features.profile.dao.UserProfileDaoImpl
+import app.bartering.features.profile.db.UserProfilesTable
 import app.bartering.features.profile.model.OnboardingDataRequest
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
+import app.bartering.localization.Localization
 import app.bartering.utils.ValidationUtils
+import org.jetbrains.exposed.sql.select
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
+import java.util.Locale
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.collections.iterator
@@ -122,14 +126,31 @@ fun Route.getOfferingsFromInterestsData() {
             }
 
             // --- Persist the Parsed Offerings to the Database ---
+            // Get user's preferred language for attribute name translation
+            val userProfileRow = dbQuery {
+                UserProfilesTable
+                    .select(UserProfilesTable.preferredLanguage)
+                    .where { UserProfilesTable.userId eq requestObj.userId }
+                    .singleOrNull()
+            }
+            val userPreferredLanguage = userProfileRow?.get(UserProfilesTable.preferredLanguage) ?: "en"
+            
+            // Only use Accept-Language header translation if user's preferred language is English
+            val effectiveLanguage = if (userPreferredLanguage == "en") {
+                call.request.headers["Accept-Language"]?.split(",")?.firstOrNull()?.split(";")?.firstOrNull()?.trim() ?: "en"
+            } else {
+                userPreferredLanguage
+            }
+
             try {
                 updateUserAttributesFromMap(
                     userId = requestObj.userId,
                     attributesDao = attributesDao,
                     userAttributesDao = userAttributesDao,
                     attributesMap = requestObj.attributesRelevancyData,
-                    type = UserAttributeType.SEEKING, // Offerings are what a user is PROVIDING
-                    application = application
+                    type = UserAttributeType.SEEKING,
+                    application = application,
+                    language = effectiveLanguage
                 )
             } catch (e: Exception) {
                 application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
@@ -205,14 +226,31 @@ fun Route.parseOfferingsAndUpdateProfile() {
             val userAttributesDao: UserAttributesDaoImpl by inject(UserAttributesDaoImpl::class.java)
 
             // --- Persist the Parsed Offerings to the Database ---
+            // Get user's preferred language for attribute name translation
+            val userProfileRow = dbQuery {
+                UserProfilesTable
+                    .select(UserProfilesTable.preferredLanguage)
+                    .where { UserProfilesTable.userId eq requestObj.userId }
+                    .singleOrNull()
+            }
+            val userPreferredLanguage = userProfileRow?.get(UserProfilesTable.preferredLanguage) ?: "en"
+            
+            // Only use Accept-Language header translation if user's preferred language is English
+            val effectiveLanguage = if (userPreferredLanguage == "en") {
+                call.request.headers["Accept-Language"]?.split(",")?.firstOrNull()?.split(";")?.firstOrNull()?.trim() ?: "en"
+            } else {
+                userPreferredLanguage
+            }
+
             try {
                 updateUserAttributesFromMap(
                     userId = requestObj.userId,
                     attributesDao = attributesDao,
                     userAttributesDao = userAttributesDao,
                     attributesMap = requestObj.attributesRelevancyData,
-                    type = UserAttributeType.PROVIDING, // Offerings are what a user is PROVIDING
-                    application = application
+                    type = UserAttributeType.PROVIDING,
+                    application = application,
+                    language = effectiveLanguage
                 )
             } catch (e: Exception) {
                 application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
@@ -255,6 +293,8 @@ fun Route.parseOfferingsAndUpdateProfile() {
  *
  * IMPORTANT: This function ensures attributes are created BEFORE linking them to users.
  * Each attribute creation happens in its own transaction to avoid batch insert conflicts.
+ * 
+ * @param language The user's preferred language for attribute name translation (ISO 639-1 code, e.g., "en", "lv")
  */
 private suspend fun updateUserAttributesFromMap(
     userId: String,
@@ -262,7 +302,8 @@ private suspend fun updateUserAttributesFromMap(
     userAttributesDao: UserAttributesDaoImpl,
     attributesMap: Map<String, Double>,
     type: UserAttributeType,
-    application: Application
+    application: Application,
+    language: String = "en"
 ) {
     // Step 1: Clear previous attributes in a separate transaction
     dbQuery {
@@ -270,7 +311,9 @@ private suspend fun updateUserAttributesFromMap(
     }
 
     // Step 2: Ensure all attributes exist FIRST (separate transactions for each)
-    val validAttributes = mutableListOf<Pair<String, Double>>()
+    val validAttributes = mutableListOf<Triple<String, Double, String?>>() // attributeKey, relevancy, translatedDescription (null for English)
+
+    val locale = Locale(language)
 
     for ((attributeNameKey, relevancy) in attributesMap) {
         try {
@@ -292,8 +335,24 @@ private suspend fun updateUserAttributesFromMap(
                 continue
             }
 
+            // Get translated attribute name from localization files (only for non-English locales)
+            // The localization key is stored in the format "attr_<attributeKey>"
+            val localizationKey = attribute.localizationKey
+            val translatedName = if (language != "en") {
+                try {
+                    val translation = Localization.getString(localizationKey, locale)
+                    // If translation equals the key (not found), use original attribute name as fallback
+                    if (translation == localizationKey) attributeNameKey else translation
+                } catch (_: Exception) {
+                    application.log.debug("No translation found for key: $localizationKey in language: $language")
+                    attributeNameKey
+                }
+            } else {
+                null // Don't store description for English locale
+            }
+
             println("@@@@@@@@@@@ Validated attribute exists: ${attribute.attributeNameKey}")
-            validAttributes.add(attribute.attributeNameKey to validatedRelevancy)
+            validAttributes.add(Triple(attribute.attributeNameKey, validatedRelevancy, translatedName))
 
         } catch (e: Exception) {
             application.log.error(
@@ -306,7 +365,7 @@ private suspend fun updateUserAttributesFromMap(
 
     // Step 3: Now batch insert all user_attribute links (all attributes are guaranteed to exist)
     dbQuery {
-        for ((attributeKey, relevancy) in validAttributes) {
+        for ((attributeKey, relevancy, translatedDescription) in validAttributes) {
             try {
                 val relevancyBigDecimal = try {
                     relevancy.toBigDecimal()
@@ -315,12 +374,20 @@ private suspend fun updateUserAttributesFromMap(
                 }
 
                 // Create the link between the user and this attribute
+                // For non-English locales: use translated description if available, fallback to attributeKey
+                // For English locale: description is null (not stored)
+                val effectiveDescription = when {
+                    translatedDescription != null -> translatedDescription // Non-English with translation or fallback
+                    language != "en" -> attributeKey // Non-English without translation fallback
+                    else -> null // English locale - don't store description
+                }
+
                 userAttributesDao.create(
                     userId = userId,
                     attributeId = attributeKey,
                     type = type,
                     relevancy = relevancyBigDecimal,
-                    description = ""
+                    description = effectiveDescription
                 )
             } catch (e: Exception) {
                 application.log.error("Error linking attribute '$attributeKey' to user $userId", e)

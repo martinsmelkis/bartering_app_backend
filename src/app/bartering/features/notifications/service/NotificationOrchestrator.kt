@@ -105,15 +105,15 @@ class NotificationOrchestrator(
         if (connectionManager.isConnected(userId)) {
             try {
                 val wsNotification = MatchNotificationMessage(
-                    matchId = notification.data["matchId"] as? String ?: "",
+                    matchId = notification.data["matchId"] ?: "",
                     title = notification.title,
                     body = notification.body,
-                    matchType = notification.data["type"] as? String ?: "match",
-                    matchScore = (notification.data["matchScore"] as? String)?.toDoubleOrNull(),
-                    postingId = notification.data["postingId"] as? String,
-                    postingUserId = notification.data["postingUserId"] as? String,
-                    postingTitle = notification.data["postingTitle"] as? String,
-                    postingImageUrl = notification.data["postingImageUrl"] as? String
+                    matchType = notification.data["type"] ?: "match",
+                    matchScore = notification.data["matchScore"]?.toDoubleOrNull(),
+                    postingId = notification.data["postingId"],
+                    postingUserId = notification.data["postingUserId"],
+                    postingTitle = notification.data["postingTitle"],
+                    postingImageUrl = notification.data["postingImageUrl"]
                 )
                 
                 val wsMessage = Json.encodeToString(wsNotification)
@@ -144,8 +144,8 @@ class NotificationOrchestrator(
     ): EmailNotification {
         return EmailNotification(
             to = listOf(to),
-            from = "noreply@barter.app",
-            fromName = "Barter App",
+            from = "info@bartering.app",
+            fromName = "Bartering App",
             subject = notification.title,
             htmlBody = buildHtmlEmail(notification),
             textBody = notification.body
