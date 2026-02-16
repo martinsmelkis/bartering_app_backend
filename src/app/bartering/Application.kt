@@ -35,6 +35,7 @@ import app.bartering.features.authentication.di.authenticationModule
 import app.bartering.features.categories.di.categoriesModule
 import app.bartering.features.chat.di.chatModule
 import app.bartering.features.healthcheck.di.healthCheckModule
+import app.bartering.features.migration.di.migrationModule
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.di.postingsModule
 import app.bartering.features.postings.tasks.PostingExpirationTask
@@ -51,6 +52,8 @@ import app.bartering.features.profile.tasks.InactiveUserCleanupTask
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
+import app.bartering.features.migration.dao.MigrationSessionDao
+import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
@@ -149,7 +152,8 @@ fun Application.module(testing: Boolean = false) {
             relationshipsModule,
             postingsModule,
             notificationsModule,
-            reviewsModule
+            reviewsModule,
+            migrationModule
         )
     }
 
@@ -176,6 +180,12 @@ fun Application.module(testing: Boolean = false) {
     val hardDeletionTask = PostingHardDeletionTask(postingDao, gracePeriodDays = 30, intervalHours = 24)
     hardDeletionTask.start(GlobalScope)
     log.info("✅ Posting hard deletion task started (grace period: 30 days)")
+
+    // Start migration session cleanup task
+    val migrationDao: MigrationSessionDao by inject(MigrationSessionDao::class.java)
+    val migrationCleanupTask = MigrationCleanupTask(migrationDao)
+    migrationCleanupTask.start(GlobalScope)
+    log.info("✅ Migration cleanup task started")
     
     // Start risk tracking data cleanup task
     val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)

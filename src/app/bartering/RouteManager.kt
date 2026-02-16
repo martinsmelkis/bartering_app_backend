@@ -4,9 +4,11 @@ import app.bartering.features.healthcheck.routes.healthCheckRoutes
 import io.ktor.server.application.*
 import app.bartering.features.ai.routes.userAttributePreferencesRoutes
 import app.bartering.features.authentication.routes.authenticationRoutes
+import app.bartering.features.authentication.routes.deviceManagementRoutes
 import app.bartering.features.chat.manager.ConnectionManager
 import app.bartering.features.chat.routes.chatRoutes
 import app.bartering.features.encryptedfiles.routes.fileTransferRoutes
+import app.bartering.features.migration.routes.migrationRoutes
 import app.bartering.features.postings.routes.imageServeRoutes
 import app.bartering.features.postings.routes.postingImageUploadRoutes
 import app.bartering.features.postings.routes.postingsRoutes
@@ -24,6 +26,8 @@ fun Application.routes() {
     val connectionManager: ConnectionManager by inject(ConnectionManager::class.java)
     
     authenticationRoutes()
+    deviceManagementRoutes()
+    migrationRoutes()
     profileManagementRoutes()
     userAttributePreferencesRoutes()
     chatRoutes(connectionManager)

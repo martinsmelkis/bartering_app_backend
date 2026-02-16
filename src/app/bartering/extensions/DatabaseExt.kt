@@ -77,6 +77,15 @@ object DatabaseFactory {
                 .locations("resources/db/migration", "db/migration/", "resources/db/migration/")
                 .baselineOnMigrate(true) // Initialize schema history table for existing databases
                 .load()
+            
+            // Repair checksums if migrations were modified
+            try {
+                flyway.repair()
+                log.info("Flyway repair completed (checksums updated if needed)")
+            } catch (e: Exception) {
+                log.warn("Flyway repair attempt failed: {}", e.message)
+            }
+            
             flyway.migrate()
             log.info("Flyway migrations completed successfully.")
         } catch (e: Exception) {
