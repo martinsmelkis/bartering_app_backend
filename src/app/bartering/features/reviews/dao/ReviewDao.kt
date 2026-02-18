@@ -64,6 +64,12 @@ interface ReviewDao {
     suspend fun getVerifiedReviewCount(userId: String): Int
 
     /**
+     * Gets average rating and review count for a user.
+     * Lightweight query for fallback when cached reputation is not available.
+     */
+    suspend fun getAverageRatingAndCount(userId: String): Pair<Double, Int>?
+
+    /**
      * Deletes a review (for moderation)
      */
     suspend fun deleteReview(reviewId: String): Boolean

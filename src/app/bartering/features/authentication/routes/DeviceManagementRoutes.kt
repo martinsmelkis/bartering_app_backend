@@ -2,14 +2,12 @@ package app.bartering.features.authentication.routes
 
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
-import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.model.*
 import app.bartering.features.authentication.utils.verifyRequestSignature
-import app.bartering.features.authentication.utils.verifyRequestSignatureForDevice
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -303,104 +301,6 @@ fun Route.updateDeviceRoute() {
 }
 
 /**
- * Route for device migration (used by the DeviceMigrationService).
- * Transfers device registration from source to target device.
- */
-fun Route.migrateDeviceRoute() {
-    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
-
-    post("/api/v1/devices/migrate") {
-        // --- Authentication using signature verification ---
-        // Note: This must be called from the SOURCE device (the one being migrated from)
-        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
-        if (authenticatedUserId == null || requestBody == null) {
-            return@post
-        }
-
-        try {
-            val request = Json.decodeFromString<MigrateDeviceRequest>(requestBody)
-
-            // Verify the userId matches
-            // Note: In a real migration, we may need to verify the sessionId as well
-            // This is a simplified implementation - the full verification should be in the migration service
-
-            // Verify source device belongs to the authenticated user
-            val sourceDevice = authDao.getDeviceKey(authenticatedUserId, request.sourceDeviceId)
-            if (sourceDevice == null) {
-                call.respond(
-                    HttpStatusCode.Forbidden,
-                    MigrateDeviceResponse(
-                        success = false,
-                        sourceDeviceDeactivated = false,
-                        message = "Source device not found or does not belong to your account"
-                    )
-                )
-                return@post
-            }
-
-            // Check if target device already exists
-            val existingTarget = authDao.getDeviceKey(authenticatedUserId, request.targetDeviceId)
-            if (existingTarget != null) {
-                call.respond(
-                    HttpStatusCode.Conflict,
-                    MigrateDeviceResponse(
-                        success = false,
-                        sourceDeviceDeactivated = false,
-                        message = "Target device already exists"
-                    )
-                )
-                return@post
-            }
-
-            // Perform the migration
-            val success = authDao.migrateDeviceKey(
-                userId = authenticatedUserId,
-                sourceDeviceId = request.sourceDeviceId,
-                targetDeviceId = request.targetDeviceId,
-                targetPublicKey = request.targetPublicKey,
-                targetDeviceName = request.targetDeviceName,
-                targetDeviceType = request.targetDeviceType,
-                targetPlatform = request.targetPlatform
-            )
-
-            if (success) {
-                // Get the new device key ID
-                val newDevice = authDao.getDeviceKey(authenticatedUserId, request.targetDeviceId)
-
-                call.respond(
-                    HttpStatusCode.OK,
-                    MigrateDeviceResponse(
-                        success = true,
-                        newDeviceKeyId = newDevice?.id,
-                        sourceDeviceDeactivated = true,
-                        message = "Device migrated successfully"
-                    )
-                )
-            } else {
-                call.respond(
-                    HttpStatusCode.InternalServerError,
-                    MigrateDeviceResponse(
-                        success = false,
-                        sourceDeviceDeactivated = false,
-                        message = "Failed to migrate device"
-                    )
-                )
-            }
-        } catch (e: Exception) {
-            log.error("Error migrating device for user {}", authenticatedUserId, e)
-            call.respond(
-                HttpStatusCode.BadRequest,
-                MigrateDeviceResponse(
-                    success = false,
-                    sourceDeviceDeactivated = false,
-                    message = "Invalid request: ${e.message}"
-                )
-            )
-        }
-    }
-}
-
-/**
  * Extension function to register all device management routes
  */
 fun Application.deviceManagementRoutes() {
@@ -409,6 +309,5 @@ fun Application.deviceManagementRoutes() {
         listDevicesRoute()
         revokeDeviceRoute()
         updateDeviceRoute()
-        migrateDeviceRoute()
     }
 }

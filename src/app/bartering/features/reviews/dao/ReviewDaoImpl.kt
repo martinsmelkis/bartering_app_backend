@@ -173,6 +173,31 @@ class ReviewDaoImpl : ReviewDao {
             .toInt()
     }
 
+    override suspend fun getAverageRatingAndCount(userId: String): Pair<Double, Int>? = dbQuery {
+        // Use raw SQL for aggregate query - more reliable with Exposed
+        val query = """
+            SELECT AVG(rating) as avg_rating, COUNT(*) as review_count 
+            FROM user_reviews 
+            WHERE target_user_id = ? AND is_visible = true
+        """.trimIndent()
+        
+        val result = mutableListOf<Pair<Double, Int>>()
+        org.jetbrains.exposed.sql.transactions.TransactionManager.current().connection
+            .prepareStatement(query, false)
+            .also { statement ->
+                statement[1] = userId
+                val rs = statement.executeQuery()
+                if (rs.next()) {
+                    val avgRating = rs.getDouble("avg_rating")
+                    val count = rs.getInt("review_count")
+                    if (!rs.wasNull() && count > 0) {
+                        result.add(avgRating to count)
+                    }
+                }
+            }
+        result.firstOrNull()
+    }
+
     override suspend fun deleteReview(reviewId: String): Boolean = dbQuery {
         try {
             ReviewsTable.deleteWhere { ReviewsTable.id eq reviewId } > 0

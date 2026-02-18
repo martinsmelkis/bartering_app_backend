@@ -4,6 +4,7 @@ import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.model.UserProfileWithDistance
 import app.bartering.features.reviews.dao.ReputationDao
 import app.bartering.features.reviews.dao.ReputationDto
+import app.bartering.features.reviews.dao.ReviewDao
 import app.bartering.features.reviews.model.ReputationBadge
 import app.bartering.features.reviews.model.TrustLevel
 import org.slf4j.LoggerFactory
@@ -78,12 +79,14 @@ object ProfileBoostCalculator {
      * Total boost is capped at 0.25 to prevent over-boosting
      * 
      * @param profiles List of profiles to boost
-     * @param reputationDao DAO for fetching reputation data
+     * @param reputationDao DAO for fetching cached reputation data
+     * @param reviewDao Optional DAO for fetching ratings directly from reviews (fallback)
      * @return Same list with boosted scores and lastOnlineAt timestamps set
      */
     suspend fun applyBoostAndStatus(
         profiles: List<UserProfileWithDistance>,
-        reputationDao: ReputationDao
+        reputationDao: ReputationDao,
+        reviewDao: ReviewDao? = null
     ): List<UserProfileWithDistance> {
         if (profiles.isEmpty()) return profiles
 
@@ -99,10 +102,38 @@ object ProfileBoostCalculator {
                 val badges = reputationDao.getUserBadges(userId)
                 if (reputation != null) {
                     reputationDataMap[userId] = reputation to badges
+                    log.debug("Fetched reputation for user {}: rating={}, reviews={}", 
+                        userId, reputation.averageRating, reputation.totalReviews)
+                } else {
+                    log.debug("No reputation found for user {}", userId)
                 }
             }
         } catch (e: Exception) {
             log.warn("Failed to fetch reputation data for boosting, continuing without reputation boost", e)
+        }
+
+        log.debug("Boosting {} profiles, fetched reputation for {} users", 
+            profiles.size, reputationDataMap.size)
+
+        // For users without cached reputation, try fetching from reviews directly (fallback)
+        val fallbackRatingsMap = mutableMapOf<String, Pair<Double, Int>>()
+        if (reviewDao != null && reputationDataMap.size < profiles.size) {
+            val missingUserIds = userIds.filter { it !in reputationDataMap }
+            if (missingUserIds.isNotEmpty()) {
+                log.debug("Fetching fallback ratings from reviews for {} users", missingUserIds.size)
+                try {
+                    missingUserIds.forEach { userId ->
+                        val ratingAndCount = reviewDao.getAverageRatingAndCount(userId)
+                        if (ratingAndCount != null) {
+                            fallbackRatingsMap[userId] = ratingAndCount
+                            log.debug("Fallback rating for user {}: rating={}, count={}",
+                                userId, ratingAndCount.first, ratingAndCount.second)
+                        }
+                    }
+                } catch (e: Exception) {
+                    log.warn("Failed to fetch fallback ratings from reviews", e)
+                }
+            }
         }
 
         // Apply comprehensive boost based on multiple factors
@@ -113,9 +144,22 @@ object ProfileBoostCalculator {
             // Update the UserProfile with lastOnlineAt timestamp
             val updatedProfile = profileWithDistance.profile.copy(lastOnlineAt = lastOnlineAt)
 
+            // Get reputation data for rating fields (from cache or fallback)
+            val (reputation, badges) = reputationDataMap[userId] ?: (null to emptyList())
+            
+            // Try cached reputation first, then fallback to reviews table
+            val averageRating = reputation?.averageRating 
+                ?: fallbackRatingsMap[userId]?.first
+            val totalReviews = reputation?.totalReviews 
+                ?: fallbackRatingsMap[userId]?.second
+
             // Only calculate boost if there's a relevancy score to boost
             if (profileWithDistance.matchRelevancyScore == null) {
-                return@map profileWithDistance.copy(profile = updatedProfile)
+                return@map profileWithDistance.copy(
+                    profile = updatedProfile,
+                    averageRating = averageRating,
+                    totalReviews = totalReviews
+                )
             }
 
             var totalBoost = 0.0
@@ -136,25 +180,28 @@ object ProfileBoostCalculator {
             }
 
             // 2. REPUTATION AND BADGES BOOST
-            val (reputation, badges) = reputationDataMap[userId] ?: (null to emptyList())
-
-            if (reputation != null) {
+            // Apply rating boost from either cached reputation or fallback reviews data
+            val ratingForBoost = reputation?.averageRating ?: fallbackRatingsMap[userId]?.first
+            if (ratingForBoost != null) {
                 // 2a. Average Rating Boost
                 when {
-                    reputation.averageRating >= 4.8 -> {
+                    ratingForBoost >= 4.8 -> {
                         totalBoost += EXCELLENT_RATING_BOOST
-                        log.trace("User {} has excellent rating ({}), +{}", userId, reputation.averageRating, EXCELLENT_RATING_BOOST)
+                        log.trace("User {} has excellent rating ({}), +{}", userId, ratingForBoost, EXCELLENT_RATING_BOOST)
                     }
-                    reputation.averageRating >= 4.5 -> {
+                    ratingForBoost >= 4.5 -> {
                         totalBoost += GREAT_RATING_BOOST
-                        log.trace("User {} has great rating ({}), +{}", userId, reputation.averageRating, GREAT_RATING_BOOST)
+                        log.trace("User {} has great rating ({}), +{}", userId, ratingForBoost, GREAT_RATING_BOOST)
                     }
-                    reputation.averageRating >= 4.0 -> {
+                    ratingForBoost >= 4.0 -> {
                         totalBoost += GOOD_RATING_BOOST
-                        log.trace("User {} has good rating ({}), +{}", userId, reputation.averageRating, GOOD_RATING_BOOST)
+                        log.trace("User {} has good rating ({}), +{}", userId, ratingForBoost, GOOD_RATING_BOOST)
                     }
                 }
+            }
 
+            // Apply trust level and trade diversity boosts only from full reputation data
+            if (reputation != null) {
                 // 2b. Trust Level Boost
                 when (reputation.trustLevel) {
                     TrustLevel.VERIFIED -> {
@@ -199,17 +246,26 @@ object ProfileBoostCalculator {
                 log.trace("User {} has badge {}, +{}", userId, badge.value, badgeBoost)
             }
 
-            // Cap the total boost to prevent over-boosting
-            totalBoost = totalBoost.coerceAtMost(MAX_TOTAL_BOOST)
+            // Apply the cap to prevent over-boosting
+            val cappedTotalBoost = totalBoost.coerceAtMost(MAX_TOTAL_BOOST)
 
-            if (totalBoost > 0.0) {
+            if (cappedTotalBoost > 0.0) {
                 // Apply the boost to relevancy score (additive, then cap at 1.0)
-                val boostedScore = (profileWithDistance.matchRelevancyScore + totalBoost).coerceAtMost(1.0)
-                log.debug("User {} total boost: +{} (score: {} -> {})", userId, totalBoost,
+                val boostedScore = (profileWithDistance.matchRelevancyScore + cappedTotalBoost).coerceAtMost(1.0)
+                log.debug("User {} total boost: +{} (score: {} -> {})", userId, cappedTotalBoost,
                     profileWithDistance.matchRelevancyScore, boostedScore)
-                profileWithDistance.copy(profile = updatedProfile, matchRelevancyScore = boostedScore)
+                profileWithDistance.copy(
+                    profile = updatedProfile,
+                    matchRelevancyScore = boostedScore,
+                    averageRating = averageRating,
+                    totalReviews = totalReviews
+                )
             } else {
-                profileWithDistance.copy(profile = updatedProfile)
+                profileWithDistance.copy(
+                    profile = updatedProfile,
+                    averageRating = averageRating,
+                    totalReviews = totalReviews
+                )
             }
         }
     }

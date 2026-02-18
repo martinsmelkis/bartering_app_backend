@@ -44,6 +44,11 @@ class UserProfileDaoImpl : UserProfileDao {
         app.bartering.features.reviews.dao.ReputationDao::class.java
     )
 
+    // Inject review DAO for fallback rating calculation when reputation cache is missing
+    private val reviewDao: app.bartering.features.reviews.dao.ReviewDao by inject(
+        app.bartering.features.reviews.dao.ReviewDao::class.java
+    )
+
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
         maxSize = 1000,
@@ -378,8 +383,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         log.debug("Returning {} nearby profiles (after blocked + activity filtering)", filteredResults.size)
 
-        // Apply online boost and set online status
-        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
     }
 
     override suspend fun getSimilarProfiles(
@@ -438,7 +442,12 @@ class UserProfileDaoImpl : UserProfileDao {
             )
         )
         
-        combinedResults.take(20)
+        val results = combinedResults.take(20)
+        
+        log.debug("Returning {} similar profiles", results.size)
+
+        // Apply online boost and set online status
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
     }
 
     override suspend fun getHelpfulProfiles(
@@ -497,7 +506,12 @@ class UserProfileDaoImpl : UserProfileDao {
             )
         )
         
-        combinedResults.take(20)
+        val results = combinedResults.take(20)
+        
+        log.debug("Returning {} complementary profiles", results.size)
+
+        // Apply online boost and set online status
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
     }
 
     private suspend fun findProfilesBySemanticSimilarity(
@@ -675,7 +689,7 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Returning {} similar profiles (after filtering + activity penalty)", filteredResults.size)
 
         // Apply online boost and set online status
-        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
     }
 
     /**
@@ -803,7 +817,7 @@ class UserProfileDaoImpl : UserProfileDao {
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
 
         // Apply online boost and set online status
-        ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
     }
 
     /**
@@ -1128,8 +1142,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         log.info("Returning {} profiles (after filtering + activity penalty)", filteredResults.size)
 
-        // Apply online boost and set online status
-        ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
     }
 
     /**
