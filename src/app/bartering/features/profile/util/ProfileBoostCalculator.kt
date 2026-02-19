@@ -153,8 +153,10 @@ object ProfileBoostCalculator {
             val totalReviews = reputation?.totalReviews 
                 ?: fallbackRatingsMap[userId]?.second
 
-            // Only calculate boost if there's a relevancy score to boost
-            if (profileWithDistance.matchRelevancyScore == null) {
+            // Only calculate boost if there's a valid relevancy score to boost
+            if (profileWithDistance.matchRelevancyScore == null || profileWithDistance.matchRelevancyScore.isNaN()) {
+                log.debug("User {} has invalid/null relevancy score ({}), skipping boost", 
+                    userId, profileWithDistance.matchRelevancyScore)
                 return@map profileWithDistance.copy(
                     profile = updatedProfile,
                     averageRating = averageRating,
@@ -251,7 +253,14 @@ object ProfileBoostCalculator {
 
             if (cappedTotalBoost > 0.0) {
                 // Apply the boost to relevancy score (additive, then cap at 1.0)
-                val boostedScore = (profileWithDistance.matchRelevancyScore + cappedTotalBoost).coerceAtMost(1.0)
+                val rawBoostedScore = profileWithDistance.matchRelevancyScore + cappedTotalBoost
+                val boostedScore = if (rawBoostedScore.isNaN()) {
+                    log.warn("User {} calculated NaN boosted score (relevancy: {}, boost: {}), using original score",
+                        userId, profileWithDistance.matchRelevancyScore, cappedTotalBoost)
+                    profileWithDistance.matchRelevancyScore
+                } else {
+                    rawBoostedScore.coerceAtMost(1.0)
+                }
                 log.debug("User {} total boost: +{} (score: {} -> {})", userId, cappedTotalBoost,
                     profileWithDistance.matchRelevancyScore, boostedScore)
                 profileWithDistance.copy(

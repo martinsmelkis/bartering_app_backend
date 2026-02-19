@@ -641,8 +641,12 @@ class UserProfileDaoImpl : UserProfileDao {
                 val foundUserId = rs.getString("user_id")
                 val keywordsJson = rs.getString("profile_keywords_with_weights")
                 val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
-                val attrSimilarityScore = rs.getDouble("attribute_similarity")
-                val profileSimilarityScore = rs.getDouble("profile_similarity")
+                val attrSimilarityScore = rs.getDouble("attribute_similarity").let { 
+                    if (it.isNaN() || it.isInfinite()) 0.0 else it 
+                }
+                val profileSimilarityScore = rs.getDouble("profile_similarity").let { 
+                    if (it.isNaN() || it.isInfinite()) 0.0 else it 
+                }
 
                 if (attrSimilarityScore < 0.7 && profileSimilarityScore < 0.6
                     && userProfiles.size > 10
@@ -834,7 +838,10 @@ class UserProfileDaoImpl : UserProfileDao {
             val weight = weights[setName] ?: 1.0
             profiles.forEach { profile ->
                 val userId = profile.profile.userId
-                val weightedScore = (profile.matchRelevancyScore ?: 0.0) * weight
+                val sanitizedScore = profile.matchRelevancyScore?.let {
+                    if (it.isNaN() || it.isInfinite()) 0.0 else it
+                } ?: 0.0
+                val weightedScore = sanitizedScore * weight
 
                 val existing = combinedMap[userId]
                 if (existing == null) {
@@ -844,7 +851,10 @@ class UserProfileDaoImpl : UserProfileDao {
                     )
                 } else {
                     // User already in results - add scores and keep the most complete profile
-                    val combinedScore = (existing.matchRelevancyScore ?: 0.0) + weightedScore
+                    val existingScore = existing.matchRelevancyScore?.let {
+                        if (it.isNaN() || it.isInfinite()) 0.0 else it
+                    } ?: 0.0
+                    val combinedScore = existingScore + weightedScore
                     
                     // Prefer profile with more attributes
                     val betterProfile = if (profile.profile.attributes.size > existing.profile.attributes.size) {
@@ -1372,7 +1382,9 @@ class UserProfileDaoImpl : UserProfileDao {
                 val rs = statement.executeQuery()
                 while (rs.next()) {
                     val userId = rs.getString("user_id")
-                    val score = rs.getDouble("keyword_score")
+                    val score = rs.getDouble("keyword_score").let {
+                        if (it.isNaN() || it.isInfinite()) 0.0 else it
+                    }
                     if (score >= minimalSimilarity) {
                         results.add(userId to (score + 0.5))
                     }
