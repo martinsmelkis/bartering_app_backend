@@ -128,6 +128,14 @@ CREATE TABLE IF NOT EXISTS user_attributes (
     PRIMARY KEY (user_id, attribute_id, type)
 );
 
+-- Create a GIN index for efficient text search on attribute descriptions
+CREATE INDEX IF NOT EXISTS idx_user_attrs_description_gin
+ON user_attributes USING gin(description gin_trgm_ops);
+
+-- Add a comment for documentation
+COMMENT ON INDEX idx_user_attrs_description_gin IS
+    'GIN trigram index for fast keyword search on translated attribute descriptions';
+
 -- This table stores chat messages when recipients are offline
 CREATE TABLE IF NOT EXISTS offline_messages (
     id VARCHAR(36) PRIMARY KEY,
@@ -323,9 +331,11 @@ CREATE TABLE IF NOT EXISTS user_notification_contacts (
     push_tokens JSONB DEFAULT '[]'::jsonb,
 
     -- Global notification settings
-    notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    notifications_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     quiet_hours_start INTEGER, -- Hour 0-23
     quiet_hours_end INTEGER,   -- Hour 0-23
+
+    marketing_consent BOOLEAN NOT NULL DEFAULT FALSE,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -333,6 +343,9 @@ CREATE TABLE IF NOT EXISTS user_notification_contacts (
     CONSTRAINT check_quiet_hours_start CHECK (quiet_hours_start IS NULL OR (quiet_hours_start >= 0 AND quiet_hours_start <= 23)),
     CONSTRAINT check_quiet_hours_end CHECK (quiet_hours_end IS NULL OR (quiet_hours_end >= 0 AND quiet_hours_end <= 23))
 );
+
+COMMENT ON COLUMN user_notification_contacts.marketing_consent IS
+    'User consent for marketing communications (GDPR compliant)';
 
 CREATE INDEX idx_user_notification_contacts_email ON user_notification_contacts(email) WHERE email IS NOT NULL;
 CREATE INDEX idx_user_notification_contacts_verified ON user_notification_contacts(email_verified) WHERE email_verified = TRUE;

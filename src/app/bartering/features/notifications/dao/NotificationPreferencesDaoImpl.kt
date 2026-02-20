@@ -45,6 +45,7 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             it[notificationsEnabled] = contacts.notificationsEnabled
             it[quietHoursStart] = contacts.quietHoursStart
             it[quietHoursEnd] = contacts.quietHoursEnd
+            it[marketingConsent] = contacts.marketingConsent
             it[createdAt] = Instant.now()
             it[updatedAt] = Instant.now()
         }
@@ -63,7 +64,8 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
                 email = request.email,
                 notificationsEnabled = request.notificationsEnabled ?: true,
                 quietHoursStart = request.quietHoursStart,
-                quietHoursEnd = request.quietHoursEnd
+                quietHoursEnd = request.quietHoursEnd,
+                marketingConsent = request.marketingConsent ?: false
             )
             saveUserContacts(newContacts)
             return@dbQuery newContacts
@@ -74,6 +76,7 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             request.notificationsEnabled?.let { enabled -> it[notificationsEnabled] = enabled }
             request.quietHoursStart?.let { start -> it[quietHoursStart] = start }
             request.quietHoursEnd?.let { end -> it[quietHoursEnd] = end }
+            request.marketingConsent?.let { consent -> it[marketingConsent] = consent }
             it[updatedAt] = Instant.now()
         }
         getUserContacts(userId)
@@ -430,7 +433,8 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             pushTokens = pushTokens,
             notificationsEnabled = row[UserNotificationContactsTable.notificationsEnabled],
             quietHoursStart = row[UserNotificationContactsTable.quietHoursStart],
-            quietHoursEnd = row[UserNotificationContactsTable.quietHoursEnd]
+            quietHoursEnd = row[UserNotificationContactsTable.quietHoursEnd],
+            marketingConsent = row[UserNotificationContactsTable.marketingConsent]
         )
     }
     

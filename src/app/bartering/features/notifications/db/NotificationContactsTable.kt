@@ -19,6 +19,7 @@ object UserNotificationContactsTable : Table("user_notification_contacts") {
     val notificationsEnabled = bool("notifications_enabled").default(true)
     val quietHoursStart = integer("quiet_hours_start").nullable()
     val quietHoursEnd = integer("quiet_hours_end").nullable()
+    val marketingConsent = bool("marketing_consent").default(false)
     val createdAt = timestamp("created_at").default(Instant.now())
     val updatedAt = timestamp("updated_at").default(Instant.now())
     

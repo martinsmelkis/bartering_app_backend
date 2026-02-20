@@ -12,8 +12,8 @@ import org.koin.dsl.module
  * Configuration options via environment variables:
  * - EMAIL_PROVIDER: sendgrid | aws_ses | smtp (default: sendgrid)
  * - PUSH_PROVIDER: firebase | aws_sns (default: firebase)
- * - SENDGRID_API_KEY: SendGrid API key
- * - AWS_REGION: AWS region for SES
+ * - MAILJET_API_KEY: Mailjet Email Service API key
+ * - MAILJET_API_SECRET: Mailjet Email Service API Secret
  */
 val notificationsModule = module {
     

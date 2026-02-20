@@ -7,18 +7,15 @@ import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
 import app.bartering.features.profile.model.*
-import app.bartering.features.profile.util.JsonParserUtils
-import app.bartering.features.profile.util.LocationParser
-import app.bartering.features.profile.util.ProfileBoostCalculator
-import app.bartering.features.profile.util.UserActivityFilter
+import app.bartering.features.profile.util.*
 import org.jetbrains.exposed.sql.*
 import net.postgis.jdbc.geometry.Point
 import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.categories.dao.CategoriesDaoImpl
-import app.bartering.features.profile.db.UserProfilesTable
-import app.bartering.features.profile.db.UserRegistrationDataTable
-import app.bartering.features.profile.db.UserSemanticProfilesTable
+import app.bartering.features.profile.db.*
+import app.bartering.model.BidirectionalMatchType
+import app.bartering.model.Quadruple
 import app.bartering.utils.HashUtils
 import app.bartering.utils.SecurityUtils
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -33,18 +30,13 @@ import kotlin.text.trim
 
 class UserProfileDaoImpl : UserProfileDao {
     private val log = LoggerFactory.getLogger(this::class.java)
-    
-    // Inject relationships DAO for blocked user filtering
+
     private val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by inject(
         app.bartering.features.relationships.dao.UserRelationshipsDaoImpl::class.java
     )
-    
-    // Inject reputation DAO for reputation-based boosting
     private val reputationDao: app.bartering.features.reviews.dao.ReputationDao by inject(
         app.bartering.features.reviews.dao.ReputationDao::class.java
     )
-
-    // Inject review DAO for fallback rating calculation when reputation cache is missing
     private val reviewDao: app.bartering.features.reviews.dao.ReviewDao by inject(
         app.bartering.features.reviews.dao.ReviewDao::class.java
     )
@@ -392,11 +384,11 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
-        // Count nearby users to adjust thresholds dynamically
+        // Adjust threshold multiplier based on user density
         val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
-            countNearbyUsers(userId, latitude, longitude, radiusMeters)
+            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
         } else {
-            countTotalActiveUsers(userId)
+            UserStatisticsUtils.countTotalActiveUsers(userId)
         }
         
         log.debug("Found {} nearby users for similar profiles search (userId={})", nearbyUserCount, userId)
@@ -412,8 +404,12 @@ class UserProfileDaoImpl : UserProfileDao {
             thresholdMultiplier, nearbyUserCount)
 
         // Combined bidirectional search: users with similar haves AND similar needs
-        val similarMatches = findBidirectionalSimilarMatches(
-            userId, latitude, longitude, radiusMeters
+        val similarMatches = findBidirectionalMatches(
+            userId, latitude, longitude, radiusMeters,
+            matchType = BidirectionalMatchType.SIMILAR,
+            score1MatchTypeLabel = "similar_haves",
+            score2MatchTypeLabel = "similar_needs",
+            mutualMatchBoost = 0.05
         )
         
         // Search active postings for similar offerings
@@ -422,7 +418,7 @@ class UserProfileDaoImpl : UserProfileDao {
         )
         
         // Combine results with weighted scoring
-        val combinedResults = combineMatchResults(
+        val combinedResults = ProfileMatchAggregationUtils.combineMatchResults(
             mapOf(
                 "similar_matches" to similarMatches,
                 "postings" to postingMatches
@@ -447,11 +443,11 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
-        // Count nearby users to adjust thresholds dynamically
+        // Adjust threshold multiplier based on user density
         val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
-            countNearbyUsers(userId, latitude, longitude, radiusMeters)
+            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
         } else {
-            countTotalActiveUsers(userId)
+            UserStatisticsUtils.countTotalActiveUsers(userId)
         }
         
         log.debug("Found {} nearby users for complementary profiles search (userId={})", nearbyUserCount, userId)
@@ -467,8 +463,12 @@ class UserProfileDaoImpl : UserProfileDao {
             thresholdMultiplier, nearbyUserCount)
         
         // Combined bidirectional search: users providing what I seek AND users seeking what I provide
-        val bidirectionalMatches = findBidirectionalComplementaryMatches(
-            userId, latitude, longitude, radiusMeters
+        val bidirectionalMatches = findBidirectionalMatches(
+            userId, latitude, longitude, radiusMeters,
+            matchType = BidirectionalMatchType.COMPLEMENTARY,
+            score1MatchTypeLabel = "providing_to_me",
+            score2MatchTypeLabel = "seeking_from_me",
+            mutualMatchBoost = 0.05
         )
         
         // Search active postings for relevant offers
@@ -477,7 +477,7 @@ class UserProfileDaoImpl : UserProfileDao {
         )
         
         // Combine results with weighted scoring
-        val combinedResults = combineMatchResults(
+        val combinedResults = ProfileMatchAggregationUtils.combineMatchResults(
             mapOf(
                 "bidirectional_matches" to bidirectionalMatches,
                 "postings" to postingMatches
@@ -494,14 +494,6 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Apply online boost and set online status
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
-    }
-
-    /**
-     * Enum defining the type of bidirectional match search to perform.
-     */
-    private enum class BidirectionalMatchType {
-        COMPLEMENTARY,  // my_needs<->their_haves AND my_haves<->their_needs
-        SIMILAR         // my_haves<->their_haves AND my_needs<->their_needs
     }
 
     /**
@@ -660,7 +652,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 // Apply mutual match boost if configured
                 val matchTypeLabel = rs.getString("match_type")
                 val boost = if (mutualMatchBoost > 0 && matchTypeLabel == "mutual") mutualMatchBoost else 0.0
-                val finalScore = (bestMatchScore * 0.7 + profileSimilarity * 0.3) + boost
+                val finalScore = (bestMatchScore * 0.5 + profileSimilarity * 0.3) + boost
 
                 userProfiles.add(
                     UserProfileWithDistance(
@@ -692,60 +684,6 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Apply online boost and set online status
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
-    }
-
-    /**
-     * Simple data class to hold 4 values (since Kotlin doesn't have built-in Quadruple)
-     */
-    private data class Quadruple<A, B, C, D>(
-        val first: A,
-        val second: B,
-        val third: C,
-        val fourth: D
-    )
-
-    /**
-     * Finds bidirectional complementary matches (users providing what I seek + users seeking what I provide).
-     * Delegates to the generic findBidirectionalMatches with COMPLEMENTARY configuration.
-     */
-    private suspend fun findBidirectionalComplementaryMatches(
-        currentUserId: String,
-        latitude: Double?,
-        longitude: Double?,
-        radiusMeters: Double?
-    ): List<UserProfileWithDistance> {
-        return findBidirectionalMatches(
-            currentUserId = currentUserId,
-            latitude = latitude,
-            longitude = longitude,
-            radiusMeters = radiusMeters,
-            matchType = BidirectionalMatchType.COMPLEMENTARY,
-            score1MatchTypeLabel = "providing_to_me",
-            score2MatchTypeLabel = "seeking_from_me",
-            mutualMatchBoost = 0.05
-        )
-    }
-
-    /**
-     * Finds bidirectional similar matches (users with similar haves + similar needs).
-     * Delegates to the generic findBidirectionalMatches with SIMILAR configuration.
-     */
-    private suspend fun findBidirectionalSimilarMatches(
-        currentUserId: String,
-        latitude: Double?,
-        longitude: Double?,
-        radiusMeters: Double?
-    ): List<UserProfileWithDistance> {
-        return findBidirectionalMatches(
-            currentUserId = currentUserId,
-            latitude = latitude,
-            longitude = longitude,
-            radiusMeters = radiusMeters,
-            matchType = BidirectionalMatchType.SIMILAR,
-            score1MatchTypeLabel = "similar_haves",
-            score2MatchTypeLabel = "similar_needs",
-            mutualMatchBoost = 0.05
-        )
     }
 
     /**
@@ -874,57 +812,6 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Apply online boost and set online status
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
-    }
-
-    /**
-     * Combines multiple lists of profile matches with different weights and removes duplicates.
-     * When the same user appears in multiple lists, keeps the highest weighted score.
-     */
-    private fun combineMatchResults(
-        resultSets: Map<String, List<UserProfileWithDistance>>,
-        weights: Map<String, Double>
-    ): List<UserProfileWithDistance> {
-        val combinedMap = mutableMapOf<String, UserProfileWithDistance>()
-
-        resultSets.forEach { (setName, profiles) ->
-            val weight = weights[setName] ?: 1.0
-            profiles.forEach { profile ->
-                val userId = profile.profile.userId
-                val sanitizedScore = profile.matchRelevancyScore?.let {
-                    if (it.isNaN() || it.isInfinite()) 0.0 else it
-                } ?: 0.0
-                val weightedScore = sanitizedScore * weight
-
-                val existing = combinedMap[userId]
-                if (existing == null) {
-                    // First time seeing this user
-                    combinedMap[userId] = profile.copy(
-                        matchRelevancyScore = weightedScore
-                    )
-                } else {
-                    // User already in results - add scores and keep the most complete profile
-                    val existingScore = existing.matchRelevancyScore?.let {
-                        if (it.isNaN() || it.isInfinite()) 0.0 else it
-                    } ?: 0.0
-                    val combinedScore = existingScore + weightedScore
-                    
-                    // Prefer profile with more attributes
-                    val betterProfile = if (profile.profile.attributes.size > existing.profile.attributes.size) {
-                        profile
-                    } else {
-                        existing
-                    }
-                    
-                    combinedMap[userId] = betterProfile.copy(
-                        matchRelevancyScore = combinedScore
-                    )
-                }
-            }
-        }
-
-        // Sort by combined score
-        return combinedMap.values
-            .sortedByDescending { it.matchRelevancyScore ?: 0.0 }
     }
 
     /**
@@ -1207,25 +1094,6 @@ class UserProfileDaoImpl : UserProfileDao {
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
     }
 
-    private fun buildAttributeTypeSQLFilter(seeking: Boolean?, offering: Boolean?): String {
-        return when {
-            seeking == true && offering == true -> ""  // Both types allowed
-            seeking == true && offering == false -> "AND ua.type = 'SEEKING'"
-            seeking == false && offering == true -> "AND ua.type IN ('PROVIDING', 'SHARING')"
-            seeking == null && offering == null -> ""  // No filter when both are null
-            else -> ""  // Default: no filter
-        }
-    }
-
-    private fun buildSemanticEmbeddingSQLFilter(seeking: Boolean?, offering: Boolean?): String {
-        return when {
-            seeking == false && offering == false -> "FALSE"  // Neither type allowed
-            seeking == true && offering == false -> "usp.embedding_needs IS NOT NULL"
-            seeking == false && offering == true -> "usp.embedding_haves IS NOT NULL"
-            else -> "usp.embedding_haves IS NOT NULL OR usp.embedding_needs IS NOT NULL"  // Default: both
-        }
-    }
-
     /**
      * Stage 1: Fast keyword-only search using trigram similarity
      * Searches user attributes AND user postings (title + description)
@@ -1282,7 +1150,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 JOIN matching_attributes ma ON ua.attribute_id = ma.attribute_key
                 WHERE 
                     (ma.word_sim > 0.45 OR ma.trgm_sim > 0.45 OR ma.exact_match > 0)
-                    ${buildAttributeTypeSQLFilter(seeking, offering)}
+                    ${ProfileQueryBuilderUtils.buildAttributeTypeSQLFilter(seeking, offering)}
                 GROUP BY ua.user_id
             ),
             attribute_description_scores AS (
@@ -1541,7 +1409,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_semantic_profiles usp ON u.id = usp.user_id
                 WHERE
-                    (${buildSemanticEmbeddingSQLFilter(seeking, offering)})
+                    (${ProfileQueryBuilderUtils.buildSemanticEmbeddingSQLFilter(seeking, offering)})
                     AND u.id != ?
                     ${
             // Pre-filter by location using spatial index for massive performance gain
@@ -2053,75 +1921,6 @@ class UserProfileDaoImpl : UserProfileDao {
         } catch (e: Exception) {
             e.printStackTrace()
             Pair(emptyList(), 0)
-        }
-    }
-
-    /**
-     * Counts the number of active users within the specified radius.
-     * Used to dynamically adjust search thresholds based on user density.
-     */
-    private suspend fun countNearbyUsers(
-        userId: String,
-        latitude: Double,
-        longitude: Double,
-        radiusMeters: Double
-    ): Int = dbQuery {
-        try {
-            val query = """
-                SELECT COUNT(DISTINCT u.id) as user_count
-                FROM user_registration_data u
-                INNER JOIN user_profiles up ON u.id = up.user_id
-                WHERE u.id != ?
-                    AND ST_DWithin(
-                        up.location::geography,
-                        ST_MakePoint(?, ?)::geography,
-                        ?
-                    )
-            """.trimIndent()
-
-            TransactionManager.current().connection.prepareStatement(query, false)
-                .also { statement ->
-                    statement[1] = userId
-                    statement[2] = longitude
-                    statement[3] = latitude
-                    statement[4] = radiusMeters
-                    val rs = statement.executeQuery()
-                    if (rs.next()) {
-                        return@dbQuery rs.getInt("user_count")
-                    }
-                }
-            0
-        } catch (e: Exception) {
-            log.error("Error counting nearby users", e)
-            0
-        }
-    }
-
-    /**
-     * Counts total active users in the system (excluding the current user).
-     * Used when no location filter is specified.
-     */
-    private suspend fun countTotalActiveUsers(userId: String): Int = dbQuery {
-        try {
-            val query = """
-                SELECT COUNT(DISTINCT u.id) as user_count
-                FROM user_registration_data u
-                INNER JOIN user_profiles up ON u.id = up.user_id
-                WHERE u.id != ?
-            """.trimIndent()
-
-            TransactionManager.current().connection.prepareStatement(query, false)
-                .also { statement ->
-                    statement[1] = userId
-                    val rs = statement.executeQuery()
-                    if (rs.next()) {
-                        return@dbQuery rs.getInt("user_count")
-                    }
-                }
-            0
-        } catch (e: Exception) {
-            log.error("Error counting total active users", e)
-            0
         }
     }
 

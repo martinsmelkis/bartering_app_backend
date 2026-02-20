@@ -13,9 +13,10 @@ data class UserNotificationContacts(
     val email: String? = null,
     val emailVerified: Boolean = false,
     val pushTokens: List<PushTokenInfo> = emptyList(),
-    val notificationsEnabled: Boolean = true,
+    val notificationsEnabled: Boolean = false,
     val quietHoursStart: Int? = null,
-    val quietHoursEnd: Int? = null
+    val quietHoursEnd: Int? = null,
+    val marketingConsent: Boolean = false
 )
 
 @Serializable
@@ -151,7 +152,8 @@ data class UpdateUserNotificationContactsRequest(
     val email: String? = null,
     val notificationsEnabled: Boolean? = null,
     val quietHoursStart: Int? = null,
-    val quietHoursEnd: Int? = null
+    val quietHoursEnd: Int? = null,
+    val marketingConsent: Boolean? = null
 )
 
 @Serializable

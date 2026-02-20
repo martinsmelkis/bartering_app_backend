@@ -52,9 +52,8 @@ fun Application.notificationPreferencesRoutes() {
                 if (contacts != null) {
                     call.respond(HttpStatusCode.OK, UserContactsResponse(contacts))
                 } else {
-                    call.respond(HttpStatusCode.NotFound, NotificationPreferencesResponse(
-                        success = false,
-                        message = "No contacts found"
+                    call.respond(HttpStatusCode.OK, UserContactsResponse(
+                        UserNotificationContacts(authenticatedUserId)
                     ))
                 }
             }
