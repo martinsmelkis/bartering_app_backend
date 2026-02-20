@@ -410,17 +410,10 @@ class UserProfileDaoImpl : UserProfileDao {
         
         log.debug("Using threshold multiplier {} for similar profiles (nearbyUsers={})", 
             thresholdMultiplier, nearbyUserCount)
-        
-        // Find users providing similar things (original logic)
-        val providingMatches = findProfilesBySemanticSimilarity(
-            userId, UserAttributeType.PROVIDING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
-        )
-        
-        // Also find users seeking similar things (additional matching)
-        val seekingMatches = findProfilesBySemanticSimilarity(
-            userId, UserAttributeType.SEEKING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+
+        // Combined bidirectional search: users with similar haves AND similar needs
+        val similarMatches = findBidirectionalSimilarMatches(
+            userId, latitude, longitude, radiusMeters
         )
         
         // Search active postings for similar offerings
@@ -431,14 +424,12 @@ class UserProfileDaoImpl : UserProfileDao {
         // Combine results with weighted scoring
         val combinedResults = combineMatchResults(
             mapOf(
-                "providing_profile" to providingMatches,
-                "seeking_profile" to seekingMatches,
+                "similar_matches" to similarMatches,
                 "postings" to postingMatches
             ),
             weights = mapOf(
-                "providing_profile" to 0.5,  // 50% weight for similar offerings
-                "seeking_profile" to 0.3,     // 30% weight for similar needs
-                "postings" to 0.2             // 20% weight for active postings
+                "similar_matches" to 0.8,  // 80% weight for similar profile matches
+                "postings" to 0.2          // 20% weight for active postings
             )
         )
         
@@ -475,16 +466,9 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Using threshold multiplier {} for complementary profiles (nearbyUsers={})", 
             thresholdMultiplier, nearbyUserCount)
         
-        // Find users providing what I seek (original logic)
-        val providingMatches = findProfilesBySemanticSimilarity(
-            userId, UserAttributeType.SEEKING,
-            UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
-        )
-        
-        // Also find users seeking what I provide (bi-directional matching)
-        val seekingMatches = findProfilesBySemanticSimilarity(
-            userId, UserAttributeType.PROVIDING,
-            UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+        // Combined bidirectional search: users providing what I seek AND users seeking what I provide
+        val bidirectionalMatches = findBidirectionalComplementaryMatches(
+            userId, latitude, longitude, radiusMeters
         )
         
         // Search active postings for relevant offers
@@ -495,14 +479,12 @@ class UserProfileDaoImpl : UserProfileDao {
         // Combine results with weighted scoring
         val combinedResults = combineMatchResults(
             mapOf(
-                "providing_profile" to providingMatches,
-                "seeking_profile" to seekingMatches,
+                "bidirectional_matches" to bidirectionalMatches,
                 "postings" to postingMatches
             ),
             weights = mapOf(
-                "providing_profile" to 0.45,  // 45% weight for users providing what I need
-                "seeking_profile" to 0.35,     // 35% weight for users needing what I offer
-                "postings" to 0.2             // 20% weight for active postings
+                "bidirectional_matches" to 0.7,  // 70% weight for bidirectional profile matches
+                "postings" to 0.3              // 30% weight for active postings
             )
         )
         
@@ -514,112 +496,134 @@ class UserProfileDaoImpl : UserProfileDao {
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
     }
 
-    private suspend fun findProfilesBySemanticSimilarity(
+    /**
+     * Enum defining the type of bidirectional match search to perform.
+     */
+    private enum class BidirectionalMatchType {
+        COMPLEMENTARY,  // my_needs<->their_haves AND my_haves<->their_needs
+        SIMILAR         // my_haves<->their_haves AND my_needs<->their_needs
+    }
+
+    /**
+     * Generic bidirectional match finder that powers both complementary and similar searches.
+     * Reduces code duplication by handling common query structure, parameter binding,
+     * result processing, and post-processing in one place.
+     *
+     * @param matchType Determines which embedding columns to compare
+     * @param score1MatchTypeLabel Label for when score1 is dominant (for logging/debugging)
+     * @param score2MatchTypeLabel Label for when score2 is dominant (for logging/debugging)
+     * @param mutualMatchBoost Bonus score (0.0-1.0) when both scores are high/equal
+     */
+    private suspend fun findBidirectionalMatches(
         currentUserId: String,
-        currentUserProfileType: UserAttributeType,
-        otherUsersProfileType: UserAttributeType,
         latitude: Double?,
         longitude: Double?,
-        radiusMeters: Double?
+        radiusMeters: Double?,
+        matchType: BidirectionalMatchType,
+        score1MatchTypeLabel: String,
+        score2MatchTypeLabel: String,
+        mutualMatchBoost: Double = 0.0
     ): List<UserProfileWithDistance> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
             log.warn("Invalid userId format: {}", currentUserId)
             return@dbQuery emptyList()
         }
-        val myEmbeddingColumnType = when (currentUserProfileType) {
-            UserAttributeType.SEEKING -> UserSemanticProfilesTable.embeddingNeeds
-            UserAttributeType.PROVIDING -> UserSemanticProfilesTable.embeddingHaves
-            UserAttributeType.SHARING -> UserSemanticProfilesTable.embeddingHaves
-            UserAttributeType.PROFILE -> UserSemanticProfilesTable.embeddingProfile
+
+        // Build SQL based on match type
+        val (score1Expr, score2Expr, score1Name, score2Name) = when (matchType) {
+            BidirectionalMatchType.COMPLEMENTARY -> {
+                // Complementary: my_needs vs their_haves, my_haves vs their_needs
+                Quadruple(
+                    "(1 - (other_user_semantic_profile.embedding_haves <=> (SELECT embedding_needs FROM current_user_profile)))",
+                    "(1 - (other_user_semantic_profile.embedding_needs <=> (SELECT embedding_haves FROM current_user_profile)))",
+                    "match_needs_vs_haves",
+                    "match_haves_vs_needs"
+                )
+            }
+            BidirectionalMatchType.SIMILAR -> {
+                // Similar: my_haves vs their_haves, my_needs vs their_needs
+                Quadruple(
+                    "(1 - (other_user_semantic_profile.embedding_haves <=> (SELECT embedding_haves FROM current_user_profile)))",
+                    "(1 - (other_user_semantic_profile.embedding_needs <=> (SELECT embedding_needs FROM current_user_profile)))",
+                    "similar_haves_score",
+                    "similar_needs_score"
+                )
+            }
         }
 
-        val othersEmbeddingColumnType = when (otherUsersProfileType) {
-            UserAttributeType.SEEKING -> UserSemanticProfilesTable.embeddingNeeds
-            UserAttributeType.PROVIDING -> UserSemanticProfilesTable.embeddingHaves
-            UserAttributeType.SHARING -> UserSemanticProfilesTable.embeddingHaves
-            UserAttributeType.PROFILE -> UserSemanticProfilesTable.embeddingProfile
-        }
-        // This is the SQL that will do all the heavy lifting.
-        // It's broken down into steps for clarity.
-        val semanticSimilarityQuery = """
-            -- Step 1: Define the current user's profile vector as a CTE (Common Table Expression).
+        val bidirectionalQuery = """
             WITH current_user_profile AS (
-                SELECT ${myEmbeddingColumnType.name}, embedding_profile
+                SELECT embedding_needs, embedding_haves, embedding_profile
                 FROM user_semantic_profiles
                 WHERE user_id = ?
+            ),
+            matches AS (
+                SELECT
+                    other_user.id as user_id,
+                    other_user_profile.name,
+                    other_user_profile.location as location,
+                    other_user_profile.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                    $score1Expr as $score1Name,
+                    $score2Expr as $score2Name,
+                    (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))) as profile_similarity
+                    ${if (latitude != null && longitude != null) {
+                        ", ST_Distance(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
+                    } else {
+                        ", NULL as distance_meters"
+                    }
+                }
+                FROM user_registration_data other_user
+                JOIN user_profiles other_user_profile ON other_user.id = other_user_profile.user_id
+                JOIN user_semantic_profiles other_user_semantic_profile ON other_user.id = other_user_semantic_profile.user_id
+                WHERE
+                    other_user.id != ?
+                    AND (other_user_semantic_profile.embedding_haves IS NOT NULL
+                         OR other_user_semantic_profile.embedding_needs IS NOT NULL)
+                    AND EXISTS (
+                        SELECT 1 FROM current_user_profile
+                        WHERE embedding_needs IS NOT NULL OR embedding_haves IS NOT NULL
+                    )
+                    ${if (latitude != null && longitude != null && radiusMeters != null) {
+                        "AND ST_DWithin(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography, ?)"
+                    } else {
+                        ""
+                    }
+                }
             )
-            -- Step 2: Main SELECT statement to find and rank other users.
             SELECT
-                -- We need the other user's ID and their profile data.
-                other_user.id as user_id,
-                other_user_profile.name,
-                other_user_profile.location as location,
-                other_user_profile.profile_keywords_with_weights::text as profile_keywords_with_weights,
-                -- Calculate attribute similarity (e.g., my needs vs their haves)
-                (1 - (other_user_semantic_profile.${othersEmbeddingColumnType.name} <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile))) as attribute_similarity,
-                -- Calculate profile similarity (my personality vs their personality)
-                (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))) as profile_similarity
-                ${if (latitude != null && longitude != null) {
-            // Conditionally add the GEOGRAPHIC DISTANCE if location is provided.
-            ", ST_Distance(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
-        } else {
-            ", NULL as distance_meters"
-        }
-        }
-            FROM
-                -- Find all other users...
-                user_registration_data other_user
-            -- ...who have a profile...
-            JOIN user_profiles other_user_profile ON other_user.id = other_user_profile.user_id
-            -- ...and who have a calculated semantic profile.
-            JOIN user_semantic_profiles other_user_semantic_profile ON other_user.id = other_user_semantic_profile.user_id
-            WHERE
-                -- Exclude the current user from their own search results.
-                other_user.id != ?
-                -- Ensure the profiles we are comparing against are not NULL.
-                AND other_user_semantic_profile.${othersEmbeddingColumnType.name} IS NOT NULL
-                -- Make sure the current user's profile exists to avoid errors.
-                AND EXISTS (SELECT 1 FROM current_user_profile WHERE ${myEmbeddingColumnType.name} IS NOT NULL)
-                ${
-            // Conditionally add the GEOSPATIAL filter if location and radius are provided.
-            if (latitude != null && longitude != null && radiusMeters != null) {
-                // ST_DWithin is very fast because it uses the spatial index.
-                "AND ST_DWithin(other_user_profile.location::geography, ST_MakePoint(?, ?)::geography, ?)"
-            } else {
-                ""
-            }
-        }
-            -- Order results primarily by how semantically similar they are (higher is better).
+                user_id,
+                name,
+                location,
+                profile_keywords_with_weights,
+                GREATEST($score1Name, $score2Name) as best_match_score,
+                $score1Name,
+                $score2Name,
+                profile_similarity,
+                distance_meters,
+                CASE
+                    WHEN $score1Name > $score2Name THEN '$score1MatchTypeLabel'
+                    WHEN $score2Name > $score1Name THEN '$score2MatchTypeLabel'
+                    ELSE 'mutual'
+                END as match_type
+            FROM matches
+            WHERE GREATEST($score1Name, $score2Name) >= 0.55
             ORDER BY
-                -- Weighted average: 70% attribute similarity, 30% profile similarity
-                (0.7 * (1 - (other_user_semantic_profile.${othersEmbeddingColumnType.name} <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile)))) +
-                ${
-            if ((currentUserProfileType == UserAttributeType.SEEKING
-                        && otherUsersProfileType == UserAttributeType.PROVIDING) ||
-                (currentUserProfileType == UserAttributeType.PROVIDING
-                        && otherUsersProfileType == UserAttributeType.SEEKING)) {
-                "(0.3 * (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile)))"
-            } else {
-                "(0.3 * (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))))"
-            }
-        }
-                DESC,
+                (0.7 * GREATEST($score1Name, $score2Name) +
+                 0.3 * profile_similarity) DESC,
                 distance_meters ASC NULLS LAST
-            LIMIT 20;
+            LIMIT 25
         """.trimIndent()
 
-        log.trace("Executing Similar Profiles Query: {}", semanticSimilarityQuery)
+        log.trace("Executing bidirectional {} query: {}", matchType.name.lowercase(), bidirectionalQuery)
 
-        // This list will hold the parameters for the prepared statement in the correct order.
+        // Build parameter list
         val queryParams = mutableListOf<Pair<IColumnType<*>, Any?>>()
-        // First parameter: currentUserId for the CTE
         queryParams.add(VarCharColumnType() to currentUserId)
         if (latitude != null && longitude != null) {
-            queryParams.add(DoubleColumnType() to longitude) // ST_MakePoint is (lon, lat)
+            queryParams.add(DoubleColumnType() to longitude)
             queryParams.add(DoubleColumnType() to latitude)
         }
-        // Second parameter: currentUserId for the WHERE clause (exclude self)
         queryParams.add(VarCharColumnType() to currentUserId)
         if (latitude != null && longitude != null && radiusMeters != null) {
             queryParams.add(DoubleColumnType() to longitude)
@@ -630,10 +634,9 @@ class UserProfileDaoImpl : UserProfileDao {
         val userProfiles = mutableListOf<UserProfileWithDistance>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
-        // Execute the main user search query
-        TransactionManager.current().connection.prepareStatement(semanticSimilarityQuery, false).also { statement ->
+        // Execute query
+        TransactionManager.current().connection.prepareStatement(bidirectionalQuery, false).also { statement ->
             queryParams.forEachIndexed { index, (_, value) ->
-                // Use the actual value type - coordinates and radius are non-null when added to queryParams
                 statement[index + 1] = value!!
             }
             val rs = statement.executeQuery()
@@ -641,32 +644,36 @@ class UserProfileDaoImpl : UserProfileDao {
                 val foundUserId = rs.getString("user_id")
                 val keywordsJson = rs.getString("profile_keywords_with_weights")
                 val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
-                val attrSimilarityScore = rs.getDouble("attribute_similarity").let { 
-                    if (it.isNaN() || it.isInfinite()) 0.0 else it 
+
+                val bestMatchScore = rs.getDouble("best_match_score").let {
+                    if (it.isNaN() || it.isInfinite()) 0.0 else it
                 }
-                val profileSimilarityScore = rs.getDouble("profile_similarity").let { 
-                    if (it.isNaN() || it.isInfinite()) 0.0 else it 
+                val profileSimilarity = rs.getDouble("profile_similarity").let {
+                    if (it.isNaN() || it.isInfinite()) 0.0 else it
                 }
 
-                if (attrSimilarityScore < 0.7 && profileSimilarityScore < 0.6
-                    && userProfiles.size > 10
-                ) continue
+                // Apply threshold filtering
+                if (bestMatchScore < 0.55 && userProfiles.size > 10) continue
 
-                // Parse location from string since rs.getObject returns geography type
-                val (longitude, latitude) = LocationParser.parseLocation(rs)
+                val (userLongitude, userLatitude) = LocationParser.parseLocation(rs)
+
+                // Apply mutual match boost if configured
+                val matchTypeLabel = rs.getString("match_type")
+                val boost = if (mutualMatchBoost > 0 && matchTypeLabel == "mutual") mutualMatchBoost else 0.0
+                val finalScore = (bestMatchScore * 0.7 + profileSimilarity * 0.3) + boost
 
                 userProfiles.add(
                     UserProfileWithDistance(
                         profile = UserProfile(
                             userId = foundUserId,
                             name = rs.getString("name") ?: "",
-                            latitude = latitude,
-                            longitude = longitude,
-                            attributes = emptyList(), // We'll populate this next
+                            latitude = userLatitude,
+                            longitude = userLongitude,
+                            attributes = emptyList(),
                             profileKeywordDataMap = mappedKeyWords
                         ),
                         distanceKm = rs.getDouble("distance_meters") / 1000,
-                        matchRelevancyScore = profileSimilarityScore + (attrSimilarityScore * 1.1)
+                        matchRelevancyScore = finalScore
                     )
                 )
                 userAttributes[foundUserId] = mutableListOf()
@@ -674,26 +681,71 @@ class UserProfileDaoImpl : UserProfileDao {
         }
 
         val results = fetchAttributesForProfiles(userProfiles, userAttributes)
-        log.debug("Found {} similar profiles (before filtering)", results.size)
+        log.debug("Found {} bidirectional {} matches", results.size, matchType.name.lowercase())
 
         // Filter out blocked users
         val blockedUserIds = relationshipsDao.getAllBlockedUserIds(currentUserId)
         val blockedFiltered = results.filter { it.profile.userId !in blockedUserIds }
 
-        // For semantic matching, apply activity penalty instead of filtering
-        // This allows dormant users who are perfect matches to still appear,
-        // but active users get priority
+        // Apply activity penalty
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
 
-        // Re-sort by adjusted relevancy scores
-        val sorted = penalized.sortedByDescending { it.matchRelevancyScore ?: 0.0 }
-
-        val filteredResults = sorted.take(20)
-
-        log.debug("Returning {} similar profiles (after filtering + activity penalty)", filteredResults.size)
-
         // Apply online boost and set online status
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
+    }
+
+    /**
+     * Simple data class to hold 4 values (since Kotlin doesn't have built-in Quadruple)
+     */
+    private data class Quadruple<A, B, C, D>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D
+    )
+
+    /**
+     * Finds bidirectional complementary matches (users providing what I seek + users seeking what I provide).
+     * Delegates to the generic findBidirectionalMatches with COMPLEMENTARY configuration.
+     */
+    private suspend fun findBidirectionalComplementaryMatches(
+        currentUserId: String,
+        latitude: Double?,
+        longitude: Double?,
+        radiusMeters: Double?
+    ): List<UserProfileWithDistance> {
+        return findBidirectionalMatches(
+            currentUserId = currentUserId,
+            latitude = latitude,
+            longitude = longitude,
+            radiusMeters = radiusMeters,
+            matchType = BidirectionalMatchType.COMPLEMENTARY,
+            score1MatchTypeLabel = "providing_to_me",
+            score2MatchTypeLabel = "seeking_from_me",
+            mutualMatchBoost = 0.05
+        )
+    }
+
+    /**
+     * Finds bidirectional similar matches (users with similar haves + similar needs).
+     * Delegates to the generic findBidirectionalMatches with SIMILAR configuration.
+     */
+    private suspend fun findBidirectionalSimilarMatches(
+        currentUserId: String,
+        latitude: Double?,
+        longitude: Double?,
+        radiusMeters: Double?
+    ): List<UserProfileWithDistance> {
+        return findBidirectionalMatches(
+            currentUserId = currentUserId,
+            latitude = latitude,
+            longitude = longitude,
+            radiusMeters = radiusMeters,
+            matchType = BidirectionalMatchType.SIMILAR,
+            score1MatchTypeLabel = "similar_haves",
+            score2MatchTypeLabel = "similar_needs",
+            mutualMatchBoost = 0.05
+        )
     }
 
     /**
@@ -1155,10 +1207,7 @@ class UserProfileDaoImpl : UserProfileDao {
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
     }
 
-    /**
-     * Builds a SQL filter for attribute types based on seeking/offering parameters
-     */
-    private fun buildAttributeTypeFilter(seeking: Boolean?, offering: Boolean?): String {
+    private fun buildAttributeTypeSQLFilter(seeking: Boolean?, offering: Boolean?): String {
         return when {
             seeking == true && offering == true -> ""  // Both types allowed
             seeking == true && offering == false -> "AND ua.type = 'SEEKING'"
@@ -1168,10 +1217,7 @@ class UserProfileDaoImpl : UserProfileDao {
         }
     }
 
-    /**
-     * Builds a SQL filter for semantic embeddings based on seeking/offering parameters
-     */
-    private fun buildSemanticEmbeddingFilter(seeking: Boolean?, offering: Boolean?): String {
+    private fun buildSemanticEmbeddingSQLFilter(seeking: Boolean?, offering: Boolean?): String {
         return when {
             seeking == false && offering == false -> "FALSE"  // Neither type allowed
             seeking == true && offering == false -> "usp.embedding_needs IS NOT NULL"
@@ -1236,7 +1282,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 JOIN matching_attributes ma ON ua.attribute_id = ma.attribute_key
                 WHERE 
                     (ma.word_sim > 0.45 OR ma.trgm_sim > 0.45 OR ma.exact_match > 0)
-                    ${buildAttributeTypeFilter(seeking, offering)}
+                    ${buildAttributeTypeSQLFilter(seeking, offering)}
                 GROUP BY ua.user_id
             ),
             attribute_description_scores AS (
@@ -1495,7 +1541,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_semantic_profiles usp ON u.id = usp.user_id
                 WHERE
-                    (${buildSemanticEmbeddingFilter(seeking, offering)})
+                    (${buildSemanticEmbeddingSQLFilter(seeking, offering)})
                     AND u.id != ?
                     ${
             // Pre-filter by location using spatial index for massive performance gain
