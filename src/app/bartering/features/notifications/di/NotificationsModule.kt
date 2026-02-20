@@ -24,15 +24,13 @@ val notificationsModule = module {
 
     // Email Service - Choose implementation based on configuration
     single<EmailService> {
-        val provider = System.getenv("EMAIL_PROVIDER") ?: "aws_ses"
+        val provider = System.getenv("EMAIL_PROVIDER") ?: "mailjet"
         when (provider.lowercase()) {
             /*"sendgrid" -> SendGridEmailService(
                 apiKey = System.getenv("SENDGRID_API_KEY")
                     ?: throw IllegalStateException("SENDGRID_API_KEY not set")
             )*/
-            "aws_ses" -> AwsSesEmailService(
-                region = System.getenv("AWS_REGION") ?: "us-east-1"
-            )
+            "mailjet" -> MailjetEmailService()
             else -> throw IllegalArgumentException("Unsupported email provider: $provider")
         }
     }
