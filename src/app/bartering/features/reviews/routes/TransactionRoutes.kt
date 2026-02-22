@@ -38,6 +38,25 @@ fun Route.createTransactionRoute() {
                 )
             }
 
+            // Check if there's an active transaction between these users
+            val existingTransactions = transactionDao.getTransactionsBetweenUsers(
+                request.user1Id,
+                request.user2Id
+            )
+            val hasActiveTransaction = existingTransactions.any { transaction ->
+                transaction.status == TransactionStatus.PENDING ||
+                transaction.status == TransactionStatus.DISPUTED
+            }
+
+            if (hasActiveTransaction) {
+                log.warn("Attempted to create duplicate active transaction between {} and {}", 
+                    request.user1Id, request.user2Id)
+                return@post call.respond(
+                    HttpStatusCode.Conflict,
+                    mapOf("error" to "An active transaction already exists between these users")
+                )
+            }
+
             // Create transaction
             val transactionId = transactionDao.createTransaction(
                 user1Id = request.user1Id,

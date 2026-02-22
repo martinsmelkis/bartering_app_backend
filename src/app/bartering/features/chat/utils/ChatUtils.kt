@@ -21,6 +21,7 @@ import app.bartering.features.notifications.model.PushNotification
 import app.bartering.features.notifications.service.PushNotificationService
 import app.bartering.features.notifications.utils.NotificationDataBuilder
 import app.bartering.features.reviews.dao.BarterTransactionDao
+import app.bartering.features.reviews.model.TransactionStatus
 import app.bartering.utils.CryptoUtils
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -321,13 +322,20 @@ object ChatUtils {
 
             scope.launch {
                 try {
-                    // Check if transaction already exists
+                    // Check if there's an active (non-completed) transaction between users
                     val existingTransactions = transactionDao.getTransactionsBetweenUsers(
                         senderId,
                         recipientId
                     )
 
-                    if (existingTransactions.isEmpty()) {
+                    // Only block creation if there's an active transaction (PENDING or DISPUTED)
+                    // Allow new transactions if all existing ones are completed (DONE, CANCELLED, etc.)
+                    val hasActiveTransaction = existingTransactions.any { transaction ->
+                        transaction.status == TransactionStatus.PENDING ||
+                        transaction.status == TransactionStatus.DISPUTED
+                    }
+
+                    if (!hasActiveTransaction) {
                         // Create new transaction
                         val transactionId = transactionDao.createTransaction(
                             user1Id = senderId,

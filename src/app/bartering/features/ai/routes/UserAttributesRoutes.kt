@@ -86,7 +86,6 @@ fun Route.getInterestsFromOnboardingData() {
         userProfileDao.updateSemanticProfile(userId, UserAttributeType.PROFILE)
 
         // TODO also give interest/interaction/popularity/search frequency a weight in suggestions
-        //  Translate keywords, and attributes on sending responses to clients according to profile language preference
         val parsedOfferingsSuggestions = attributesDao.parseInterestSuggestionsFromOnboardingData(
             extendedMap,
             userId = userId,
