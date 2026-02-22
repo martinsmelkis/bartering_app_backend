@@ -409,7 +409,7 @@ class UserProfileDaoImpl : UserProfileDao {
             matchType = BidirectionalMatchType.SIMILAR,
             score1MatchTypeLabel = "similar_haves",
             score2MatchTypeLabel = "similar_needs",
-            mutualMatchBoost = 0.05
+            mutualMatchBoost = 0.2
         )
         
         // Search active postings for similar offerings
@@ -468,7 +468,7 @@ class UserProfileDaoImpl : UserProfileDao {
             matchType = BidirectionalMatchType.COMPLEMENTARY,
             score1MatchTypeLabel = "providing_to_me",
             score2MatchTypeLabel = "seeking_from_me",
-            mutualMatchBoost = 0.05
+            mutualMatchBoost = 0.2
         )
         
         // Search active postings for relevant offers
@@ -645,14 +645,14 @@ class UserProfileDaoImpl : UserProfileDao {
                 }
 
                 // Apply threshold filtering
-                if (bestMatchScore < 0.55 && userProfiles.size > 10) continue
+                if (bestMatchScore < 0.5 && userProfiles.size > 10) continue
 
                 val (userLongitude, userLatitude) = LocationParser.parseLocation(rs)
 
                 // Apply mutual match boost if configured
                 val matchTypeLabel = rs.getString("match_type")
                 val boost = if (mutualMatchBoost > 0 && matchTypeLabel == "mutual") mutualMatchBoost else 0.0
-                val finalScore = (bestMatchScore * 0.5 + profileSimilarity * 0.3) + boost
+                val finalScore = (bestMatchScore * 0.65 + profileSimilarity * 0.35) + boost
 
                 userProfiles.add(
                     UserProfileWithDistance(

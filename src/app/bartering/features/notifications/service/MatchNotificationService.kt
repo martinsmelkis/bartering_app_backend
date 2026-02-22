@@ -646,7 +646,6 @@ class MatchNotificationService(
                             val distanceMeters = rs.getDouble("distance_meters")
                             val distanceKm = distanceMeters / 1000.0
 
-                            println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Nearby attr check user: ${rs.getString("user_id")} ${distanceMeters}")
                             val profile = app.bartering.features.profile.model.UserProfile(
                                 userId = rs.getString("user_id"),
                                 name = rs.getString("name") ?: "Unknown",
