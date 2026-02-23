@@ -867,72 +867,83 @@ class UserProfileDaoImpl : UserProfileDao {
                 UserAttributeType.PROFILE -> UserSemanticProfilesTable.embeddingProfile
             }
 
-            if (attributeType == UserAttributeType.SEEKING
-                || attributeType == UserAttributeType.PROVIDING
-                || attributeType == UserAttributeType.SHARING) {
+            try {
+                if (attributeType == UserAttributeType.SEEKING
+                    || attributeType == UserAttributeType.PROVIDING
+                    || attributeType == UserAttributeType.SHARING) {
 
-                // 2. Reuse the brilliant SQL-building logic from AttributesDaoImpl to create the profile vector.
-                // We pass the user's attributes and relevancy scores directly.
-                val profileVectorSql = attributesDao.buildHavesProfileVectorSql(resultMap)
+                    // 2. Reuse the brilliant SQL-building logic from AttributesDaoImpl to create the profile vector.
+                    // We pass the user's attributes and relevancy scores directly.
+                    val profileVectorSql = attributesDao.buildHavesProfileVectorSql(resultMap)
 
-                // 3. Construct the final UPSERT query to save the calculated vector.
-                val finalUpsertQuery = """
-                INSERT INTO user_semantic_profiles (user_id, ${myEmbeddingColumnType.name})
-                VALUES (
-                    ?,
-                    ($profileVectorSql) -- Execute the vector calculation as a subquery
-                )
-                ON CONFLICT (user_id)
-                DO UPDATE SET 
-                    ${myEmbeddingColumnType.name} = EXCLUDED.${myEmbeddingColumnType.name},
-                    updated_at = CURRENT_TIMESTAMP;
-            """.trimIndent()
+                    // 3. Construct the final UPSERT query to save the calculated vector.
+                    val finalUpsertQuery = """
+                    INSERT INTO user_semantic_profiles (user_id, ${myEmbeddingColumnType.name})
+                    VALUES (
+                        ?,
+                        ($profileVectorSql) -- Execute the vector calculation as a subquery
+                    )
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET 
+                        ${myEmbeddingColumnType.name} = EXCLUDED.${myEmbeddingColumnType.name},
+                        updated_at = CURRENT_TIMESTAMP;
+                """.trimIndent()
 
-                TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
-                    .also { statement ->
-                        statement[1] = userId
-                        statement.executeUpdate() }
-            } else {
-                val userProfile = UserProfilesTable
-                    .select(UserProfilesTable.profileKeywordDataMap)
-                    .where { UserProfilesTable.userId eq userId }
-                    .firstOrNull() ?: return@dbQuery
+                    TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
+                        .also { statement ->
+                            statement[1] = userId
+                            statement.executeUpdate() }
+                } else {
+                    val userProfile = UserProfilesTable
+                        .select(UserProfilesTable.profileKeywordDataMap)
+                        .where { UserProfilesTable.userId eq userId }
+                        .firstOrNull() ?: return@dbQuery
 
-                val keywords = userProfile[UserProfilesTable.profileKeywordDataMap]
-                if (keywords.isNullOrEmpty()) {
+                    val keywords = userProfile[UserProfilesTable.profileKeywordDataMap]
+                    if (keywords.isNullOrEmpty()) {
+                        UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
+                            it[embeddingProfile] = null
+                        }
+                        return@dbQuery
+                    }
+
+                    val semanticProfileHashes = UserSemanticProfilesTable
+                        .select(UserSemanticProfilesTable.hashProfile)
+                        .where { UserSemanticProfilesTable.userId eq userId }
+                        .firstOrNull()
+
+                    val hash = if (keywords.isNotEmpty()) HashUtils.sha256(keywords) else null
+                    if (hash != null && hash == (semanticProfileHashes?.get(UserSemanticProfilesTable.hashProfile) ?: "")) {
+                        log.debug("No changes to semantic profile {} for userId={}", UserSemanticProfilesTable.hashProfile, userId)
+                        return@dbQuery
+                    }
                     UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
-                        it[embeddingProfile] = null
+                        it[UserSemanticProfilesTable.hashProfile] = hash
                     }
-                    return@dbQuery
-                }
 
-                val semanticProfileHashes = UserSemanticProfilesTable
-                    .select(UserSemanticProfilesTable.hashProfile)
-                    .where { UserSemanticProfilesTable.userId eq userId }
-                    .firstOrNull()
-
-                val hash = if (keywords.isNotEmpty()) HashUtils.sha256(keywords) else null
-                if (hash != null && hash == (semanticProfileHashes?.get(UserSemanticProfilesTable.hashProfile) ?: "")) {
-                    log.debug("No changes to semantic profile {} for userId={}", UserSemanticProfilesTable.hashProfile, userId)
-                    return@dbQuery
+                    val vectorSql = attributesDao.buildProfileVectorSql(keywords)
+                    val finalUpsertQuery = """
+                            INSERT INTO user_semantic_profiles (user_id, embedding_profile)
+                            VALUES (?, ($vectorSql))
+                            ON CONFLICT (user_id) DO UPDATE SET
+                                embedding_profile = EXCLUDED.embedding_profile,
+                                updated_at = CURRENT_TIMESTAMP;
+                        """.trimIndent()
+                    TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
+                        .also { statement ->
+                            statement[1] = userId
+                            statement.executeUpdate()
+                        }
                 }
-                UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
-                    it[UserSemanticProfilesTable.hashProfile] = hash
+            } catch (e: Exception) {
+                log.warn("Failed to update semantic profile for userId={} type={}: {}",
+                    userId, attributeType, e.message)
+                // If Ollama is unavailable, log but don't crash
+                if (e.message?.contains("Connection refused") == true ||
+                    e.message?.contains("ConnectError") == true) {
+                    log.error("Ollama connection failed during semantic profile update. " +
+                            "Please ensure Ollama is running at ${AiConfig.ollamaHost}")
                 }
-
-                val vectorSql = attributesDao.buildProfileVectorSql(keywords)
-                val finalUpsertQuery = """
-                        INSERT INTO user_semantic_profiles (user_id, embedding_profile)
-                        VALUES (?, ($vectorSql))
-                        ON CONFLICT (user_id) DO UPDATE SET
-                            embedding_profile = EXCLUDED.embedding_profile,
-                            updated_at = CURRENT_TIMESTAMP;
-                    """.trimIndent()
-                TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
-                    .also { statement ->
-                        statement[1] = userId
-                        statement.executeUpdate()
-                    }
             }
         }
 

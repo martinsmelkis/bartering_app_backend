@@ -55,6 +55,7 @@ import app.bartering.config.configureRateLimiting
 import app.bartering.features.migration.dao.MigrationSessionDao
 import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.tests.TestRandom100UsersGenAndSimilarity
+import app.bartering.features.federation.di.federationModule
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
@@ -153,7 +154,8 @@ fun Application.module(testing: Boolean = false) {
             postingsModule,
             notificationsModule,
             reviewsModule,
-            migrationModule
+            migrationModule,
+            federationModule
         )
     }
 

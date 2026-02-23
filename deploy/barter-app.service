@@ -1,0 +1,29 @@
+[Unit]
+Description=Barter App Docker Compose Service
+Documentation=https://docs.docker.com/compose/
+Requires=docker.service
+After=docker.service network.target nginx.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Working directory where docker-compose.yml is located
+WorkingDirectory=/opt/barterappbackend/deploy/
+
+# Environment variables
+Environment="OLLAMA_HOST=http://localhost:11434"
+Environment="OLLAMA_EMBED_MODEL=mxbai-embed-large"
+Environment="ENVIRONMENT=production"
+
+# The startup script
+ExecStart=/opt/barterappbackend/deploy/start-barter-app.sh
+
+# For stopping - stop all containers
+ExecStop=/usr/bin/docker compose down
+
+# Reload - just restart containers
+ExecReload=/usr/bin/docker compose restart
+
+[Install]
+WantedBy=multi-user.target

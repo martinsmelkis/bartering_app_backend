@@ -18,6 +18,8 @@ import app.bartering.features.relationships.routes.relationshipsRoutes
 import app.bartering.features.notifications.routes.notificationPreferencesRoutes
 import app.bartering.features.notifications.routes.pushNotificationRoutes
 import app.bartering.features.reviews.routes.*
+import app.bartering.features.federation.routes.federationRoutes
+import app.bartering.features.federation.routes.federationAdminRoutes
 import io.ktor.server.routing.*
 import org.koin.java.KoinJavaComponent.inject
 
@@ -36,6 +38,8 @@ fun Application.routes() {
     pushNotificationRoutes()
     healthCheckRoutes()
     routing {
+        federationRoutes()
+        federationAdminRoutes()
         relationshipsRoutes()
         postingsRoutes()
         postingImageUploadRoutes()

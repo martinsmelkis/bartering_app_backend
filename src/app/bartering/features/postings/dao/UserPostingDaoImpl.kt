@@ -662,8 +662,14 @@ class UserPostingDaoImpl : UserPostingDao {
             log.info("updatePostingEmbedding: Successfully generated embedding for postingId={} (rows updated: {})", postingId, rowsUpdated)
             true
         } catch (e: Exception) {
-            log.error("updatePostingEmbedding: Error generating embedding for postingId={}", postingId, e)
-            e.printStackTrace()
+            log.error("updatePostingEmbedding: Error generating embedding for postingId={}: {}", postingId, e.message)
+            // Check for Ollama connection errors specifically
+            if (e.message?.contains("Connection refused") == true ||
+                e.message?.contains("ConnectError") == true) {
+                log.error("Ollama connection failed. Please ensure Ollama is running at ${AiConfig.ollamaHost}")
+            } else {
+                e.printStackTrace()
+            }
             false
         }
     }

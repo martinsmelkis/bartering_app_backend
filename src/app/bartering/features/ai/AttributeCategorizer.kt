@@ -30,26 +30,36 @@ class AttributeCategorizer {
 
             log.info("Found {} categories with missing embeddings. Populating now", categoriesToUpdate.size)
 
-            val updateSql = """
-                UPDATE categories
-                SET embedding = ai.ollama_embed(
-                    '${AiConfig.embedModel}',
-                    ?,
-                    host => '${AiConfig.ollamaHost}'
-                )
-                WHERE id = ?
-            """.trimIndent()
+            try {
+                val updateSql = """
+                    UPDATE categories
+                    SET embedding = ai.ollama_embed(
+                        '${AiConfig.embedModel}',
+                        ?,
+                        host => '${AiConfig.ollamaHost}'
+                    )
+                    WHERE id = ?
+                """.trimIndent()
 
-            TransactionManager.current().connection.prepareStatement(updateSql, false)
-                .also { statement ->
-                    for ((id, description) in categoriesToUpdate) {
-                        statement.set(1, description)
-                        statement.set(2, id)
-                        statement.addBatch()
+                TransactionManager.current().connection.prepareStatement(updateSql, false)
+                    .also { statement ->
+                        for ((id, description) in categoriesToUpdate) {
+                            statement.set(1, description)
+                            statement.set(2, id)
+                            statement.addBatch()
+                        }
+                        statement.executeBatch()
                     }
-                    statement.executeBatch()
+                log.info("Finished populating category embeddings")
+            } catch (e: Exception) {
+                log.error("Failed to populate category embeddings: {}", e.message)
+                if (e.message?.contains("Connection refused") == true ||
+                    e.message?.contains("ConnectError") == true) {
+                    log.error("Ollama connection failed during category initialization. " +
+                            "Please ensure Ollama is running at ${AiConfig.ollamaHost}")
                 }
-            log.info("Finished populating category embeddings")
+                // Continue without embeddings - categories still exist
+            }
         }
     }
 
@@ -74,14 +84,20 @@ class AttributeCategorizer {
 
             var bestMatch: Pair<Int, String>? = null
 
-            TransactionManager.current().connection.prepareStatement(findBestCategorySql, false).also { statement ->
-                statement[1] = newAttributeText
-                statement.executeQuery().use { rs ->
-                    if (rs.next()) {
-                        log.debug("bestCategoryMatchResponse for '{}': {}", newAttributeText, rs.getString("category_key"))
-                        bestMatch = rs.getInt("id") to rs.getString("category_key")
+            try {
+                TransactionManager.current().connection.prepareStatement(findBestCategorySql, false).also { statement ->
+                    statement[1] = newAttributeText
+                    statement.executeQuery().use { rs ->
+                        if (rs.next()) {
+                            log.debug("bestCategoryMatchResponse for '{}': {}", newAttributeText, rs.getString("category_key"))
+                            bestMatch = rs.getInt("id") to rs.getString("category_key")
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                log.warn("Failed to find best category using semantic search for '{}': {}", 
+                    newAttributeText.take(50), e.message)
+                // Fall through to default category
             }
 
             val (categoryId, categoryKey) = bestMatch ?: findDefaultCategory()

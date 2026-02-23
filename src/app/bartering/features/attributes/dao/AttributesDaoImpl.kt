@@ -53,33 +53,50 @@ class AttributesDaoImpl : AttributesDao {
 
         // For each key, run the same UPDATE logic you use in createAttributeWithCategories
         dbQuery {
+            var successCount = 0
+            var failureCount = 0
+            
             for (key in keysWithNullEmbeddings) {
-                // Validate key length
-                if (key.length > 1000) {
-                    log.warn("Skipping key with excessive length: {}...", key.take(50))
-                    continue
-                }
-                
-                // We use the key as the custom text for embedding generation
-                val embeddingSql = """
-                    UPDATE attributes
-                    SET embedding = ai.ollama_embed(
-                        '${AiConfig.embedModel}',
-                        ?,
-                        host => '${AiConfig.ollamaHost}'
-                    )
-                    WHERE attribute_key = ?
-                """.trimIndent()
-
-                TransactionManager.current().connection.prepareStatement(embeddingSql, false)
-                    .also { statement ->
-                        statement[1] = key
-                        statement[2] = key
-                        statement.executeUpdate()
+                try {
+                    // Validate key length
+                    if (key.length > 1000) {
+                        log.warn("Skipping key with excessive length: {}...", key.take(50))
+                        continue
                     }
+                    
+                    // We use the key as the custom text for embedding generation
+                    val embeddingSql = """
+                        UPDATE attributes
+                        SET embedding = ai.ollama_embed(
+                            '${AiConfig.embedModel}',
+                            ?,
+                            host => '${AiConfig.ollamaHost}'
+                        )
+                        WHERE attribute_key = ?
+                    """.trimIndent()
+
+                    TransactionManager.current().connection.prepareStatement(embeddingSql, false)
+                        .also { statement ->
+                            statement[1] = key
+                            statement[2] = key
+                            statement.executeUpdate()
+                        }
+                    successCount++
+                } catch (e: Exception) {
+                    failureCount++
+                    log.warn("Failed to generate embedding for key '{}': {}", key.take(50), e.message)
+                    // If Ollama is unavailable, stop processing to avoid spamming logs
+                    if (e.message?.contains("Connection refused") == true ||
+                        e.message?.contains("ConnectError") == true) {
+                        log.error("Ollama connection failed. Stopping embedding population. " +
+                                "Please ensure Ollama is running at ${AiConfig.ollamaHost}")
+                        break
+                    }
+                }
             }
+            log.info("Embedding population complete: {} succeeded, {} failed out of {} total",
+                successCount, failureCount, keysWithNullEmbeddings.size)
         }
-        log.info("Finished populating embeddings for {} attributes", keysWithNullEmbeddings.size)
     }
 
     suspend fun createAttributeWithCategories(
@@ -105,23 +122,29 @@ class AttributesDaoImpl : AttributesDao {
                 return@dbQuery null
             }
 
-            val embeddingSql = """
-                UPDATE attributes
-                SET embedding = ai.ollama_embed(
-                    '${AiConfig.embedModel}',
-                    ?,
-                    host => '${AiConfig.ollamaHost}'
-                )
-                WHERE id = ?
-            """.trimIndent()
+            try {
+                val embeddingSql = """
+                    UPDATE attributes
+                    SET embedding = ai.ollama_embed(
+                        '${AiConfig.embedModel}',
+                        ?,
+                        host => '${AiConfig.ollamaHost}'
+                    )
+                    WHERE id = ?
+                """.trimIndent()
 
-            // Use parameterized query for safety
-            TransactionManager.current().connection.prepareStatement(embeddingSql, false)
-                .also { statement ->
-                    statement[1] = customUserAttrText
-                    statement[2] = newAttributeId
-                    statement.executeUpdate()
-                }
+                // Use parameterized query for safety
+                TransactionManager.current().connection.prepareStatement(embeddingSql, false)
+                    .also { statement ->
+                        statement[1] = customUserAttrText
+                        statement[2] = newAttributeId
+                        statement.executeUpdate()
+                    }
+            } catch (e: Exception) {
+                log.warn("Failed to generate embedding for new attribute '{}': {}", 
+                    customUserAttrText.take(50), e.message)
+                // Continue without embedding - the attribute still exists
+            }
 
             // Step 3: Link the new attribute to its categories.
             categoryLinks.forEach { link ->

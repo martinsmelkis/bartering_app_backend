@@ -1,9 +1,5 @@
 package app.bartering.features.federation.dao
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.federation.db.FederatedServersTable
 import app.bartering.features.federation.db.FederationAuditLogTable
@@ -11,8 +7,6 @@ import app.bartering.features.federation.db.LocalServerIdentityTable
 import app.bartering.features.federation.model.*
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.json.jsonb
-import org.jetbrains.exposed.sql.javatime.timestamp
 import java.time.Instant
 import java.util.UUID
 

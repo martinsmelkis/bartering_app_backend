@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.exceptions.ExposedSQLException
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.or
 import org.koin.java.KoinJavaComponent.inject
@@ -134,6 +135,16 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 it[lastUsedAt] = Instant.now()
             }
             updated > 0
+        } catch (e: ExposedSQLException) {
+            // Handle concurrent update - this is a "best effort" operation
+            // If another transaction updated the same row, we can safely ignore
+            if (e.cause?.message?.contains("could not serialize access due to concurrent update") == true) {
+                log.debug("Concurrent update detected for device {} of user {}, skipping", deviceId, userId)
+                true // Consider it success - the other transaction updated it
+            } else {
+                log.error("Failed to update last used for device {} of user {}", deviceId, userId, e)
+                false
+            }
         } catch (e: Exception) {
             log.error("Failed to update last used for device {} of user {}", deviceId, userId, e)
             false
