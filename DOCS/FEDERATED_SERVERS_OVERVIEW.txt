@@ -1,0 +1,330 @@
+### 1.
+.env variable
+
+ADMIN_USER_IDS=MainAdmin
+
+### 2.
+local_server_identity Table must be populated first
+
+FederationServiceImpl.initializeLocalServer
+
+### 3. REST API call:
+/api/v1/federation/admin/initialize
+
+ADMIN_USER_ID="your-admin-user-id-here"
+TIMESTAMP=$(date +%s)000
+
+# Create signature (you'll need your private key to sign)
+# For testing, you can temporarily modify verifyAdminAccess to skip signature check
+# Or use a simple signature if you have the signing logic
+
+curl -X POST http://localhost:8081/api/v1/federation/admin/initialize \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: MainAdmin" \
+  -H "X-Timestamp:$(date +%s)000" \
+  -H "X-Signature: placeholder-signature-for-now" \
+  -d '{
+    "serverUrl": "https://barter1.yourdomain.com",
+    "serverName": "Barter Server Alpha",
+    "adminContact": "admin@yourdomain.com",
+    "description": "Primary barter exchange server",
+    "locationHint": "US-East"
+  }'
+  
+Expected response:
+
+{
+  "success": true,
+  "serverId": "abc123-...",
+  "serverUrl": "https://barter1.yourdomain.com",
+  "serverName": "Barter Server Alpha",
+  "message": "Server identity initialized successfully"
+}
+
+### 4. List federated servers:
+
+curl -X GET http://localhost:8081/api/v1/federation/admin/servers \
+  -H "X-User-ID: ${ADMIN_USER_ID}" \
+  -H "X-Timestamp: ${TIMESTAMP}" \
+  -H "X-Signature: placeholder"
+  
+### 5. 
+
+Ran tool
+
+## Local Testing
+
+For testing federation locally with multiple servers, see:
+**DOCS/FEDERATION_LOCAL_TESTING.md**
+
+Quick start:
+```bash
+docker-compose -f docker-compose.federation.yml up -d
+```
+
+This spins up two servers (ports 8081 and 8082) with separate databases for full cross-server testing.
+
+Ran tool
+
+  ## Federation Handshake Workflow
+
+The handshake is a **bidirectional** process where both servers exchange public keys and establish trust. Here's the complete flow:
+
+---
+
+### Step 1: Prerequisites
+
+Both servers must be initialized with their own identity:
+
+```bash
+# Server A - Initialize
+curl -X POST https://barter1.example.com/api/v1/federation/admin/initialize \
+  -H "X-User-ID: admin-id" -H "X-Timestamp: 1704902400000" -H "X-Signature: sig" \
+  -d '{"serverUrl": "https://barter1.example.com", "serverName": "Server A"}'
+
+# Server B - Initialize
+curl -X POST https://barter2.example.com/api/v1/federation/admin/initialize \
+  -H "X-User-ID: admin-id" -H "X-Timestamp: 1704902400000" -H "X-Signature: sig" \
+  -d '{"serverUrl": "https://barter2.example.com", "serverName": "Server B"}'
+```
+
+---
+
+### Step 2: Handshake Flow (Bidirectional)
+
+Each server must initiate a handshake to the other. The process is **not automatic** - admins must trigger it.
+
+#### Step 2A: Server A initiates handshake to Server B
+
+```bash
+curl -X POST https://barter1.example.com/api/v1/federation/admin/handshake \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: admin-user-id" \
+  -H "X-Timestamp: $(date +%s)000" \
+  -H "X-Signature: admin-signature" \
+  -d '{
+    "targetServerUrl": "https://barter2.example.com",
+    "proposedScopes": {
+      "users": true,
+      "postings": true,
+      "chat": true,
+      "geolocation": true,
+      "attributes": true
+    }
+  }'
+```
+
+**What happens internally:**
+1. Server A loads its private key from `local_server_identity`
+2. Creates a `FederationHandshakeRequest` with its `serverId`, `serverUrl`, `publicKey`, and proposed scopes
+3. Signs the request using RSA private key
+4. Sends POST request to `https://barter2.example.com/federation/v1/handshake`
+
+---
+
+#### Step 2B: Server B receives and accepts handshake
+
+Server B's `/federation/v1/handshake` endpoint:
+1. Validates the request signature using Server A's public key
+2. Verifies cryptographic proof (prevents spoofing)
+3. Accepts with modified scopes (geolocation defaults to `false` for safety)
+4. Saves Server A to `federated_servers` table with `trustLevel: PENDING`
+5. Returns signed `FederationHandshakeResponse`
+
+**Response from Server A's admin endpoint:**
+```json
+{
+  "accepted": true,
+  "serverId": "server-b-uuid",
+  "serverUrl": "https://barter2.example.com",
+  "serverName": "Server B",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMIIB...",
+  "protocolVersion": "1.0",
+  "acceptedScopes": {
+    "users": true,
+    "postings": true,
+    "chat": true,
+    "geolocation": false,
+    "attributes": true
+  },
+  "agreementHash": "sha256-of-agreement",
+  "timestamp": 1704902400000,
+  "signature": "base64-signature"
+}
+```
+
+---
+
+#### Step 2C: Server B initiates handshake to Server A
+
+**Critical:** Server B must also initiate a handshake back to Server A!
+
+```bash
+curl -X POST https://barter2.example.com/api/v1/federation/admin/handshake \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: admin-user-id" \
+  -H "X-Timestamp: $(date +%s)000" \
+  -H "X-Signature: admin-signature" \
+  -d '{
+    "targetServerUrl": "https://barter1.example.com",
+    "proposedScopes": {
+      "users": true,
+      "postings": true,
+      "chat": true,
+      "geolocation": true,
+      "attributes": true
+    }
+  }'
+```
+
+---
+
+### Step 3: Trust Establishment
+
+After both handshakes complete, **admins must manually upgrade trust** from `PENDING` to `FULL`:
+
+```bash
+# On Server A - Trust Server B
+curl -X POST https://barter1.example.com/api/v1/federation/admin/servers/server-b-uuid/trust \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: admin-user-id" \
+  -H "X-Timestamp: $(date +%s)000" \
+  -H "X-Signature: admin-signature" \
+  -d '{
+    "trustLevel": "FULL"
+  }'
+
+# On Server B - Trust Server A
+curl -X POST https://barter2.example.com/api/v1/federation/admin/servers/server-a-uuid/trust \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: admin-user-id" \
+  -H "X-Timestamp: $(date +%s)000" \
+  -H "X-Signature: admin-signature" \
+  -d '{
+    "trustLevel": "FULL"
+  }'
+```
+
+**Trust Levels:**
+- `PENDING` - Handshake received, awaiting admin approval
+- `PARTIAL` - Limited access (respects scopes)
+- `FULL` - Full access to all agreed scopes
+- `BLOCKED` - Rejected, no access allowed
+
+---
+
+### Step 4: Verify Federation
+
+List federated servers on both ends:
+
+```bash
+# Server A
+curl https://barter1.example.com/api/v1/federation/admin/servers \
+  -H "X-User-ID: admin-id" -H "X-Timestamp: ..." -H "X-Signature: ..."
+
+# Response should show Server B with trustLevel: "FULL"
+```
+
+---
+
+### Step 5: Test Cross-Server Queries
+
+Now you can query users from the other server:
+
+```bash
+# Query Server B's users from Server A
+curl "https://barter1.example.com/federation/v1/users/nearby?serverId=server-b-uuid&lat=40.7128&lon=-74.006&radius=50&timestamp=...&signature=..."
+
+# Search Server B's postings from Server A
+curl "https://barter1.example.com/federation/v1/postings/search?serverId=server-b-uuid&q=bicycle&limit=20&timestamp=...&signature=..."
+```
+
+---
+
+## Summary Diagram
+
+```
+┌─────────────┐                          ┌─────────────┐
+│  Server A   │                          │  Server B   │
+│ (barter1)   │                          │ (barter2)   │
+└──────┬──────┘                          └──────┬──────┘
+       │                                        │
+       │  Step 1: Initialize (create keys)      │
+       │ ─────────────────────────────────────► │
+       │                                        │
+       │  Step 2A: Admin initiates handshake    │
+       │  POST /api/v1/federation/admin/        │
+       │      handshake                         │
+       │ ─────────────────────────────────────► │
+       │                                        │
+       │         Step 2B: Receive handshake     │
+       │         POST /federation/v1/handshake  │
+       │         (validates signature)          │
+       │ ◄──────────────────────────────────────│
+       │         Returns signed response        │
+       │                                        │
+       │  Step 2C: Server B initiates back      │
+       │ ◄──────────────────────────────────────│
+       │                                        │
+       │  Step 3: Set trustLevel = FULL         │
+       │  POST /api/v1/federation/admin/servers/│
+       │      {id}/trust                        │
+       │ ─────────────────────────────────────► │
+       │         (both directions)              │
+       │                                        │
+       │  ✅ FEDERATION ESTABLISHED             │
+       │                                        │
+       │  Query: GET /federation/v1/users/nearby│
+       │ ─────────────────────────────────────► │
+       │ ◄──────────────────────────────────────│
+       │  Response: Users from Server B         │
+       │                                        │
+```
+
+---
+
+## Key Implementation Details
+
+### Models Exchanged
+
+**FederationHandshakeRequest** (Server A → Server B):
+```kotlin
+data class FederationHandshakeRequest(
+    val serverId: String,        // UUID of requesting server
+    val serverUrl: String,         // Public URL
+    val serverName: String,      // Human-readable name
+    val publicKey: String,       // RSA public key (PEM format)
+    val protocolVersion: String, // "1.0"
+    val proposedScopes: FederationScope,  // What we want access to
+    val timestamp: Long,         // Milliseconds
+    val signature: String        // RSA signature of above fields
+)
+```
+
+**FederationHandshakeResponse** (Server B → Server A):
+```kotlin
+data class FederationHandshakeResponse(
+    val accepted: Boolean,       // Did we accept?
+    val serverId: String,          // Our server ID
+    val serverUrl: String,
+    val serverName: String,
+    val publicKey: String,
+    val protocolVersion: String,
+    val acceptedScopes: FederationScope,  // What we agreed to share
+    val agreementHash: String,     // SHA-256 of agreement terms
+    val timestamp: Long,
+    val signature: String,         // Signed response
+    val reason: String? = null    // If rejected, why?
+)
+```
+
+### Security Features
+
+1. **Mutual TLS-like trust**: Both servers must exchange public keys
+2. **Cryptographic signatures**: Every request is signed with RSA private keys
+3. **Replay attack prevention**: 5-minute timestamp window
+4. **Manual trust approval**: Admins must explicitly upgrade from `PENDING`
+5. **Scope-based permissions**: Granular control over what data is shared
+
+The federation is now ready for cross-server queries!
+

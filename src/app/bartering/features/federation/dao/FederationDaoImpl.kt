@@ -91,27 +91,55 @@ class FederationDaoImpl : FederationDao {
     }
 
     override suspend fun createFederatedServer(server: FederatedServer): FederatedServer = dbQuery {
-        FederatedServersTable.insert {
-            it[serverId] = server.serverId
-            it[serverUrl] = server.serverUrl
-            it[serverName] = server.serverName
-            it[publicKey] = server.publicKey
-            it[trustLevel] = server.trustLevel.name
-            it[scopePermissions] = mapOf(
-                "users" to server.scopePermissions.users,
-                "postings" to server.scopePermissions.postings,
-                "chat" to server.scopePermissions.chat,
-                "geolocation" to server.scopePermissions.geolocation,
-                "attributes" to server.scopePermissions.attributes
-            )
-            it[federationAgreementHash] = server.federationAgreementHash
-            it[lastSyncTimestamp] = server.lastSyncTimestamp
-            it[serverMetadata] = server.serverMetadata
-            it[protocolVersion] = server.protocolVersion
-            it[isActive] = server.isActive
-            it[dataRetentionDays] = server.dataRetentionDays
-            it[createdAt] = server.createdAt
-            it[updatedAt] = server.updatedAt
+        // Check if server already exists - if so, update instead of insert
+        val existing = FederatedServersTable.selectAll()
+            .where { FederatedServersTable.serverId eq server.serverId }
+            .firstOrNull()
+        
+        if (existing != null) {
+            // Update existing record
+            FederatedServersTable.update({ FederatedServersTable.serverId eq server.serverId }) {
+                it[serverUrl] = server.serverUrl
+                it[serverName] = server.serverName
+                it[publicKey] = server.publicKey
+                it[trustLevel] = server.trustLevel.name
+                it[scopePermissions] = mapOf(
+                    "users" to server.scopePermissions.users,
+                    "postings" to server.scopePermissions.postings,
+                    "chat" to server.scopePermissions.chat,
+                    "geolocation" to server.scopePermissions.geolocation,
+                    "attributes" to server.scopePermissions.attributes
+                )
+                it[federationAgreementHash] = server.federationAgreementHash
+                it[protocolVersion] = server.protocolVersion
+                it[isActive] = server.isActive
+                it[dataRetentionDays] = server.dataRetentionDays
+                it[updatedAt] = server.updatedAt
+            }
+        } else {
+            // Insert new record
+            FederatedServersTable.insert {
+                it[serverId] = server.serverId
+                it[serverUrl] = server.serverUrl
+                it[serverName] = server.serverName
+                it[publicKey] = server.publicKey
+                it[trustLevel] = server.trustLevel.name
+                it[scopePermissions] = mapOf(
+                    "users" to server.scopePermissions.users,
+                    "postings" to server.scopePermissions.postings,
+                    "chat" to server.scopePermissions.chat,
+                    "geolocation" to server.scopePermissions.geolocation,
+                    "attributes" to server.scopePermissions.attributes
+                )
+                it[federationAgreementHash] = server.federationAgreementHash
+                it[lastSyncTimestamp] = server.lastSyncTimestamp
+                it[serverMetadata] = server.serverMetadata
+                it[protocolVersion] = server.protocolVersion
+                it[isActive] = server.isActive
+                it[dataRetentionDays] = server.dataRetentionDays
+                it[createdAt] = server.createdAt
+                it[updatedAt] = server.updatedAt
+            }
         }
         server
     }
@@ -188,7 +216,22 @@ class FederationDaoImpl : FederationDao {
         remoteIp: String?
     ): FederationAuditLog = dbQuery {
         val id = UUID.randomUUID().toString()
-        val detailsMap: Map<String, Any>? = details?.mapValues { it.value ?: "" }
+        // Convert Map to JsonElement for proper serialization
+        val detailsJson: kotlinx.serialization.json.JsonElement? = details?.let { detailsMap ->
+            val json = kotlinx.serialization.json.Json { }
+            // Build JSON object from map
+            kotlinx.serialization.json.JsonObject(
+                detailsMap.mapValues { (_, value) ->
+                    when (value) {
+                        is String -> kotlinx.serialization.json.JsonPrimitive(value)
+                        is Number -> kotlinx.serialization.json.JsonPrimitive(value)
+                        is Boolean -> kotlinx.serialization.json.JsonPrimitive(value)
+                        null -> kotlinx.serialization.json.JsonNull
+                        else -> kotlinx.serialization.json.JsonPrimitive(value.toString())
+                    }
+                }
+            )
+        }
         FederationAuditLogTable.insert {
             it[this.id] = id
             it[this.eventType] = eventType.name
@@ -197,7 +240,7 @@ class FederationDaoImpl : FederationDao {
             it[remoteUserId] = null
             it[this.action] = action
             it[this.outcome] = outcome.name
-            it[this.details] = detailsMap
+            it[this.details] = detailsJson
             it[this.errorMessage] = errorMessage
             it[this.remoteIp] = remoteIp
             it[this.durationMs] = durationMs
@@ -210,7 +253,7 @@ class FederationDaoImpl : FederationDao {
             remoteUserId = null,
             action = action,
             outcome = outcome,
-            details = detailsMap,
+            details = detailsJson,
             errorMessage = errorMessage,
             remoteIp = remoteIp,
             durationMs = durationMs,

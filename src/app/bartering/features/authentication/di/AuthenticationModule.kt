@@ -1,9 +1,10 @@
 package app.bartering.features.authentication.di
 
-import app.bartering.features.profile.dao.UserProfileDaoImpl
-import org.koin.dsl.bind
+import app.bartering.features.authentication.dao.AuthenticationDaoImpl
+import app.bartering.features.authentication.mapper.AuthenticationMapperImpl
 import org.koin.dsl.module
 
 val authenticationModule = module {
-    single { UserProfileDaoImpl() } bind UserProfileDaoImpl::class
+    single { AuthenticationMapperImpl() }
+    single { AuthenticationDaoImpl(AuthenticationMapperImpl()) }
 }

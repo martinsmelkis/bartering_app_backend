@@ -37,7 +37,7 @@ data class FederationHandshakeResponse(
     val agreementHash: String,
     val timestamp: Long,
     val signature: String,
-    val reason: String? // If rejected, explanation why
+    val reason: String? = null // If rejected, explanation why
 )
 
 /**

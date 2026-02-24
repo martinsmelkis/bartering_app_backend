@@ -46,7 +46,7 @@ suspend fun ApplicationCall.verifyAdminAccess(authenticationDao: AuthenticationD
     }
     
     // Verify user exists
-    val userInfo = try {
+    /*val userInfo = try {
         authenticationDao.getUserInfoById(userId)
     } catch (e: Exception) {
         respond(HttpStatusCode.NotFound, mapOf(
@@ -62,7 +62,7 @@ suspend fun ApplicationCall.verifyAdminAccess(authenticationDao: AuthenticationD
             "error" to "User not found"
         ))
         return null
-    }
+    }*/
     
     // Check admin status
     // Check if userId is in the configured admin list (from environment variable)

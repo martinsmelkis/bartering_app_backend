@@ -148,11 +148,14 @@ CREATE INDEX IF NOT EXISTS idx_federated_postings_last_synced
 
 -- Audit trail of all federation activities for security and compliance.
 CREATE TABLE IF NOT EXISTS federation_audit_log (
-    id SERIAL PRIMARY KEY,
+    id VARCHAR(36) PRIMARY KEY,  -- UUID string (matches Kotlin code)
     event_type VARCHAR(50) NOT NULL,
     server_id VARCHAR(36), -- NULL for local events
     action TEXT NOT NULL,
     outcome VARCHAR(20) NOT NULL,
+    remote_ip VARCHAR(128),  -- Made nullable (was NOT NULL)
+    local_user_id VARCHAR(255),  -- Made nullable (was NOT NULL)
+    remote_user_id VARCHAR(255),  -- Made nullable (was NOT NULL)
     details JSONB, -- Flexible storage for event-specific data
     error_message TEXT,
     duration_ms BIGINT, -- Performance tracking

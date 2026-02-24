@@ -99,6 +99,7 @@ services:
       - MAILJET_API_KEY=""
       - MAILJET_API_SECRET=""
       - PUSH_PROVIDER=firebase
+      - ADMIN_USER_IDS=MainAdmin
     depends_on:
       postgres:
         condition: service_healthy

@@ -4,6 +4,7 @@ import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.javatime.timestamp
 import org.jetbrains.exposed.sql.json.jsonb
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import java.time.Instant
 
 /**
@@ -35,11 +36,12 @@ object FederationAuditLogTable : Table("federation_audit_log") {
     /** 
      * Additional details about the event stored as JSON.
      * May include: request parameters, error messages, data sizes, etc.
+     * Using JsonElement instead of Any for proper serialization.
      */
     val details = jsonb(
         name = "details",
         serialize = { Json.encodeToString(it) },
-        deserialize = { Json.decodeFromString<Map<String, Any?>>(it) }
+        deserialize = { Json.decodeFromString<JsonElement>(it) }
     ).nullable()
     
     /** Error message if outcome was FAILURE */
@@ -51,7 +53,7 @@ object FederationAuditLogTable : Table("federation_audit_log") {
     /** Duration of the operation in milliseconds */
     val durationMs = long("duration_ms").nullable()
     
-    val timestamp = timestamp("timestamp").default(Instant.now())
+    val timestamp = timestamp("created_at").default(Instant.now())
     
     override val primaryKey = PrimaryKey(id)
 }

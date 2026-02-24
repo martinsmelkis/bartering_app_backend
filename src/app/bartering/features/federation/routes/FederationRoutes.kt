@@ -10,6 +10,7 @@ import app.bartering.features.federation.middleware.verifyAdminAccess
 import app.bartering.features.federation.model.*
 import app.bartering.features.federation.service.FederationService
 import app.bartering.features.authentication.dao.AuthenticationDao
+import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.profile.cache.UserActivityCache
 import org.koin.ktor.ext.inject
 
@@ -94,12 +95,8 @@ fun Route.federationRoutes() {
                     )
                 )
 
-                call.respond(HttpStatusCode.OK, FederationApiResponse(
-                    success = true,
-                    data = response,
-                    error = null,
-                    timestamp = System.currentTimeMillis()
-                ))
+                // Return response directly (not wrapped) for server-to-server communication
+                call.respond(HttpStatusCode.OK, response)
 
             } catch (e: SecurityException) {
                 call.respond(HttpStatusCode.Unauthorized, FederationApiResponse(
@@ -621,7 +618,8 @@ fun Route.federationRoutes() {
 fun Route.federationAdminRoutes() {
 
     val federationService by inject<FederationService>()
-    val authenticationDao by inject<AuthenticationDao>()
+    val federationDao by inject<FederationDao>()
+    val authenticationDao by inject<AuthenticationDaoImpl>()
 
     route("/api/v1/federation/admin") {
 
@@ -806,6 +804,137 @@ fun Route.federationAdminRoutes() {
                 call.respond(HttpStatusCode.InternalServerError, InitiateHandshakeResponse(
                     success = false,
                     error = "Failed to initiate handshake: ${e.message}"
+                ))
+            }
+        }
+
+        /**
+         * GET /api/v1/federation/admin/proxy/users/nearby
+         * Admin endpoint to test cross-server user search with proper signature.
+         * Generates signature and proxies request to target federated server.
+         */
+        get("/proxy/users/nearby") {
+            try {
+                val targetServerId = call.request.queryParameters["targetServerId"] ?: run {
+                    call.respond(HttpStatusCode.BadRequest, mapOf(
+                        "success" to false,
+                        "error" to "Missing targetServerId parameter"
+                    ))
+                    return@get
+                }
+                val lat = call.request.queryParameters["lat"]?.toDoubleOrNull() ?: 56.95
+                val lon = call.request.queryParameters["lon"]?.toDoubleOrNull() ?: 24.10
+                val radius = call.request.queryParameters["radius"]?.toDoubleOrNull() ?: 50000.0
+                
+                // Get target server info
+                val targetServer = federationDao.getFederatedServer(targetServerId) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf(
+                        "success" to false,
+                        "error" to "Target server not found"
+                    ))
+                    return@get
+                }
+                
+                // Get our local identity
+                val localIdentity = federationDao.getLocalServerIdentity() ?: run {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf(
+                        "success" to false,
+                        "error" to "Local server not initialized"
+                    ))
+                    return@get
+                }
+                
+                // Generate timestamp and signature
+                val timestamp = System.currentTimeMillis()
+                val signatureData = "${localIdentity.serverId}|$lat|$lon|$radius|$timestamp"
+                val signature = federationService.signWithLocalKey(signatureData)
+                
+                // Build target URL
+                val targetUrl = "${targetServer.serverUrl}/federation/v1/users/nearby" +
+                    "?serverId=${localIdentity.serverId}" +
+                    "&lat=$lat" +
+                    "&lon=$lon" +
+                    "&radius=$radius" +
+                    "&timestamp=$timestamp" +
+                    "&signature=$signature"
+                
+                call.respond(HttpStatusCode.OK, mapOf(
+                    "success" to true,
+                    "targetUrl" to targetUrl,
+                    "signatureData" to signatureData,
+                    "signature" to signature,
+                    "localServerId" to localIdentity.serverId,
+                    "targetServerId" to targetServerId
+                ))
+                
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, mapOf(
+                    "success" to false,
+                    "error" to "Failed to generate proxy URL: ${e.message}"
+                ))
+            }
+        }
+
+        /**
+         * GET /api/v1/federation/admin/proxy/postings/search
+         * Admin endpoint to test cross-server posting search with proper signature.
+         */
+        get("/proxy/postings/search") {
+            try {
+                val targetServerId = call.request.queryParameters["targetServerId"] ?: run {
+                    call.respond(HttpStatusCode.BadRequest, mapOf(
+                        "success" to false,
+                        "error" to "Missing targetServerId parameter"
+                    ))
+                    return@get
+                }
+                val query = call.request.queryParameters["q"] ?: "test"
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
+                
+                // Get target server info
+                val targetServer = federationDao.getFederatedServer(targetServerId) ?: run {
+                    call.respond(HttpStatusCode.NotFound, mapOf(
+                        "success" to false,
+                        "error" to "Target server not found"
+                    ))
+                    return@get
+                }
+                
+                // Get our local identity
+                val localIdentity = federationDao.getLocalServerIdentity() ?: run {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf(
+                        "success" to false,
+                        "error" to "Local server not initialized"
+                    ))
+                    return@get
+                }
+                
+                // Generate timestamp and signature
+                val timestamp = System.currentTimeMillis()
+                val signatureData = "${localIdentity.serverId}|$query|$limit|$timestamp"
+                val signature = federationService.signWithLocalKey(signatureData)
+                
+                // Build target URL
+                val targetUrl = "${targetServer.serverUrl}/federation/v1/postings/search" +
+                    "?serverId=${localIdentity.serverId}" +
+                    "&q=$query" +
+                    "&limit=$limit" +
+                    "&timestamp=$timestamp" +
+                    "&signature=$signature"
+                
+                call.respond(HttpStatusCode.OK, mapOf(
+                    "success" to true,
+                    "targetUrl" to targetUrl,
+                    "signatureData" to signatureData,
+                    "signature" to signature,
+                    "localServerId" to localIdentity.serverId,
+                    "targetServerId" to targetServerId
+                ))
+                
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, mapOf(
+                    "success" to false,
+                    "error" to "Failed to generate proxy URL: ${e.message}"
                 ))
             }
         }

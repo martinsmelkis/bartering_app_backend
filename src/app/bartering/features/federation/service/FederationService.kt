@@ -2,8 +2,10 @@ package app.bartering.features.federation.service
 
 import io.ktor.client.*
 import io.ktor.client.call.*
+import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -75,7 +77,14 @@ class FederationServiceImpl(
     private val dao: FederationDao
 ) : FederationService {
 
-    private val httpClient = HttpClient()
+    private val httpClient = HttpClient {
+        install(ContentNegotiation) {
+            json(Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+            })
+        }
+    }
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun initializeLocalServer(
@@ -102,21 +111,18 @@ class FederationServiceImpl(
                 return@withContext existing
             }
 
-            // Generate cryptographic keys
-            val keyPair = FederationCrypto.generateKeyPair(2048)
-            val serverId = FederationCrypto.generateServerId()
-            val publicKeyPem = FederationCrypto.publicKeyToPem(keyPair.public)
-            val privateKeyPem = FederationCrypto.privateKeyToPem(keyPair.private)
-
+            // Generate new RSA key pair
+            val keyPair = FederationCrypto.generateKeyPair()
+            val serverId = java.util.UUID.randomUUID().toString()
             val now = Instant.now()
-            val keyRotationDue = now.plus(30, ChronoUnit.DAYS)
+            val keyRotationDue = now.plus(365, ChronoUnit.DAYS)
 
             val identity = LocalServerIdentity(
                 serverId = serverId,
                 serverUrl = serverUrl,
                 serverName = serverName,
-                publicKey = publicKeyPem,
-                privateKey = privateKeyPem,
+                publicKey = FederationCrypto.publicKeyToPem(keyPair.public),
+                privateKey = FederationCrypto.privateKeyToPem(keyPair.private),
                 keyAlgorithm = "RSA",
                 keySize = 2048,
                 protocolVersion = "1.0",
@@ -129,24 +135,26 @@ class FederationServiceImpl(
                 updatedAt = now
             )
 
+            // Save to database
             dao.saveLocalServerIdentity(identity)
 
+            val duration = System.currentTimeMillis() - startTime
             logFederationEvent(
                 eventType = FederationEventType.KEY_ROTATION,
-                serverId = null,
+                serverId = serverId,
                 action = "INITIALIZE_SERVER",
                 outcome = FederationOutcome.SUCCESS,
                 details = mapOf(
-                    "serverId" to serverId,
+                    "serverUrl" to serverUrl,
                     "serverName" to serverName,
-                    "serverUrl" to serverUrl
+                    "keySize" to 2048
                 ),
-                durationMs = System.currentTimeMillis() - startTime
+                durationMs = duration
             )
 
             identity
-
         } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
             logFederationEvent(
                 eventType = FederationEventType.ERROR,
                 serverId = null,
@@ -154,14 +162,14 @@ class FederationServiceImpl(
                 outcome = FederationOutcome.FAILURE,
                 details = null,
                 errorMessage = e.message,
-                durationMs = System.currentTimeMillis() - startTime
+                durationMs = duration
             )
             throw e
         }
     }
 
-    override suspend fun getLocalServerIdentity(): PublicServerIdentity? = withContext(Dispatchers.IO) {
-        dao.getLocalServerIdentity()?.toPublicIdentity()
+    override suspend fun getLocalServerIdentity(): PublicServerIdentity? {
+        return dao.getLocalServerIdentity()?.toPublicIdentity()
     }
 
     override suspend fun initiateHandshake(
@@ -171,14 +179,12 @@ class FederationServiceImpl(
         val startTime = System.currentTimeMillis()
 
         try {
-            // Get local server identity
+            // Get our local identity
             val localIdentity = dao.getLocalServerIdentity()
-                ?: throw IllegalStateException("Local server not initialized. Call initializeLocalServer() first.")
+                ?: throw IllegalStateException("Local server identity not initialized")
 
-            val privateKey = FederationCrypto.pemToPrivateKey(localIdentity.privateKey)
+            // Create and sign the handshake request
             val timestamp = System.currentTimeMillis()
-
-            // Create handshake request
             val request = FederationHandshakeRequest(
                 serverId = localIdentity.serverId,
                 serverUrl = localIdentity.serverUrl,
@@ -187,140 +193,79 @@ class FederationServiceImpl(
                 protocolVersion = localIdentity.protocolVersion,
                 proposedScopes = proposedScopes,
                 timestamp = timestamp,
-                signature = ""
+                signature = "" // Will be computed below
             )
 
             // Sign the request
-            val requestJson = json.encodeToString(request.copy(signature = ""))
-            val signature = FederationCrypto.signFederationMessage(
-                serverId = localIdentity.serverId,
-                timestamp = timestamp,
-                payload = requestJson,
-                privateKey = privateKey
-            )
-            val signedRequest = request.copy(signature = signature)
-
-            // Send to target server
-            val targetUrl = "${targetServerUrl.trimEnd('/')}/federation/v1/handshake"
-
-            val response: FederationApiResponse<FederationHandshakeResponse> =
-                httpClient.post(targetUrl) {
-                    contentType(ContentType.Application.Json)
-                    setBody(signedRequest)
-                }.body()
-
-            if (response.data == null) {
-                logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_REJECT,
-                    serverId = targetUrl,
-                    action = "INITIATE_HANDSHAKE",
-                    outcome = FederationOutcome.REJECTED,
-                    details = mapOf("targetServer" to targetUrl),
-                    errorMessage = response.error,
-                    durationMs = System.currentTimeMillis() - startTime
-                )
-
-                return@withContext FederationHandshakeResponse(
-                    accepted = false,
-                    serverId = "",
-                    serverUrl = "",
-                    serverName = "",
-                    publicKey = "",
-                    protocolVersion = "",
-                    acceptedScopes = FederationScope.NONE,
-                    agreementHash = "",
-                    timestamp = System.currentTimeMillis(),
-                    signature = "",
-                    reason = response.error ?: "Unknown error"
-                )
-            }
-
-            val handshakeResponse = response.data!!
-
-            // Verify the response signature
-            val remotePublicKey = FederationCrypto.pemToPublicKey(handshakeResponse.publicKey)
-            val responseJson = json.encodeToString(handshakeResponse.copy(signature = ""))
-            val signatureValid = FederationCrypto.verifyFederationMessage(
-                serverId = handshakeResponse.serverId,
-                timestamp = handshakeResponse.timestamp,
-                payload = responseJson,
-                signatureBase64 = handshakeResponse.signature,
-                publicKey = remotePublicKey
+            val dataToSign = "${request.serverId}|${request.serverUrl}|${request.timestamp}"
+            val signedRequest = request.copy(
+                signature = signWithLocalKey(dataToSign)
             )
 
-            if (!signatureValid) {
-                logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_REJECT,
-                    serverId = handshakeResponse.serverId,
-                    action = "INITIATE_HANDSHAKE",
-                    outcome = FederationOutcome.FAILURE,
-                    details = mapOf("targetServer" to targetUrl),
-                    errorMessage = "Invalid signature in handshake response",
-                    durationMs = System.currentTimeMillis() - startTime
-                )
+            // Send request to target server
+            val response: FederationHandshakeResponse = httpClient.post("$targetServerUrl/federation/v1/handshake") {
+                contentType(ContentType.Application.Json)
+                setBody(signedRequest)
+            }.body()
 
-                throw SecurityException("Invalid signature in handshake response")
-            }
+            val duration = System.currentTimeMillis() - startTime
 
-            // Save the federated server if accepted
-            if (handshakeResponse.accepted) {
-                val federatedServer = FederatedServer(
-                    serverId = handshakeResponse.serverId,
-                    serverUrl = handshakeResponse.serverUrl,
-                    serverName = handshakeResponse.serverName,
-                    publicKey = handshakeResponse.publicKey,
+            if (response.accepted) {
+                // Store the federated server info
+                val server = FederatedServer(
+                    serverId = response.serverId,
+                    serverUrl = response.serverUrl,
+                    serverName = response.serverName,
+                    publicKey = response.publicKey,
                     trustLevel = TrustLevel.PENDING,
-                    scopePermissions = handshakeResponse.acceptedScopes,
-                    federationAgreementHash = handshakeResponse.agreementHash,
-                    lastSyncTimestamp = null,
-                    serverMetadata = mapOf(
-                        "protocolVersion" to handshakeResponse.protocolVersion,
-                        "handshakeTimestamp" to handshakeResponse.timestamp.toString()
-                    ),
-                    protocolVersion = handshakeResponse.protocolVersion,
+                    scopePermissions = response.acceptedScopes,
+                    protocolVersion = response.protocolVersion,
                     isActive = true,
+                    federationAgreementHash = response.agreementHash,
+                    lastSyncTimestamp = null,
+                    serverMetadata = null,
                     dataRetentionDays = 30,
                     createdAt = Instant.now(),
                     updatedAt = Instant.now()
                 )
-
-                dao.createFederatedServer(federatedServer)
+                dao.createFederatedServer(server)
 
                 logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_ACCEPT,
-                    serverId = handshakeResponse.serverId,
-                    action = "INITIATE_HANDSHAKE",
+                    eventType = FederationEventType.HANDSHAKE,
+                    serverId = response.serverId,
+                    action = "HANDSHAKE_INITIATE",
                     outcome = FederationOutcome.SUCCESS,
                     details = mapOf(
-                        "targetServer" to targetUrl,
-                        "agreementHash" to handshakeResponse.agreementHash,
-                        "acceptedScopes" to handshakeResponse.acceptedScopes.toString()
+                        "targetServerUrl" to targetServerUrl,
+                        "acceptedScopes" to response.acceptedScopes.toString()
                     ),
-                    durationMs = System.currentTimeMillis() - startTime
+                    durationMs = duration
                 )
             } else {
                 logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_REJECT,
-                    serverId = targetUrl,
-                    action = "INITIATE_HANDSHAKE",
+                    eventType = FederationEventType.HANDSHAKE,
+                    serverId = null,
+                    action = "HANDSHAKE_INITIATE",
                     outcome = FederationOutcome.REJECTED,
-                    details = mapOf("targetServer" to targetUrl),
-                    errorMessage = handshakeResponse.reason,
-                    durationMs = System.currentTimeMillis() - startTime
+                    details = mapOf(
+                        "targetServerUrl" to targetServerUrl,
+                        "reason" to (response.reason ?: "Unknown")
+                    ),
+                    durationMs = duration
                 )
             }
 
-            handshakeResponse
-
+            response
         } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
             logFederationEvent(
-                eventType = FederationEventType.ERROR,
-                serverId = targetServerUrl,
-                action = "INITIATE_HANDSHAKE",
+                eventType = FederationEventType.HANDSHAKE,
+                serverId = null,
+                action = "HANDSHAKE_INITIATE",
                 outcome = FederationOutcome.FAILURE,
-                details = null,
+                details = mapOf("targetServerUrl" to targetServerUrl),
                 errorMessage = e.message,
-                durationMs = System.currentTimeMillis() - startTime
+                durationMs = duration
             )
             throw e
         }
@@ -333,92 +278,34 @@ class FederationServiceImpl(
         val startTime = System.currentTimeMillis()
 
         try {
-            // Get local server identity
-            val localIdentity = dao.getLocalServerIdentity()
-                ?: throw IllegalStateException("Local server not initialized. Call initializeLocalServer() first.")
+            // Verify the request signature
+            val dataToVerify = "${request.serverId}|${request.serverUrl}|${request.timestamp}"
+            val isValid = FederationCrypto.verify(
+                dataToVerify,
+                request.signature,
+                FederationCrypto.pemToPublicKey(request.publicKey)
+            )
 
-            // Validate timestamp (reject if more than 5 minutes old)
+            if (!isValid) {
+                throw IllegalArgumentException("Invalid handshake signature")
+            }
+
+            // Check timestamp (prevent replay attacks - 5 minute window)
             val now = System.currentTimeMillis()
-            val maxAge = 5.minutes.inWholeMilliseconds
-            if (now - request.timestamp > maxAge) {
-                logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_REJECT,
-                    serverId = request.serverId,
-                    action = "ACCEPT_HANDSHAKE",
-                    outcome = FederationOutcome.FAILURE,
-                    details = mapOf(
-                        "requestTimestamp" to request.timestamp,
-                        "currentTimestamp" to now,
-                        "maxAge" to maxAge
-                    ),
-                    errorMessage = "Handshake request timestamp too old",
-                    durationMs = null
-                )
-
-                return@withContext FederationHandshakeResponse(
-                    accepted = false,
-                    serverId = localIdentity.serverId,
-                    serverUrl = localIdentity.serverUrl,
-                    serverName = localIdentity.serverName,
-                    publicKey = localIdentity.publicKey,
-                    protocolVersion = localIdentity.protocolVersion,
-                    acceptedScopes = FederationScope.NONE,
-                    agreementHash = "",
-                    timestamp = now,
-                    signature = "",
-                    reason = "Request timestamp too old"
-                )
+            if (kotlin.math.abs(now - request.timestamp) > 5.minutes.inWholeMilliseconds) {
+                throw IllegalArgumentException("Handshake request expired or timestamp invalid")
             }
 
-            // Verify incoming signature
-            val remotePublicKey = FederationCrypto.pemToPublicKey(request.publicKey)
-            val requestJson = json.encodeToString(request.copy(signature = ""))
-            val signatureValid = FederationCrypto.verifyFederationMessage(
-                serverId = request.serverId,
-                timestamp = request.timestamp,
-                payload = requestJson,
-                signatureBase64 = request.signature,
-                publicKey = remotePublicKey
-            )
-
-            if (!signatureValid) {
-                logFederationEvent(
-                    eventType = FederationEventType.HANDSHAKE_REJECT,
-                    serverId = request.serverId,
-                    action = "ACCEPT_HANDSHAKE",
-                    outcome = FederationOutcome.FAILURE,
-                    details = mapOf("serverUrl" to request.serverUrl),
-                    errorMessage = "Invalid signature in handshake request",
-                    durationMs = null
-                )
-
-                return@withContext FederationHandshakeResponse(
-                    accepted = false,
-                    serverId = localIdentity.serverId,
-                    serverUrl = localIdentity.serverUrl,
-                    serverName = localIdentity.serverName,
-                    publicKey = localIdentity.publicKey,
-                    protocolVersion = localIdentity.protocolVersion,
-                    acceptedScopes = FederationScope.NONE,
-                    agreementHash = "",
-                    timestamp = now,
-                    signature = "",
-                    reason = "Invalid signature"
-                )
-            }
-
-            // Check if server already exists
-            val existingServer = dao.getFederatedServer(request.serverId)
-
-            // Generate agreement hash
-            val agreementHash = FederationCrypto.generateAgreementHash(
-                localIdentity.serverId,
-                request.serverId,
-                acceptedScopes.toString(),
-                now
-            )
+            // Get our local identity
+            val localIdentity = dao.getLocalServerIdentity()
+                ?: throw IllegalStateException("Local server identity not initialized")
 
             // Create response
+            val timestamp = System.currentTimeMillis()
+            val agreementHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest("${request.serverId}|${localIdentity.serverId}|${acceptedScopes}".toByteArray())
+                .joinToString("") { "%02x".format(it) }
+
             val response = FederationHandshakeResponse(
                 accepted = true,
                 serverId = localIdentity.serverId,
@@ -428,82 +315,60 @@ class FederationServiceImpl(
                 protocolVersion = localIdentity.protocolVersion,
                 acceptedScopes = acceptedScopes,
                 agreementHash = agreementHash,
-                timestamp = now,
-                signature = "",
+                timestamp = timestamp,
+                signature = "", // Will be computed below
                 reason = null
             )
 
             // Sign the response
-            val privateKey = FederationCrypto.pemToPrivateKey(localIdentity.privateKey)
-            val responseJson = json.encodeToString(response.copy(signature = ""))
-            val signature = FederationCrypto.signFederationMessage(
-                serverId = localIdentity.serverId,
-                timestamp = now,
-                payload = responseJson,
-                privateKey = privateKey
+            val dataToSign = "${response.serverId}|${response.serverUrl}|${response.timestamp}"
+            val signedResponse = response.copy(
+                signature = signWithLocalKey(dataToSign)
             )
-            val signedResponse = response.copy(signature = signature)
 
-            // Save or update federated server
-            val federatedServer = FederatedServer(
+            // Store the requesting server as pending
+            val server = FederatedServer(
                 serverId = request.serverId,
                 serverUrl = request.serverUrl,
                 serverName = request.serverName,
                 publicKey = request.publicKey,
-                trustLevel = TrustLevel.PENDING, // Will be updated to FULL/PARTIAL by admin
+                trustLevel = TrustLevel.PENDING,
                 scopePermissions = acceptedScopes,
-                federationAgreementHash = agreementHash,
-                lastSyncTimestamp = Instant.now(),
-                serverMetadata = mapOf(
-                    "protocolVersion" to request.protocolVersion,
-                    "handshakeTimestamp" to request.timestamp.toString(),
-                    "proposedScopes" to request.proposedScopes.toString()
-                ),
                 protocolVersion = request.protocolVersion,
                 isActive = true,
+                federationAgreementHash = agreementHash,
+                lastSyncTimestamp = null,
+                serverMetadata = null,
                 dataRetentionDays = 30,
-                createdAt = existingServer?.createdAt ?: Instant.now(),
+                createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
+            dao.createFederatedServer(server)
 
-            if (existingServer != null) {
-                dao.updateFederatedServer(request.serverId, mapOf(
-                    "serverName" to request.serverName,
-                    "trustLevel" to TrustLevel.PENDING,
-                    "scopePermissions" to acceptedScopes,
-                    "federationAgreementHash" to agreementHash,
-                    "serverMetadata" to federatedServer.serverMetadata,
-                    "isActive" to true
-                ))
-            } else {
-                dao.createFederatedServer(federatedServer)
-            }
-
+            val duration = System.currentTimeMillis() - startTime
             logFederationEvent(
                 eventType = FederationEventType.HANDSHAKE_ACCEPT,
                 serverId = request.serverId,
-                action = "ACCEPT_HANDSHAKE",
+                action = "HANDSHAKE_ACCEPT",
                 outcome = FederationOutcome.SUCCESS,
                 details = mapOf(
-                    "serverUrl" to request.serverUrl,
-                    "agreementHash" to agreementHash,
-                    "acceptedScopes" to acceptedScopes.toString(),
-                    "isNewServer" to (existingServer == null)
+                    "requestingServerUrl" to request.serverUrl,
+                    "acceptedScopes" to acceptedScopes.toString()
                 ),
-                durationMs = System.currentTimeMillis() - startTime
+                durationMs = duration
             )
 
             signedResponse
-
         } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
             logFederationEvent(
-                eventType = FederationEventType.ERROR,
+                eventType = FederationEventType.HANDSHAKE_ACCEPT,
                 serverId = request.serverId,
-                action = "ACCEPT_HANDSHAKE",
+                action = "HANDSHAKE_ACCEPT",
                 outcome = FederationOutcome.FAILURE,
-                details = null,
+                details = mapOf("requestingServerUrl" to request.serverUrl),
                 errorMessage = e.message,
-                durationMs = System.currentTimeMillis() - startTime
+                durationMs = duration
             )
             throw e
         }
@@ -513,88 +378,40 @@ class FederationServiceImpl(
         return dao.listFederatedServers(trustLevel)
     }
 
-    override suspend fun updateTrustLevel(serverId: String, trustLevel: TrustLevel): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun updateTrustLevel(serverId: String, trustLevel: TrustLevel): Boolean {
         val startTime = System.currentTimeMillis()
+        val result = dao.updateServerTrustLevel(serverId, trustLevel)
 
-        try {
-            val result = dao.updateServerTrustLevel(serverId, trustLevel)
+        logFederationEvent(
+            eventType = FederationEventType.TRUST_LEVEL_CHANGE,
+            serverId = serverId,
+            action = "TRUST_UPDATE",
+            outcome = if (result) FederationOutcome.SUCCESS else FederationOutcome.FAILURE,
+            details = mapOf("newTrustLevel" to trustLevel.name),
+            durationMs = System.currentTimeMillis() - startTime
+        )
 
-            logFederationEvent(
-                eventType = FederationEventType.TRUST_LEVEL_CHANGE,
-                serverId = serverId,
-                action = "UPDATE_TRUST_LEVEL",
-                outcome = if (result) FederationOutcome.SUCCESS else FederationOutcome.FAILURE,
-                details = mapOf("newTrustLevel" to trustLevel.name),
-                durationMs = System.currentTimeMillis() - startTime
-            )
-
-            result
-        } catch (e: Exception) {
-            logFederationEvent(
-                eventType = FederationEventType.ERROR,
-                serverId = serverId,
-                action = "UPDATE_TRUST_LEVEL",
-                outcome = FederationOutcome.FAILURE,
-                details = mapOf("newTrustLevel" to trustLevel.name),
-                errorMessage = e.message,
-                durationMs = System.currentTimeMillis() - startTime
-            )
-            false
-        }
+        return result
     }
 
-    override suspend fun updateScopes(serverId: String, scopes: FederationScope): Boolean = withContext(Dispatchers.IO) {
-        val startTime = System.currentTimeMillis()
-
-        try {
-            val result = dao.updateServerScopes(serverId, scopes)
-
-            logFederationEvent(
-                eventType = FederationEventType.SCOPE_UPDATE,
-                serverId = serverId,
-                action = "UPDATE_SCOPES",
-                outcome = if (result) FederationOutcome.SUCCESS else FederationOutcome.FAILURE,
-                details = mapOf("newScopes" to scopes.toString()),
-                durationMs = System.currentTimeMillis() - startTime
-            )
-
-            result
-        } catch (e: Exception) {
-            logFederationEvent(
-                eventType = FederationEventType.ERROR,
-                serverId = serverId,
-                action = "UPDATE_SCOPES",
-                outcome = FederationOutcome.FAILURE,
-                details = mapOf("newScopes" to scopes.toString()),
-                errorMessage = e.message,
-                durationMs = System.currentTimeMillis() - startTime
-            )
-            false
-        }
+    override suspend fun updateScopes(serverId: String, scopes: FederationScope): Boolean {
+        return dao.updateServerScopes(serverId, scopes)
     }
 
     override suspend fun verifyServerSignature(
         serverId: String,
         data: String,
         signature: String
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val server = dao.getFederatedServer(serverId)
-                ?: return@withContext false
-
-            val publicKey = FederationCrypto.pemToPublicKey(server.publicKey)
-            FederationCrypto.verify(data, signature, publicKey)
-        } catch (e: Exception) {
-            false
-        }
+    ): Boolean {
+        val server = dao.getFederatedServer(serverId) ?: return false
+        return FederationCrypto.verify(data, signature, FederationCrypto.pemToPublicKey(server.publicKey))
     }
 
-    override suspend fun signWithLocalKey(data: String): String = withContext(Dispatchers.IO) {
-        val localIdentity = dao.getLocalServerIdentity()
-            ?: throw IllegalStateException("Local server not initialized")
-
-        val privateKey = FederationCrypto.pemToPrivateKey(localIdentity.privateKey)
-        FederationCrypto.sign(data, privateKey)
+    override suspend fun signWithLocalKey(data: String): String {
+        val identity = dao.getLocalServerIdentity()
+            ?: throw IllegalStateException("Local server identity not initialized")
+        val privateKey = FederationCrypto.pemToPrivateKey(identity.privateKey)
+        return FederationCrypto.sign(data, privateKey)
     }
 
     override suspend fun logFederationEvent(
@@ -606,19 +423,15 @@ class FederationServiceImpl(
         errorMessage: String?,
         durationMs: Long?
     ) {
-        // Convert nullable values to empty strings for database compatibility
-        val detailsMap: Map<String, Any>? = details?.mapValues {
-            it.value ?: ""
-        }
-
         dao.logFederationEvent(
             eventType = eventType,
             serverId = serverId,
             action = action,
             outcome = outcome,
-            details = detailsMap,
+            details = details,
             errorMessage = errorMessage,
-            durationMs = durationMs
+            durationMs = durationMs,
+            remoteIp = null
         )
     }
 }

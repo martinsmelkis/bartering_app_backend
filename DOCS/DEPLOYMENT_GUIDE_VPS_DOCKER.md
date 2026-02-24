@@ -111,9 +111,20 @@ sudo dnf install -y certbot python3-certbot-nginx
 ### Step 6: Configure Firewall
 
 ```bash
+
+sudo yum install firewalld -y
+sudo systemctl enable --now firewalld.service
+
 # Start firewall
 sudo systemctl start firewalld
-sudo systemctl enable firewalld
+
+docker network ls
+sudo firewall-cmd --permanent --zone=trusted --add-interface=br-0882f8054788
+# Allow postgres locally
+sudo firewall-cmd --zone=trusted --add-port=5432/tcp --permanent
+
+sudo firewall-cmd --zone=public --add-port=8081/tcp --permanent
+sudo firewall-cmd --reload
 
 # Allow HTTP, HTTPS
 sudo firewall-cmd --permanent --add-service=http
@@ -125,13 +136,9 @@ sudo firewall-cmd --reload
 
 ```bash
 # Create app directory
-sudo mkdir -p /opt/barter-app
+mkdir /opt/barterappbackend
+mkdir /opt/barterappbackend/deploy
 sudo mkdir -p /var/www/yourdomain.com
-
-# Create data directories for Docker volumes
-sudo mkdir -p /opt/barter-app/postgres-data
-sudo mkdir -p /opt/barter-app/ollama-data
-sudo mkdir -p /opt/barter-app/uploads
 
 # Set permissions
 sudo chown -R $USER:$USER /opt/barter-app
@@ -148,110 +155,106 @@ From your dev machine:
 
 ```bash
 # Transfer docker-compose.yml
-scp docker-compose.yml root@YOUR_VPS_IP:/opt/barter-app/
+scp docker-compose.yml root@YOUR_VPS_IP:/opt/barterappbackend/deploy/
 
 # Transfer any environment files
-scp .env.production root@YOUR_VPS_IP:/opt/barter-app/.env
+scp .env.production root@YOUR_VPS_IP:/opt/barterappbackend/deploy/.env
 
 # Transfer application configs
-scp resources/application.prod.conf root@YOUR_VPS_IP:/opt/barter-app/resources/
+scp resources/application.prod.conf root@YOUR_VPS_IP:/opt/barterappbackend/deploy/resources/
 ```
 
 ### Step 9: Update docker-compose.yml for Production
 
-On VPS, edit `/opt/barter-app/docker-compose.yml`:
+On VPS, edit `/opt/barterappbackend/deploy/docker-compose.yml`:
 
 ```yaml
-version: '3.8'
-
 services:
-  postgresql_server:
-    image: postgres:16-alpine
+  postgres:
+    build:
+      context: ./postgres
     container_name: postgresql_server
+    network_mode: host
+    restart: always
     environment:
-      POSTGRES_USER: ${DB_USER:-barter_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production}
-      POSTGRES_DB: ${DB_NAME:-mainDatabase}
-    volumes:
-      - /opt/barter-app/postgres-data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"  # Only accessible from localhost
-    networks:
-      - barter-network
-    restart: unless-stopped
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Test1234}
+      POSTGRES_DB: ${POSTGRES_DB:-mainDatabase}
+      OLLAMA_URL: ${OLLAMA_HOST:-http://localhost:11434}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-barter_user}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mainDatabase}" ]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    volumes:
+      - postgres_data:/var/lib/postgresql
 
   ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
+    image: docker.io/ollama/ollama:latest
+    container_name: ollama_server
+    network_mode: host
+    pull_policy: always
+    tty: true
+    restart: always
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
-      - /opt/barter-app/ollama-data:/root/.ollama
-    ports:
-      - "127.0.0.1:11434:11434"  # Only accessible from localhost
-    networks:
-      - barter-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # Remove GPU requirements if no GPU available:
-    # deploy: {}
+      - ollama_data:/root/.ollama
+    entrypoint: /bin/sh
+    command: -c "ollama serve & sleep 5 && ollama pull ${OLLAMA_EMBED_MODEL:-mxbai-embed-large} && wait"
 
   barter_app_server:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: barter_app_server
+    network_mode: host
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
-      postgresql_server:
+      postgres:
         condition: service_healthy
-      ollama:
-        condition: service_started
     environment:
-      - DB_HOST=postgresql_server
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME:-mainDatabase}
-      - DB_USER=${DB_USER:-barter_user}
-      - DB_PASSWORD=${DB_PASSWORD:-change_me_in_production}
-      - OLLAMA_URL=http://ollama:11434
-      - IMAGE_STORAGE_TYPE=local
-      - APP_ENV=production
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://localhost:11434}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Test1234}
+      POSTGRES_DB: ${POSTGRES_DB:-mainDatabase}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      IMAGE_UPLOAD_DIR: ${IMAGE_UPLOAD_DIR:-/uploads/images}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-/api/v1/images}
+      IMAGE_STORAGE_TYPE: local
+      LOG_LEVEL: ${LOG_LEVEL:-ERROR}
+      # Firebase Push Notifications
+      FIREBASE_CREDENTIALS_PATH: /app
+      FIREBASE_CREDENTIALS_FILE: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json
+      MAILJET_API_KEY: ${MAILJET_API_KEY:-}
+      MAILJET_API_SECRET: ${MAILJET_API_SECRET:-}
+      PUSH_PROVIDER: firebase
     volumes:
-      - /opt/barter-app/uploads:/app/uploads
-      - /opt/barter-app/resources:/app/resources
-    ports:
-      - "127.0.0.1:8081:8081"  # Only accessible from localhost (Nginx will proxy)
-    networks:
-      - barter-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-networks:
-  barter-network:
-    driver: bridge
+      - ./uploads:/uploads
+    restart: always
 
 volumes:
-  postgres-data:
-  ollama-data:
-  uploads:
+  postgres_data:
+    driver: local
+  ollama_data:
+    driver: local
 ```
 
 ### Step 10: Create .env File for Production
 
-On VPS, create `/opt/barter-app/.env`:
+On VPS, create `/opt/barterappbackend/deploy/.env`:
 
 ```bash
 # Database
@@ -292,7 +295,7 @@ cd /path/to/barter_app_backend
 
 # Transfer everything
 rsync -avz --exclude 'build' --exclude '.git' \
-  ./ root@YOUR_VPS_IP:/opt/barter-app/
+  ./ root@YOUR_VPS_IP:/opt/barterappbackend/deploy/
 
 # Or using scp
 tar -czf barter-app.tar.gz --exclude='build' --exclude='.git' .
@@ -356,7 +359,7 @@ sudo docker compose exec ollama ollama pull mistral
 sudo docker compose exec postgresql_server psql -U barter_user -d mainDatabase -c "SELECT 1;"
 
 # Test backend
-curl http://localhost:8081/api/v1/health
+curl http://localhost:8081/public-api/v1/healthCheck
 
 # Test Ollama
 curl http://localhost:11434/api/version
@@ -510,7 +513,7 @@ server {
 
     # Serve uploaded images
     location /uploads/ {
-        alias /opt/barter-app/uploads/;
+        alias /opt/barterappbackend/deploy/uploads/;
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
@@ -556,7 +559,7 @@ sudo systemctl start nginx
 
 ### Step 19: Create Update Script
 
-Create `/opt/barter-app/update.sh`:
+Create `/opt/barterappbackend/deploy/update.sh`:
 
 ```bash
 #!/bin/bash
@@ -592,12 +595,12 @@ echo "📊 View logs: sudo docker compose logs -f"
 
 Make it executable:
 ```bash
-chmod +x /opt/barter-app/update.sh
+chmod +x /opt/barterappbackend/deploy/update.sh
 ```
 
 ### Step 20: Create Backup Script
 
-Create `/opt/barter-app/backup.sh`:
+Create `/opt/barterappbackend/deploy/backup.sh`:
 
 ```bash
 #!/bin/bash
@@ -613,12 +616,12 @@ sudo docker compose exec -T postgresql_server pg_dump \
   -U barter_user mainDatabase > "$BACKUP_DIR/db-$DATE.sql"
 
 echo "📦 Backing up uploads..."
-tar -czf "$BACKUP_DIR/uploads-$DATE.tar.gz" /opt/barter-app/uploads/
+tar -czf "$BACKUP_DIR/uploads-$DATE.tar.gz" /opt/barterappbackend/deploy/uploads/
 
 echo "📦 Backing up configs..."
 tar -czf "$BACKUP_DIR/configs-$DATE.tar.gz" \
-  /opt/barter-app/docker-compose.yml \
-  /opt/barter-app/.env \
+  /opt/barterappbackend/deploy/docker-compose.yml \
+  /opt/barterappbackend/deploy/.env \
   /etc/nginx/conf.d/barter-app.conf
 
 # Keep only last 7 days
@@ -629,14 +632,14 @@ echo "✅ Backup complete: $DATE"
 
 Make executable:
 ```bash
-chmod +x /opt/barter-app/backup.sh
+chmod +x /opt/barterappbackend/deploy/backup.sh
 ```
 
 Schedule daily backups:
 ```bash
 sudo crontab -e
 # Add:
-0 2 * * * /opt/barter-app/backup.sh
+0 2 * * * /opt/barterappbackend/deploy/backup.sh
 ```
 
 ---
@@ -736,10 +739,10 @@ sudo docker inspect barter_app_server
 
 ```bash
 # Check backend health
-curl http://localhost:8081/api/v1/health
+curl http://localhost:8081/public-api/v1/healthCheck
 
 # Check from internet
-curl https://yourdomain.com/api/v1/health
+curl https://yourdomain.com/public-api/v1/healthCheck
 
 # Check Ollama
 sudo docker compose exec ollama ollama list
@@ -988,7 +991,7 @@ sudo docker compose restart barter_app_server
 cd /opt/barter-app && ./update.sh
 
 # Backup
-/opt/barter-app/backup.sh
+/opt/barterappbackend/deploy/backup.sh
 
 # Monitor resources
 sudo docker stats
@@ -999,11 +1002,11 @@ curl https://yourdomain.com/api/v1/health
 
 ### File Locations
 
-- Docker compose: `/opt/barter-app/docker-compose.yml`
-- Environment: `/opt/barter-app/.env`
-- Database data: `/opt/barter-app/postgres-data/`
-- Uploads: `/opt/barter-app/uploads/`
-- Ollama data: `/opt/barter-app/ollama-data/`
+- Docker compose: `/opt/barterappbackend/deploy/docker-compose.yml`
+- Environment: `/opt/barterappbackend/deploy/.env`
+- Database data: `/opt/barterappbackend/deploy/postgres-data/`
+- Uploads: `/opt/barterappbackend/deploy/uploads/`
+- Ollama data: `/opt/barterappbackend/deploy/ollama-data/`
 - Flutter web: `/var/www/yourdomain.com/`
 - Nginx config: `/etc/nginx/conf.d/barter-app.conf`
 

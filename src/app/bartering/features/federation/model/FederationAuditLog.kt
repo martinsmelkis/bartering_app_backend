@@ -1,7 +1,7 @@
 package app.bartering.features.federation.model
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonElement
 import java.time.Instant
 
 /**
@@ -16,7 +16,7 @@ data class FederationAuditLog(
     val remoteUserId: String?,
     val action: String,
     val outcome: FederationOutcome,
-    val details: Map<String, Any?>?, // Database-only field (JSONB)
+    val details: JsonElement?, // Database-only field (JSONB), matches table type
     val errorMessage: String?,
     val remoteIp: String?,
     val durationMs: Long?,
