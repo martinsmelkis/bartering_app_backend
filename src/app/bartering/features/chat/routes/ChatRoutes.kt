@@ -20,13 +20,14 @@ import app.bartering.features.encryptedfiles.tasks.FileCleanupTask
 import app.bartering.features.chat.tasks.ChatAnalyticsCleanupTask
 import app.bartering.features.chat.tasks.MessageCleanupTask
 import app.bartering.features.chat.utils.ChatUtils
+import app.bartering.features.federation.dao.FederatedUserDao
+import app.bartering.features.federation.service.FederationService
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.reviews.dao.BarterTransactionDao
 import app.bartering.features.notifications.service.PushNotificationService
-import app.bartering.localization.Localization
+import app.bartering.features.relationships.dao.UserRelationshipsDaoImpl
 import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.inject
-import java.util.Locale
 import java.util.UUID
 import org.slf4j.LoggerFactory
 
@@ -59,8 +60,13 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     val readReceiptDao = app.bartering.features.chat.dao.ReadReceiptDaoImpl()
     
     // Relationships DAO for checking blocked status
-    val relationshipsDao: app.bartering.features.relationships.dao.UserRelationshipsDaoImpl by
-        inject(app.bartering.features.relationships.dao.UserRelationshipsDaoImpl::class.java)
+    val relationshipsDao: UserRelationshipsDaoImpl by inject(UserRelationshipsDaoImpl::class.java)
+
+    // Federation service for cross-server messaging
+    val federationService: FederationService by inject(FederationService::class.java)
+
+    // Federated user DAO for looking up federated user public keys
+    val federatedUserDao: FederatedUserDao by inject(FederatedUserDao::class.java)
     
     // Shared conversation state for tracking when users receive messages
     // Maps "userId:partnerId" -> timestamp when message was received
@@ -106,11 +112,6 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
             val currentConnection = ChatConnection(this)
             log.info("New client connected! Connection ID: {}", currentConnection.id)
             val usersDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
-
-            // Example of getting locale from header
-            val locale = call.request.headers["Accept-Language"]?.let {
-                Locale.forLanguageTag(it.split(",").firstOrNull() ?: "en")
-            } ?: Locale.ENGLISH
 
             try {
                 // 1. Authentication Phase
@@ -242,14 +243,13 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             )
                             isAuthenticated = true
 
-                            val welcomeMessage = Localization.getString("chat.welcome", locale)
                             outgoing.send(
                                 Frame.Text(
                                     Json.encodeToString<SocketMessage>(
                                         socketSerializer,
                                         AuthResponse(
                                             true,
-                                            "$welcomeMessage (Authenticated as ${authRequest.userId})"
+                                            "Welcome! (Authenticated as ${authRequest.userId})"
                                         )
                                     )
                                 )
@@ -278,6 +278,22 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                     // Cache the key from database for future use
                                     publicKeyCache.put(authRequest.peerUserId, key)
                                 }
+                            ?: run {
+                                // Check if peer is a federated user (format: userId@serverId)
+                                if (ChatUtils.isFederatedUser(authRequest.peerUserId)) {
+                                    val atIndex = authRequest.peerUserId.lastIndexOf("@")
+                                    val remoteUserId = authRequest.peerUserId.take(atIndex)
+                                    val originServerId = authRequest.peerUserId.substring(atIndex + 1)
+                                    
+                                    val federatedUser = federatedUserDao.getFederatedUser(remoteUserId, originServerId)
+                                    federatedUser?.publicKey?.also { key ->
+                                        publicKeyCache.put(authRequest.peerUserId, key)
+                                        log.debug("Retrieved public key for federated user {} from cache", authRequest.peerUserId)
+                                    }
+                                } else {
+                                    null
+                                }
+                            }
 
                             if (currentConnection.recipientPublicKey == null) {
                                 currentConnection.recipientPublicKey = recipientKey
@@ -376,7 +392,32 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             )
                             log.debug("Relaying message from {} to {}", currentUserId, clientMessage.data.recipientId)
 
-                            // Check if recipient has ANY active connection
+                            // Check if recipient is a federated user (format: userId@serverId)
+                            if (ChatUtils.isFederatedUser(clientMessage.data.recipientId)) {
+                                // Send to federated user on another server
+                                val senderPublicKey = currentConnection.userPublicKey
+                                    ?: throw IllegalStateException("Sender public key not available")
+                                
+                                val relayedMessageId = ChatUtils.sendFederatedMessage(
+                                    recipientId = clientMessage.data.recipientId,
+                                    senderId = currentUserId,
+                                    senderName = clientMessage.data.senderName,
+                                    encryptedPayload = clientMessage.data.encryptedPayload ?: "",
+                                    senderPublicKey = senderPublicKey,
+                                    federationService = federationService,
+                                    currentConnection = currentConnection,
+                                    serializer = socketSerializer,
+                                    log = log
+                                )
+
+                                if (relayedMessageId != null) {
+                                    log.info("Federated message sent successfully from {} to {}",
+                                        currentUserId, clientMessage.data.recipientId)
+                                }
+                                continue // Skip to next frame - federation handled
+                            }
+
+                            // Check if recipient has ANY active connection (local user)
                             val recipientHasActiveConnections = connectionManager.isConnected(clientMessage.data.recipientId)
 
                             if (recipientHasActiveConnections) {

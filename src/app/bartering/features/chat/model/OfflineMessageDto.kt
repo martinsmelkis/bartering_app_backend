@@ -13,5 +13,6 @@ data class OfflineMessageDto(
     val senderName: String,
     val encryptedPayload: String,
     val timestamp: Long,
-    val delivered: Boolean = false
+    val delivered: Boolean = false,
+    val senderPublicKey: String? = null // For federated messages, include sender's public key
 )

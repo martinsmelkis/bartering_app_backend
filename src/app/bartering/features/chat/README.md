@@ -264,11 +264,11 @@ Replace with distributed solutions:
 
 ## Future Enhancements
 
-- [ ] Read receipts
-- [ ] Message status indicators (sent, delivered, read)
+- [X] Read receipts
+- [X] Message status indicators (sent, delivered, read)
 - [ ] Group chat support
-- [ ] File/media sharing
+- [X] File/media sharing
 - [ ] Voice/video call signaling
-- [ ] Push notifications for offline users
+- [X] Push notifications for offline users
 - [ ] Message search and history
-- [ ] User blocking and reporting
+- [X] User blocking and reporting

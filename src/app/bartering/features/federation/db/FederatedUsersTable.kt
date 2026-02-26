@@ -1,5 +1,6 @@
 package app.bartering.features.federation.db
 
+import app.bartering.features.federation.model.CachedFederatedProfileData
 import app.bartering.features.profile.db.UserRegistrationDataTable
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.javatime.timestamp
@@ -25,14 +26,14 @@ object FederatedUsersTable : Table("federated_users") {
     /** Full remote user identifier (e.g., "user123@barter.example.com") for ActivityPub-style addressing */
     val federatedUserId = varchar("federated_user_id", 512)
     
-    /** 
+    /**
      * Cached snapshot of user's profile data from remote server.
-     * Includes: name, location (if permitted), bio, profileImageUrl, etc.
+     * Uses JSONB with explicit serialization for CachedFederatedProfileData.
      */
-    val cachedProfileData = jsonb(
+    val cachedProfileData = jsonb<CachedFederatedProfileData>(
         name = "cached_profile_data",
         serialize = { Json.encodeToString(it) },
-        deserialize = { Json.decodeFromString<Map<String, Any?>>(it) }
+        deserialize = { Json.decodeFromString(it) }
     ).nullable()
     
     /** Public key of the remote user for E2E encrypted messaging */

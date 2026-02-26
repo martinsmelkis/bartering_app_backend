@@ -1,5 +1,7 @@
 package app.bartering.features.profile.routes
 
+import io.ktor.client.*
+import io.ktor.client.request.*
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -12,6 +14,10 @@ import app.bartering.features.profile.model.UserProfile
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.service.LocationPatternDetectionService
+import app.bartering.features.federation.model.*
+import app.bartering.features.profile.model.UserAttributeDto
+import io.ktor.client.call.body
+import io.ktor.serialization.kotlinx.json.json
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import kotlin.getValue
@@ -23,7 +29,6 @@ fun Route.getProfilesNearbyRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
 
-    // Un-authenticated route to get nearby profiles
     get("/api/v1/profiles/nearby") {
 
         // --- Authentication using signature verification ---
@@ -174,6 +179,15 @@ fun Route.searchProfilesByKeywordRoute() {
 
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val federationService: app.bartering.features.federation.service.FederationService by inject(
+        app.bartering.features.federation.service.FederationService::class.java
+    )
+    val federationDao: app.bartering.features.federation.dao.FederationDao by inject(
+        app.bartering.features.federation.dao.FederationDao::class.java
+    )
+    val federatedUserDao: app.bartering.features.federation.dao.FederatedUserDao by inject(
+        app.bartering.features.federation.dao.FederatedUserDao::class.java
+    )
 
     // Route to search for user profiles by keyword
     get("/api/v1/profiles/search") {
@@ -210,6 +224,10 @@ fun Route.searchProfilesByKeywordRoute() {
         val seeking = call.request.queryParameters["seeking"]?.toBoolean()
         val offering = call.request.queryParameters["offering"]?.toBoolean()
 
+        // Optional: enable/disable federated search fallback
+        val enableFederatedSearch = call.request.queryParameters["federated"]?.toBoolean() ?: true
+        val federatedMinResults = call.request.queryParameters["federatedMinResults"]?.toIntOrNull() ?: 3
+
         // Validate limit
         if (limit !in 1..100) {
             call.respond(
@@ -238,7 +256,8 @@ fun Route.searchProfilesByKeywordRoute() {
         }
 
         try {
-            val matchingProfiles = userProfileDao.searchProfilesByKeyword(
+            // First: Search local profiles
+            var matchingProfiles = userProfileDao.searchProfilesByKeyword(
                 userId = userId,
                 searchText = searchText,
                 latitude = lat,
@@ -250,8 +269,31 @@ fun Route.searchProfilesByKeywordRoute() {
                 offering = offering
             )
 
-            log.info("Returning {} profiles for search: '{}' (weight: {}, seeking: {}, offering: {})", 
-                matchingProfiles.size, searchText, customWeight, seeking, offering)
+            log.info("Local search returned {} profiles for query: '{}'", 
+                matchingProfiles.size, searchText)
+
+            // Second: If few results and federated search enabled, query trusted servers
+            if (enableFederatedSearch && matchingProfiles.size < federatedMinResults) {
+                val federatedResults = searchFederatedProfiles(
+                    query = searchText,
+                    limit = limit - matchingProfiles.size,
+                    federationService = federationService,
+                    federationDao = federationDao,
+                    federatedUserDao = federatedUserDao
+                )
+
+                if (federatedResults.isNotEmpty()) {
+                    log.info("Federated search added {} profiles from remote servers", 
+                        federatedResults.size)
+                    
+                    // Combine local and federated results
+                    // Federated profiles already have @serverId suffix from searchFederatedProfiles
+                    matchingProfiles = (matchingProfiles + federatedResults).take(limit)
+                }
+            }
+
+            log.info("Returning {} total profiles for search: '{}' (local + federated)", 
+                matchingProfiles.size, searchText)
 
             call.respond(HttpStatusCode.OK, matchingProfiles)
 
@@ -264,6 +306,157 @@ fun Route.searchProfilesByKeywordRoute() {
         }
     }
 
+}
+
+/**
+ * Searches for profiles on federated (trusted) servers when local results are insufficient.
+ * 
+ * @param query The search text/keywords
+ * @param limit Maximum number of results to return from all servers combined
+ * @param federationService Service for signing requests to remote servers
+ * @param federationDao DAO for accessing federated server information
+ * @param federatedUserDao DAO for caching federated user profiles
+ * @return List of profiles from remote servers with their origin marked
+ */
+private suspend fun searchFederatedProfiles(
+    query: String,
+    limit: Int,
+    federationService: app.bartering.features.federation.service.FederationService,
+    federationDao: app.bartering.features.federation.dao.FederationDao,
+    federatedUserDao: app.bartering.features.federation.dao.FederatedUserDao
+): List<app.bartering.features.profile.model.UserProfileWithDistance> {
+    val results = mutableListOf<app.bartering.features.profile.model.UserProfileWithDistance>()
+    
+    try {
+        // Get trusted (FULL or PARTIAL trust) federated servers
+        val trustedServers = federationDao.listFederatedServers()
+            .filter { it.isActive && it.trustLevel != TrustLevel.BLOCKED }
+            .filter { it.scopePermissions.users } // Only servers that allow user search
+        
+        if (trustedServers.isEmpty()) {
+            return emptyList()
+        }
+        
+        // Search each server (with limit per server)
+        val perServerLimit = (limit / trustedServers.size).coerceAtLeast(5)
+        
+        for (server in trustedServers) {
+            try {
+                val remoteProfiles = searchSingleFederatedServer(
+                    server = server,
+                    query = query,
+                    limit = perServerLimit,
+                    federationService = federationService
+                )
+                
+                // Convert FederatedUserProfile to UserProfileWithDistance
+                remoteProfiles.forEach { remoteProfile ->
+                    val federatedUserId = "${remoteProfile.userId}@${server.serverId}"
+                    
+                    // Cache the federated user with their public key for chat
+                    try {
+                        federatedUserDao.upsertFederatedUser(
+                            remoteUserId = remoteProfile.userId,
+                            originServerId = server.serverId,
+                            federatedUserId = federatedUserId,
+                            profileData = remoteProfile,
+                            publicKey = remoteProfile.publicKey,
+                            expiresAt = java.time.Instant.now().plus(7, java.time.temporal.ChronoUnit.DAYS)
+                        )
+                    } catch (e: Exception) {
+                        log.debug("Failed to cache federated user {}: {}", federatedUserId, e.message)
+                    }
+                    
+                    val profile = UserProfile(
+                        userId = federatedUserId, // Mark as federated
+                        name = remoteProfile.name ?: "Unknown",
+                        latitude = remoteProfile.location?.lat,
+                        longitude = remoteProfile.location?.lon,
+                        attributes = remoteProfile.attributes?.map { attr ->
+                            UserAttributeDto(
+                                attributeId = attr.attributeId,
+                                type = attr.type, // Preserve type from federated source
+                                relevancy = attr.relevancy,
+                                description = null
+                            )
+                        } ?: emptyList(),
+                        profileKeywordDataMap = null,
+                        activePostingIds = emptyList(),
+                        lastOnlineAt = remoteProfile.lastOnline?.toEpochMilli()
+                    )
+                    
+                    results.add(
+                        app.bartering.features.profile.model.UserProfileWithDistance(
+                            profile = profile,
+                            distanceKm = -1.0, // Unknown distance for federated
+                            matchRelevancyScore = 0.5, // Default score
+                            averageRating = null,
+                            totalReviews = null
+                        )
+                    )
+                }
+                
+                if (results.size >= limit) break
+            } catch (e: Exception) {
+                // Log but continue to next server
+                log.warn("Failed to search server {}: {}", server.serverId, e.message)
+            }
+        }
+    } catch (e: Exception) {
+        log.warn("Federated search failed: {}", e.message)
+    }
+    
+    return results.take(limit)
+}
+
+/**
+ * Searches a single federated server for profiles matching the query.
+ */
+private suspend fun searchSingleFederatedServer(
+    server: FederatedServer,
+    query: String,
+    limit: Int,
+    federationService: app.bartering.features.federation.service.FederationService
+): List<FederatedUserProfile> {
+    
+    val timestamp = System.currentTimeMillis()
+    val localIdentity = federationService.getLocalServerIdentity()
+        ?: throw IllegalStateException("Local server not initialized")
+    
+    // Build signature data: serverId|query|limit|timestamp
+    val signatureData = "${localIdentity.serverId}|$query|$limit|$timestamp"
+    val signature = federationService.signWithLocalKey(signatureData)
+    
+    // Debug logging
+    log.debug("Federation search signature: serverId=${localIdentity.serverId}, signatureData='$signatureData', signature='$signature'")
+    
+    // Build target URL - properly URL-encode query and signature
+    val targetUrl = "${server.serverUrl}/federation/v1/profiles/search" +
+        "?serverId=${localIdentity.serverId}" +
+        "&q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
+        "&limit=$limit" +
+        "&timestamp=$timestamp" +
+        "&signature=${java.net.URLEncoder.encode(signature, "UTF-8")}"
+
+    // Make HTTP request - use Ktor client with JSON support
+    val client = HttpClient {
+        install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
+            json(Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+            })
+        }
+    }
+    
+    val response: FederationApiResponse<ProfileSearchResponse> = client.get(targetUrl).body()
+    
+    client.close()
+    
+    return if (response.success && response.data != null) {
+        response.data.users
+    } else {
+        emptyList()
+    }
 }
 
 fun Route.similarProfilesRoute() {

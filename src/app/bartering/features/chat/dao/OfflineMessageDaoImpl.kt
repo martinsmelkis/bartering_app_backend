@@ -22,6 +22,7 @@ class OfflineMessageDaoImpl : OfflineMessageDao {
                 it[recipientId] = message.recipientId
                 it[senderName] = message.senderName
                 it[encryptedPayload] = message.encryptedPayload
+                it[senderPublicKey] = message.senderPublicKey
                 it[timestamp] = Instant.ofEpochMilli(message.timestamp)
                 it[delivered] = false
             }
@@ -70,7 +71,8 @@ class OfflineMessageDaoImpl : OfflineMessageDao {
             senderName = row[OfflineMessagesTable.senderName],
             encryptedPayload = row[OfflineMessagesTable.encryptedPayload],
             timestamp = row[OfflineMessagesTable.timestamp].toEpochMilli(),
-            delivered = row[OfflineMessagesTable.delivered]
+            delivered = row[OfflineMessagesTable.delivered],
+            senderPublicKey = row[OfflineMessagesTable.senderPublicKey]
         )
     }
 }

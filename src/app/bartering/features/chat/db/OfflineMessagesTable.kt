@@ -14,6 +14,7 @@ object OfflineMessagesTable : Table("offline_messages") {
     val recipientId = varchar("recipient_id", 255).index()
     val senderName = varchar("sender_name", 255) // Store sender name to avoid additional database queries
     val encryptedPayload = text("encrypted_payload")
+    val senderPublicKey = text("sender_public_key").nullable() // For federated messages - sender's public key
     val timestamp = timestamp("timestamp").default(Instant.now())
     val delivered = bool("delivered").default(false)
     val createdAt = timestamp("created_at").default(Instant.now())

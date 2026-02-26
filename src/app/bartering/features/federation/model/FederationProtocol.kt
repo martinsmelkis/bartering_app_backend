@@ -97,6 +97,7 @@ data class MessageRelayRequest(
     val senderUserId: String,
     val recipientUserId: String,
     val encryptedPayload: String, // E2E encrypted message
+    val senderPublicKey: String?, // Sender's public key for recipient to verify/decrypt
     val timestamp: Long,
     val signature: String
 )
@@ -107,8 +108,8 @@ data class MessageRelayRequest(
 @Serializable
 data class MessageRelayResponse(
     val delivered: Boolean,
-    val messageId: String?,
-    val reason: String? // If not delivered, why
+    val messageId: String? = null,
+    val reason: String? = null // If not delivered, why
 )
 
 /**
@@ -127,7 +128,7 @@ data class PostingSearchResponse(
 @Serializable
 data class FederationApiResponse<T>(
     val success: Boolean,
-    val data: T?,
-    val error: String?,
+    val data: T? = null,
+    val error: String? = null,
     val timestamp: Long
 )

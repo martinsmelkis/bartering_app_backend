@@ -1,10 +1,11 @@
 # Federation Feature
 
-This package implements the foundation for server-to-server federation, allowing multiple independent barter app instances to communicate and share data securely.
+This package implements the foundation for server-to-server federation, allowing multiple 
+independent barter app instances to communicate and share data securely.
 
-## Status: 🚧 IN DEVELOPMENT - PLACEHOLDER IMPLEMENTATION
+## Status: ✅ ACTIVE IMPLEMENTATION
 
-This is a foundational structure with placeholder implementations. The database tables and models are defined, but the actual federation logic needs to be implemented.
+Federation is now functional for core workflows: server handshake, trust scopes, user discovery, federated search, and cross-server messaging (including public-key exchange and offline delivery). Ongoing work focuses on production hardening and operational tooling.
 
 ## Architecture Overview
 
@@ -21,7 +22,7 @@ The system supports both **hybrid** and **fully federated** approaches:
 
 - **`FederatedServersTable`**: Stores trusted federated servers with cryptographic keys and scopes
 - **`LocalServerIdentityTable`**: This server's identity and cryptographic keys
-- **`FederatedUsersTable`**: Cached user profiles from federated servers
+- **`FederatedUsersTable`**: Cached user profiles from federated servers (includes public keys for chat)
 - **`FederatedPostingsTable`**: Cached postings from federated servers
 - **`FederationAuditLogTable`**: Audit trail of all federation activities
 
@@ -48,6 +49,7 @@ The system supports both **hybrid** and **fully federated** approaches:
   - Handshake protocol
   - Trust management
   - Signature verification
+  - Message relay to federated servers
 
 #### 5. API Routes (`routes/`)
 
@@ -56,8 +58,8 @@ The system supports both **hybrid** and **fully federated** approaches:
   - `/handshake` - Establish federation
   - `/sync-users` - User data synchronization
   - `/users/nearby` - Geolocation-based search
-  - `/messages/relay` - Cross-server messaging
-  - `/postings/search` - Cross-server posting search
+  - `/messages/relay` - Cross-server messaging with sender public key propagation
+- `/postings/search` - Cross-server posting search
 
 - **`/api/v1/federation/admin/*`**: Admin management endpoints
   - `/initialize` - Set up local server identity
@@ -118,7 +120,8 @@ The system supports both **hybrid** and **fully federated** approaches:
 6. **Message Relay**
    - User A (Server 1) → User B (Server 2)
    - Message sent to Server 1 → relayed to Server 2 → delivered to User B
-   - End-to-end encryption maintained
+   - Sender public key is included in relay for decryption
+   - Offline messages store sender public key for later delivery
 
 ## Security Features
 
@@ -145,38 +148,34 @@ The system supports both **hybrid** and **fully federated** approaches:
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation ✅ (Current)
+### Phase 1: Foundation ✅
 - [x] Database schema design
 - [x] Data models and DTOs
 - [x] Cryptographic utilities
 - [x] Service interface definitions
-- [x] Route placeholders
 
-### Phase 2: Core Federation (TODO)
-- [ ] Implement DAO layer
-- [ ] Local server identity generation
-- [ ] Handshake protocol implementation
-- [ ] Signature verification middleware
-- [ ] Trust management logic
+### Phase 2: Core Federation ✅
+- [x] DAO layer
+- [x] Local server identity generation
+- [x] Handshake protocol implementation
+- [x] Signature verification middleware
+- [x] Trust management logic
 
-### Phase 3: User Federation (TODO)
-- [ ] User sync endpoints
-- [ ] Federated user search
-- [ ] Privacy controls
-- [ ] Cache management
-- [ ] Background sync jobs
+### Phase 3: User Federation ✅
+- [x] User sync endpoints
+- [x] Federated user search (keyword + geolocation)
+- [x] Privacy-safe profile sharing
+- [x] Federated user cache with public keys
 
-### Phase 4: Posting Federation (TODO)
-- [ ] Posting sync endpoints
-- [ ] Federated posting search
-- [ ] Expiration handling
-- [ ] Image/media handling
+### Phase 4: Posting Federation ✅
+- [x] Federated posting search
+- [x] Posting data sharing with scopes
 
-### Phase 5: Chat Federation (TODO)
-- [ ] Message relay infrastructure
-- [ ] Cross-server WebSocket handling
-- [ ] E2E encryption maintenance
-- [ ] Offline message handling
+### Phase 5: Chat Federation ✅
+- [x] Message relay infrastructure
+- [x] Cross-server message delivery
+- [x] Sender public key propagation
+- [x] Offline message handling with sender key
 
 ### Phase 6: Production Readiness (TODO)
 - [ ] Redis integration for distributed caching

@@ -6,10 +6,12 @@ import app.bartering.features.chat.dao.ReadReceiptDao
 import app.bartering.features.chat.manager.ConnectionManager
 import app.bartering.features.chat.model.AuthResponse
 import app.bartering.features.chat.model.ChatConnection
+import app.bartering.features.chat.model.ErrorMessage
 import app.bartering.features.chat.model.FileNotificationMessage
 import app.bartering.features.chat.model.MessageStatus
 import app.bartering.features.chat.model.MessageStatusUpdate
 import app.bartering.features.chat.model.OfflineMessageDto
+import app.bartering.features.chat.model.P2PAuthMessage
 import app.bartering.features.chat.model.ReadReceiptDto
 import app.bartering.features.chat.model.ReadReceiptNotification
 import app.bartering.features.chat.model.ServerChatMessage
@@ -169,6 +171,18 @@ object ChatUtils {
 
         pendingMessages.forEach { offlineMsg ->
             try {
+                // If it's a federated message with a sender public key, send that first
+                if (offlineMsg.senderPublicKey != null) {
+                    val senderKeyMessage = P2PAuthMessage(
+                        senderId = offlineMsg.senderId,
+                        publicKey = offlineMsg.senderPublicKey
+                    )
+                    session.outgoing.send(
+                        Frame.Text(Json.encodeToString(serializer, senderKeyMessage))
+                    )
+                    log.debug("Sent sender public key for offline message from {}", offlineMsg.senderId)
+                }
+                
                 val serverMessage = ServerChatMessage(
                     senderId = offlineMsg.senderId,
                     text = offlineMsg.encryptedPayload,
@@ -634,5 +648,78 @@ object ChatUtils {
         if (totalKeysRemoved > 0) {
             log.debug("🧹 Cleaned up {} conversation entries for userId={}", totalKeysRemoved, userId)
         }
+    }
+
+    // ==================== Federated Message Utils ====================
+
+    /**
+     * Check if a recipient ID is a federated user (format: userId@serverId)
+     */
+    fun isFederatedUser(recipientId: String): Boolean {
+        return recipientId.contains("@") && recipientId.lastIndexOf("@") > 0 &&
+               recipientId.lastIndexOf("@") < recipientId.length - 1
+    }
+
+    /**
+     * Send a message to a federated user on another server.
+     * @param recipientId The federated user ID (format: userId@serverId)
+     * @param senderId The local sender user ID
+     * @param senderName The sender's display name
+     * @param encryptedPayload The encrypted message content
+     * @param senderPublicKey The sender's public key for recipient to verify/decrypt
+     * @param federationService The federation service for sending the message
+     * @param currentConnection The sender's connection for status updates
+     * @param serializer Message serializer
+     * @param log Logger instance
+     * @return The message ID if successfully relayed, null otherwise
+     */
+    suspend fun sendFederatedMessage(
+        recipientId: String,
+        senderId: String,
+        senderName: String,
+        encryptedPayload: String,
+        senderPublicKey: String,
+        federationService: app.bartering.features.federation.service.FederationService,
+        currentConnection: app.bartering.features.chat.model.ChatConnection,
+        serializer: KSerializer<SocketMessage>,
+        log: Logger
+    ): String? {
+        val messageId = java.util.UUID.randomUUID().toString()
+
+        log.info("Sending federated message from {} to {}", senderId, recipientId)
+
+        // Send the message via federation service
+        val relayedMessageId = federationService.sendMessageToFederatedUser(
+            recipientUserId = recipientId,
+            senderUserId = senderId,
+            senderName = senderName,
+            encryptedPayload = encryptedPayload,
+            senderPublicKey = senderPublicKey
+        )
+
+        if (relayedMessageId != null) {
+            // Send SENT status to sender
+            sendMessageStatusUpdate(
+                messageId = relayedMessageId,
+                status = MessageStatus.SENT,
+                session = currentConnection.session,
+                serializer = serializer,
+                log = log
+            )
+
+            log.info("Federated message sent successfully: {} -> {}, messageId={}",
+                senderId, recipientId, relayedMessageId)
+        } else {
+            // Send error to sender
+            sendMessage(
+                session = currentConnection.session,
+                serializer = serializer,
+                message = ErrorMessage("Failed to send message to federated user $recipientId")
+            )
+
+            log.warn("Failed to send federated message: {} -> {}", senderId, recipientId)
+        }
+
+        return relayedMessageId
     }
 }

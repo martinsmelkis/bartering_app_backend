@@ -4,6 +4,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.federation.db.FederatedUsersTable
+import app.bartering.features.federation.model.CachedFederatedProfileData
 import app.bartering.features.federation.model.FederatedUser
 import app.bartering.features.federation.model.FederatedUserProfile
 import app.bartering.features.profile.dao.UserProfileDao
@@ -28,15 +29,16 @@ class FederatedUserDaoImpl(
         expiresAt: Instant?
     ): Boolean = dbQuery {
         try {
-            // Convert profile data to JSON map for storage
-            val cachedData = mapOf(
-                "userId" to profileData.userId,
-                "name" to profileData.name,
-                "bio" to profileData.bio,
-                "profileImageUrl" to profileData.profileImageUrl,
-                "location" to profileData.location,
-                "attributes" to profileData.attributes,
-                "lastOnline" to profileData.lastOnline?.toString()
+            // Convert profile data to serializable cached format
+            val cachedData = CachedFederatedProfileData(
+                userId = profileData.userId,
+                name = profileData.name,
+                bio = profileData.bio,
+                profileImageUrl = profileData.profileImageUrl,
+                location = profileData.location,
+                attributes = profileData.attributes,
+                lastOnline = profileData.lastOnline?.toString(),
+                publicKey = publicKey
             )
             
             // Check if user already exists
@@ -124,6 +126,9 @@ class FederatedUserDaoImpl(
         
         // Convert UserProfile to FederatedUserProfile
         val federatedProfiles = userProfiles.map { profile ->
+            // Get public key for federated chat
+            val publicKey = userProfileDao.getUserPublicKeyById(profile.userId)
+            
             FederatedUserProfile(
                 userId = profile.userId,
                 name = profile.name,
@@ -137,13 +142,20 @@ class FederatedUserDaoImpl(
                         country = null // Not implemented yet
                     )
                 } else null,
-                attributes = profile.attributes.map { it.attributeId },
+                attributes = profile.attributes.map {
+                    app.bartering.features.federation.model.FederatedAttribute(
+                        attributeId = it.attributeId,
+                        type = it.type,
+                        relevancy = it.relevancy
+                    )
+                },
                 lastOnline = try {
                     app.bartering.features.profile.cache.UserActivityCache.getLastSeen(profile.userId)
                         ?.let { Instant.ofEpochMilli(it) }
                 } catch (e: Exception) {
                     null
-                }
+                },
+                publicKey = publicKey // Include for E2E encrypted chat
             )
         }
         

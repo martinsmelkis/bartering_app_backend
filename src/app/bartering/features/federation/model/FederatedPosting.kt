@@ -34,13 +34,13 @@ data class FederatedPostingData(
     val title: String,
     val description: String,
     @Serializable(with = BigDecimalSerializer::class)
-    val value: BigDecimal?,
-    val imageUrls: List<String>,
+    val value: BigDecimal? = null,
+    val imageUrls: List<String> = emptyList(),
     val isOffer: Boolean,
     val status: String,
-    val attributes: List<String>?, // List of attribute IDs
+    val attributes: List<String>? = null, // List of attribute IDs
     @Serializable(with = InstantSerializer::class)
     val createdAt: Instant,
     @Serializable(with = InstantSerializer::class)
-    val expiresAt: Instant?
+    val expiresAt: Instant? = null
 )

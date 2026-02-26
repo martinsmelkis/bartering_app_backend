@@ -19,13 +19,16 @@ Federation allows multiple barter servers to communicate and share data. This se
 
 1. Docker and Docker Compose installed
 2. This project built (`docker build .` should succeed)
-3. Admin user created on both servers (with ID matching `ADMIN_USER_IDS` env var)
+3. Generate the secret for federation init token:
+openssl rand -hex 32
+4. FEDERATION_INIT_TOKEN=a3f9b2c8d1e5f7a0b4c6d9e8f2a1b5c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2 (env var)
+5. ADMIN_IP_ALLOWLIST=127.0.0.1,::1,192.168.1.0/24,10.0.0.0/8 (env var)
 
 ---
 
 ## Quick Start
 
-### 1. Start the Federation Test Environment
+### 1. Setup the Federation Test Environment
 
 ```powershell
 # Stop any existing containers first
@@ -34,7 +37,7 @@ docker-compose -f docker-compose.federation.yml down
 
 Optional:
 docker network prune -f
-docker volume rm barter_app_backend_postgres_dat
+docker volume rm barter_app_backend_postgres_data
 mark network as external: true in federated docker compose
 
 # Adjust application.conf ports before each start
@@ -61,73 +64,115 @@ docker-compose -f docker-compose.yml up --build
 curl.exe http://localhost:8081/public-api/v1/healthCheck
 
 # Check Server B  
-curl.exe http://localhost:8082/public-api/v1/healthCheck
+curl.exe http://localhost:8083/public-api/v1/healthCheck
 ```
 
 Both should return a health status response.
 
-### 3. Create Admin Users (if not exists)
-
-You'll need admin users on **both** servers for the handshake process. The `ADMIN_USER_IDS` environment variable is set to `MainAdmin` by default.
+### 3. Federation Own Server Identity Setup
 
 ---
 
-## Federation Handshake Test
+**Authentication:**.
 
-Each server needs its own identity before it can federate. The `serverUrl` must use Docker internal hostnames so servers can reach each other.
+Each server needs its own identity before it can federate. The `serverUrl` must use Docker internal 
+hostnames so servers can reach each other.
+
+Since this is a bootstrap endpoint (the RSA keypair doesn't exist yet),
+we cannot use RSA signature verification. Instead:
+
+1. Client sends header `X-Timestamp: current_unix_millis`
+2. Client computes `X-Init-Token = lowercase_hex( HMAC-SHA256(FEDERATION_INIT_TOKEN, X-Timestamp) )`
+
+The raw secret is never transmitted — only its keyed digest is sent.
+
+**PowerShell example:**
+```powershell
+# Configuration
+
+**Unix Example:**
+
+# Compute HMAC-SHA256 using openssl
+TOKEN=$(echo -n "$TIMESTAMP" | openssl dgst -sha256 -hmac "$FEDERATION_INIT_TOKEN" | awk '{print $NF}')
+
+```
 
 ### Initialize Server A (Port 8081)
 
 ```powershell
+
+$FEDERATION_INIT_TOKEN = "a3f9b2c8d1e5f7a0b4c6d9e8f2a1b5c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2"
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+# Compute HMAC-SHA256
+$keyBytes = [System.Text.Encoding]::UTF8.GetBytes($FEDERATION_INIT_TOKEN)
+$dataBytes = [System.Text.Encoding]::UTF8.GetBytes($timestamp.ToString())
+$hmac = New-Object System.Security.Cryptography.HMACSHA256(, $keyBytes)
+$hashBytes = $hmac.ComputeHash($dataBytes)
+$token = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
 
 curl.exe -X POST http://localhost:8081/api/v1/federation/admin/initialize `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
   -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature" `
+  -H "X-Init-Token: $token" `
   -d '{\"serverUrl\": \"http://localhost:8081\", \"serverName\": \"Barter Server Alpha\", \"adminContact\": \"admin-a@localhost\", \"description\": \"Primary test server\", \"locationHint\": \"Local-Test-A\"}'
 ```
 
-### Initialize Server B (Port 8082)
+### Initialize Server B (Port 8083)
 
 ```powershell
+
+$FEDERATION_INIT_TOKEN = "8403d9570aa42d4234d578fc5c1b00bfe3dfb99e1764974a7d9d84c771d94072"
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+# Compute HMAC-SHA256
+$keyBytes = [System.Text.Encoding]::UTF8.GetBytes($FEDERATION_INIT_TOKEN)
+$dataBytes = [System.Text.Encoding]::UTF8.GetBytes($timestamp.ToString())
+$hmac = New-Object System.Security.Cryptography.HMACSHA256(, $keyBytes)
+$hashBytes = $hmac.ComputeHash($dataBytes)
+$token = -join ($hashBytes | ForEach-Object { "{0:x2}" -f $_ })
 
 curl.exe -X POST http://localhost:8083/api/v1/federation/admin/initialize `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
   -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature" `
+  -H "X-Init-Token: $token" `
   -d '{\"serverUrl\": \"http://localhost:8083\", \"serverName\": \"Barter Server Beta\", \"adminContact\": \"admin-b@localhost\", \"description\": \"Secondary test server\", \"locationHint\": \"Local-Test-B\"}'
 ```
 
 Both should return `success: true` with a generated `serverId`. **Save these IDs** - you'll need them later.
 
-### Step 2: Server A Initiates Handshake to Server B
+## 4. Federation Handshake Test
+
+You'll need admin users on **both** servers for the handshake process.
+Federation requires **both servers** to handshake with each other. This is not automatic!
 
 ## Bidirectional Handshake
 
-Federation requires **both servers** to handshake with each other. This is not automatic!
+## To get the server ids:
 
-### Step 1: Server A Initiates Handshake to Server B
+docker exec -it postgresql_server psql -U postgres -d mainDatabase
 
-> **Critical:** Use the Docker internal URL `http://barter-b:8081`
+SELECT server_id FROM local_server_identity;
+
+SELECT server_id, server_name, server_url, trust_level, is_active, federation_agreement_hash
+FROM federated_servers;
+
+Exit with \q
+
+### Server A Initiates Handshake to Server B
 
 ```powershell
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 curl.exe -X POST http://localhost:8083/api/v1/federation/admin/handshake `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
   -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature" `
-  -d '{\"targetServerUrl\": \"http://barter_app_server:8081\", \"proposedScopes\": {\"users\": true, \"postings\": true, \"chat\": false, \"geolocation\": false, \"attributes\": true}}'
+  -d '{\"targetServerUrl\": \"http://barter_app_server:8081\", \"proposedScopes\": {\"users\": true, \"postings\": true, \"chat\": true, \"geolocation\": true, \"attributes\": true}}'
 ```
 
 **Expected response:** `accepted: true` with Server B's details.
 
-### Step 2: Server B Initiates Handshake Back to Server A
+### Server B Initiates Handshake Back to Server A
 
 > **Critical:** Use the Docker internal URL `http://barter-a:8081`
 
@@ -136,13 +181,11 @@ $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 curl.exe -X POST http://localhost:8081/api/v1/federation/admin/handshake `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
   -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature" `
-  -d '{\"targetServerUrl\": \"http://barter_app_server2:8083\", \"proposedScopes\": {\"users\": true, \"postings\": true, \"chat\": false, \"geolocation\": false, \"attributes\": true}}'
+  -d '{\"targetServerUrl\": \"http://barter_app_server2:8083\", \"proposedScopes\": {\"users\": true, \"postings\": true, \"chat\": true, \"geolocation\": true, \"attributes\": true}}'
 ```
 
-### Step 3: Verify Trust Status
+### 5: Verify Trust Status
 
 Check both servers to see the pending trust relationships:
 
@@ -150,21 +193,19 @@ Check both servers to see the pending trust relationships:
 # Check Server A's federated servers
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 curl.exe http://localhost:8081/api/v1/federation/admin/servers `
-  -H "X-User-ID: MainAdmin" `
-  -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature"
+  -H "X-Federation-Shared-Secret: a3f9b2c8d1e5f7a0b4c6d9e8f2a333c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2" `
+  -H "X-Timestamp: $timestamp"
 
 # Check Server B's federated servers
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 curl.exe http://localhost:8083/api/v1/federation/admin/servers `
-  -H "X-User-ID: MainAdmin" `
-  -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature"
+  -H "X-Federation-Shared-Secret: a3f9b2c8d1e5f7a0b4c6d9e8f2a333c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2" `
+  -H "X-Timestamp: $timestamp"
 ```
 
 Both should show `trustLevel: PENDING`.
 
-### Step 5: Upgrade Trust Level to FULL
+### 6: Upgrade Trust Level to FULL
 
 ## Upgrading Trust Level
 
@@ -172,26 +213,30 @@ After both handshakes complete, manually upgrade trust from `PENDING` to `FULL` 
 
 ### On Server A - Trust Server B
 
-```powershell
-$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$serverBId = "<SERVER_B_ID_FROM_PREVIOUS_RESPONSE>"
+Use script in scripts\test_local_federation_servers_win to get curl request for Trust update.
+Get private key from local_server_identity Table
 
-curl.exe -X POST "http://localhost:8081/api/v1/federation/admin/servers/$serverBId/trust" `
-  -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
-  -H "X-Timestamp: $timestamp" `
-  -H "X-Signature: test-signature" `
-  -d '{\"trustLevel\": \"FULL\"}'
+```powershell
+
+.\sign-request.ps1 -serverId "2b28f997-2b8d-423d-b61f-e681de047418" -targetServerId "2b28f997-2b8d-423d-b61f-e681de047418" -privateKeyFile "server-a-private.pem"
+
+curl.exe -X POST http://localhost:8083/api/v1/federation/admin/servers/2b28f997-2b8d-423d-b61f-e681de047418/trust -H "Content-Type: application/json" -H "X-Server-Id: 2b28f997-2b8d-423d-b61f-e681de047418" -H "X-Timestamp: 1772030260038" -H "X-Signature: $signature" -d '{\"trustLevel\":\"FULL\"}'                                                                                                                                                                                                                                                      
+{
+  "success" : true,
+  "serverId" : "2b28f997-2b8d-423d-b61f-e681de047418",
+  "trustLevel" : "FULL",
+  "message" : "Trust level updated successfully"
+}
+**On Server B - Trust Server A:**
 ```
 
-**On Server B - Trust Server A:**
-```powershell
-$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$serverAId = "<SERVER_A_ID_FROM_PREVIOUS_RESPONSE>"
+### On Server B - Trust Server A:
 
-curl.exe -X POST "http://localhost:8083/api/v1/federation/admin/servers/$serverAId/trust" `
+```powershell
+
+curl.exe -X POST "http://localhost:8081/api/v1/federation/admin/servers/90644f4a-cce2-49e9-b65d-7ec52ea0fefa/trust" `
   -H "Content-Type: application/json" `
-  -H "X-User-ID: MainAdmin" `
+  -H "X-Server-Id: $serverId" `
   -H "X-Timestamp: $timestamp" `
   -H "X-Signature: test-signature" `
   -d '{\"trustLevel\": \"FULL\"}'
@@ -203,62 +248,29 @@ curl.exe -X POST "http://localhost:8083/api/v1/federation/admin/servers/$serverA
 
 Once federation is established, you can query data from one server via the other.
 
-### Important Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Admin Proxy** | `http://localhost:8081/api/v1/federation/admin/proxy/*` - Generates signed URLs for testing |
-| **Direct Query** | `http://localhost:8082/federation/v1/*` - Server-to-server endpoints (no `/api/v1/`) |
-| **Signatures** | Required for all server-to-server queries, bound to exact parameters |
-
-### Generate Signed URL (Admin Proxy)
-
-Use the admin proxy endpoint to generate a properly signed URL:
-
-```powershell
-# From Server A, get signed URL to query Server B's users
-curl.exe "http://localhost:8081/api/v1/federation/admin/proxy/users/nearby?targetServerId=<SERVER_B_ID>&lat=56.95&lon=24.10&radius=50000"
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "targetUrl": "http://barter-b:8081/federation/v1/users/nearby?serverId=...&signature=...",
-  "signatureData": "<serverId>|<lat>|<lon>|<radius>|<timestamp>",
-  "signature": "<base64-signature>",
-  "localServerId": "...",
-  "targetServerId": "..."
-}
-```
-
-### Execute the Query
-
-Use the generated signature and timestamp, but **change the hostname** to `localhost:8082`:
-
 ### Query Users from Server B via Server A
 ```powershell
-# IMPORTANT: Change barter-b:8081 to localhost:8082!
+# IMPORTANT: Change barter-b:8081 to localhost:8083!
 # The signature is bound to exact coordinates, radius, and timestamp
 
-$timestamp = "<TIMESTAMP_FROM_RESPONSE>"
-$signature = "<URL-ENCODED_SIGNATURE_FROM_RESPONSE>"
+$timestamp = "<TIMESTAMP>"
+$signature = "<URL-ENCODED_SIGNATURE"
 
 # Query Server B's users via Server A's signed request
-curl.exe "http://localhost:8082/federation/v1/users/nearby?serverId=<SERVER_A_ID>&lat=56.95&lon=24.10&radius=50000&timestamp=$timestamp&signature=$signature"
+curl.exe "http://localhost:8083/federation/v1/users/nearby?serverId=<OWN_SERVER_ID>&lat=56.95&lon=24.10&radius=50000&timestamp=$timestamp&signature=Ieon6...f7A%3D%3D"
 ```
 
 ### Query Postings
 
 ```powershell
 # Generate signed URL
-curl.exe "http://localhost:8081/api/v1/federation/admin/proxy/postings/search?targetServerId=<SERVER_B_ID>&q=test&limit=20"
+curl.exe "http://localhost:8081/api/v1/federation/admin/proxy/postings/search?targetServerId=34f24f14-4d7b-456e-bb59-3aec28002322&q=test&limit=20"
 
 # Execute query with proper URL-encoding
 $timestamp = "<TIMESTAMP>"
 $signature = "<URL-ENCODED_SIGNATURE>"
 
-curl.exe "http://localhost:8082/federation/v1/postings/search?serverId=<SERVER_A_ID>&q=test&limit=20&timestamp=$timestamp&signature=$signature"
+curl.exe "http://localhost:8083/federation/v1/postings/search?serverId=2b28f997-2b8d-423d-b61f-e681de047418&q=test&limit=20&timestamp=$timestamp&signature=$signature"
 ```
 
 ## Example:
@@ -347,8 +359,6 @@ $encodedSignature = [System.Web.HttpUtility]::UrlEncode($rawSignature)
 | `/api/v1/federation/admin/handshake` | POST | Initiate handshake with another server |
 | `/api/v1/federation/admin/servers` | GET | List federated servers |
 | `/api/v1/federation/admin/servers/{id}/trust` | POST | Update trust level |
-| `/api/v1/federation/admin/proxy/users/nearby` | GET | Generate signed URL for user search |
-| `/api/v1/federation/admin/proxy/postings/search` | GET | Generate signed URL for posting search |
 
 ### Server-to-Server Endpoints (Federation)
 
@@ -379,7 +389,7 @@ $encodedSignature = [System.Web.HttpUtility]::UrlEncode($rawSignature)
 
 **Cause:** Using `localhost` URLs instead of Docker internal hostnames.
 
-**Fix:** Use `http://barter-b:8081` (Docker internal), not `http://localhost:8082`.
+**Fix:** Use `http://barter-b:8081` (Docker internal), not `http://localhost:8083`.
 
 ### Issue: "Duplicate key" errors
 
@@ -397,7 +407,7 @@ $encodedSignature = [System.Web.HttpUtility]::UrlEncode($rawSignature)
 
 **Correct URLs:**
 - Admin proxy: `http://localhost:8081/api/v1/federation/admin/proxy/...`
-- Server-to-server: `http://localhost:8082/federation/v1/...` (no `/api/v1/`)
+- Server-to-server: `http://localhost:8083/federation/v1/...` (no `/api/v1/`)
 
 ---
 

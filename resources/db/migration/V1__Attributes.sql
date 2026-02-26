@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS offline_messages (
     sender_id VARCHAR(255) NOT NULL,
     recipient_id VARCHAR(255) NOT NULL,
     sender_name VARCHAR(255) NOT NULL,
+    sender_public_key TEXT,
     encrypted_payload TEXT NOT NULL,
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     delivered BOOLEAN NOT NULL DEFAULT FALSE,

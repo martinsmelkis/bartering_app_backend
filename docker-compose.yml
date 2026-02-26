@@ -99,7 +99,8 @@ services:
       - MAILJET_API_KEY=""
       - MAILJET_API_SECRET=""
       - PUSH_PROVIDER=firebase
-      - ADMIN_USER_IDS=MainAdmin
+      - FEDERATION_INIT_TOKEN=a3f9b2c8d1e5f7a0b4c6d9e8f2a1b5c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2
+      - FEDERATION_ADMIN_IP_INIT_ALLOWLIST=127.0.0.1,::1,192.168.1.0/24,10.0.0.0/8
     depends_on:
       postgres:
         condition: service_healthy

@@ -8,18 +8,12 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import app.bartering.extensions.DatabaseFactory
 import app.bartering.features.federation.crypto.FederationCrypto
 import app.bartering.features.federation.dao.FederationDao
 import app.bartering.features.federation.model.*
-import java.security.PrivateKey
-import java.security.PublicKey
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import kotlin.math.pow
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 
 /**
@@ -71,6 +65,23 @@ interface FederationService {
         errorMessage: String? = null,
         durationMs: Long? = null
     )
+
+    /**
+     * Send a message to a federated user on another server.
+     * @param recipientUserId The federated user ID (format: userId@serverId)
+     * @param senderUserId The local sender user ID
+     * @param senderName The sender's display name
+     * @param encryptedPayload The encrypted message content
+     * @param senderPublicKey The sender's public key for recipient to verify/decrypt
+     * @return The message ID if successfully relayed, null otherwise
+     */
+    suspend fun sendMessageToFederatedUser(
+        recipientUserId: String,
+        senderUserId: String,
+        senderName: String,
+        encryptedPayload: String,
+        senderPublicKey: String
+    ): String?
 }
 
 class FederationServiceImpl(
@@ -85,7 +96,6 @@ class FederationServiceImpl(
             })
         }
     }
-    private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun initializeLocalServer(
         serverUrl: String,
@@ -433,5 +443,162 @@ class FederationServiceImpl(
             durationMs = durationMs,
             remoteIp = null
         )
+    }
+
+    override suspend fun sendMessageToFederatedUser(
+        recipientUserId: String,
+        senderUserId: String,
+        senderName: String,
+        encryptedPayload: String,
+        senderPublicKey: String
+    ): String? = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        val messageId = java.util.UUID.randomUUID().toString()
+
+        try {
+            // Parse federated user ID format: userId@serverId
+            val atIndex = recipientUserId.lastIndexOf("@")
+            if (atIndex == -1 || atIndex == 0 || atIndex == recipientUserId.length - 1) {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = null,
+                    action = "OUTGOING_MESSAGE_INVALID_FORMAT",
+                    outcome = FederationOutcome.FAILURE,
+                    details = mapOf("recipientUserId" to recipientUserId),
+                    errorMessage = "Invalid federated user ID format"
+                )
+                return@withContext null
+            }
+
+            val targetUserId = recipientUserId.take(atIndex)
+            val targetServerId = recipientUserId.substring(atIndex + 1)
+
+            // Get target server info
+            val targetServer = dao.getFederatedServer(targetServerId)
+            if (targetServer == null) {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = targetServerId,
+                    action = "OUTGOING_MESSAGE_SERVER_NOT_FOUND",
+                    outcome = FederationOutcome.FAILURE,
+                    details = mapOf(
+                        "recipientUserId" to recipientUserId,
+                        "targetUserId" to targetUserId
+                    ),
+                    errorMessage = "Target server not found"
+                )
+                return@withContext null
+            }
+
+            // Check if server has chat scope enabled
+            if (!targetServer.scopePermissions.chat) {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = targetServerId,
+                    action = "OUTGOING_MESSAGE_SCOPE_DENIED",
+                    outcome = FederationOutcome.FAILURE,
+                    details = mapOf(
+                        "recipientUserId" to recipientUserId,
+                        "targetUserId" to targetUserId
+                    ),
+                    errorMessage = "Server does not have chat scope enabled"
+                )
+                return@withContext null
+            }
+
+            // Check trust level
+            if (targetServer.trustLevel == TrustLevel.BLOCKED) {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = targetServerId,
+                    action = "OUTGOING_MESSAGE_SERVER_BLOCKED",
+                    outcome = FederationOutcome.FAILURE,
+                    details = mapOf(
+                        "recipientUserId" to recipientUserId,
+                        "targetUserId" to targetUserId
+                    ),
+                    errorMessage = "Target server is blocked"
+                )
+                return@withContext null
+            }
+
+            // Get our local identity
+            val localIdentity = dao.getLocalServerIdentity()
+                ?: throw IllegalStateException("Local server identity not initialized")
+
+            // Create and sign the relay request
+            val timestamp = System.currentTimeMillis()
+            val signatureData = "${localIdentity.serverId}|${timestamp}|${encryptedPayload}"
+            val signature = signWithLocalKey(signatureData)
+
+            val relayRequest = MessageRelayRequest(
+                requestingServerId = localIdentity.serverId,
+                senderUserId = senderUserId,
+                recipientUserId = targetUserId,
+                encryptedPayload = encryptedPayload,
+                senderPublicKey = senderPublicKey, // Include sender's public key
+                timestamp = timestamp,
+                signature = signature
+            )
+
+            // Send to target server's relay endpoint
+            val response: FederationApiResponse<MessageRelayResponse> = httpClient.post(
+                "${targetServer.serverUrl}/federation/v1/messages/relay"
+            ) {
+                contentType(ContentType.Application.Json)
+                setBody(relayRequest)
+            }.body()
+
+            val duration = System.currentTimeMillis() - startTime
+
+            if (response.success && response.data?.delivered == true) {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = targetServerId,
+                    action = "OUTGOING_MESSAGE_DELIVERED",
+                    outcome = FederationOutcome.SUCCESS,
+                    details = mapOf(
+                        "recipientUserId" to recipientUserId,
+                        "targetUserId" to targetUserId,
+                        "messageId" to messageId,
+                        "responseMessageId" to (response.data.messageId ?: "unknown")
+                    ),
+                    durationMs = duration
+                )
+                messageId
+            } else {
+                logFederationEvent(
+                    eventType = FederationEventType.MESSAGE_RELAY,
+                    serverId = targetServerId,
+                    action = "OUTGOING_MESSAGE_FAILED",
+                    outcome = FederationOutcome.FAILURE,
+                    details = mapOf(
+                        "recipientUserId" to recipientUserId,
+                        "targetUserId" to targetUserId,
+                        "messageId" to messageId,
+                        "reason" to (response.data?.reason ?: response.error ?: "Unknown error")
+                    ),
+                    errorMessage = response.data?.reason ?: response.error,
+                    durationMs = duration
+                )
+                null
+            }
+
+        } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
+            logFederationEvent(
+                eventType = FederationEventType.MESSAGE_RELAY,
+                serverId = null,
+                action = "OUTGOING_MESSAGE_EXCEPTION",
+                outcome = FederationOutcome.FAILURE,
+                details = mapOf(
+                    "recipientUserId" to recipientUserId,
+                    "messageId" to messageId
+                ),
+                errorMessage = e.message,
+                durationMs = duration
+            )
+            null
+        }
     }
 }
