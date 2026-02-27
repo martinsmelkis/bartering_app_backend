@@ -402,7 +402,7 @@ object ChatUtils {
             val notificationToSender = TransactionCreatedMessage(
                 transactionId = transactionId,
                 partnerId = recipientId,
-                partnerName = senderName ?: recipientId,
+                partnerName = recipientConnection.userName ?: recipientId,
                 initiatedAt = timestamp
             )
             senderConnection.session.send(
