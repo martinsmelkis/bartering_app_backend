@@ -3,7 +3,7 @@
 -- Enables read receipt notifications in real-time chat
 
 CREATE TABLE IF NOT EXISTS chat_read_receipts (
-    message_id VARCHAR(36) NOT NULL,
+    message_id VARCHAR(100) NOT NULL,
     sender_id VARCHAR(255) NOT NULL,
     recipient_id VARCHAR(255) NOT NULL,
     status VARCHAR(20) NOT NULL CHECK (status IN ('SENT', 'DELIVERED', 'READ')),
