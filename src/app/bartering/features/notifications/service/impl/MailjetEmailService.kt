@@ -100,7 +100,30 @@ class MailjetEmailService(
                 }
 
                 if (response.status.isSuccess()) {
-                    val sendResponse: MailjetSendResponse = response.body()
+                    val responseBody = response.bodyAsText()
+                    log.debug("Mailjet API response: {}", responseBody)
+                    
+                    val sendResponse: MailjetSendResponse = json.decodeFromString(responseBody)
+                    
+                    // Handle API-level errors (when messages is null or empty)
+                    if (sendResponse.messages == null || sendResponse.messages.isEmpty()) {
+                        val apiErrors = sendResponse.errors?.joinToString(", ") { 
+                            "${it.errorCode}: ${it.errorMessage}" 
+                        } ?: "Empty response from Mailjet API"
+                        log.error("Mailjet API returned error response: {}. Full response: {}", apiErrors, responseBody)
+                        return@withContext NotificationResult(
+                            success = false,
+                            messageId = null,
+                            failedRecipients = email.to,
+                            errorMessage = "Mailjet API error: $apiErrors",
+                            metadata = mapOf(
+                                "provider" to "mailjet",
+                                "errorType" to "API_ERROR",
+                                "rawResponse" to responseBody.take(500)
+                            )
+                        )
+                    }
+                    
                     val message = sendResponse.messages.firstOrNull()
 
                     if (message != null && message.status == "success") {
@@ -194,7 +217,35 @@ class MailjetEmailService(
                     }
 
                     if (response.status.isSuccess()) {
-                        val sendResponse: MailjetSendResponse = response.body()
+                        val responseBody = response.bodyAsText()
+                        log.debug("Mailjet bulk API response: {}", responseBody)
+                        
+                        val sendResponse: MailjetSendResponse = json.decodeFromString(responseBody)
+                        
+                        // Handle API-level errors for bulk send
+                        if (sendResponse.messages == null || sendResponse.messages.isEmpty()) {
+                            val apiErrors = sendResponse.errors?.joinToString(", ") { 
+                                "${it.errorCode}: ${it.errorMessage}" 
+                            } ?: "Empty response from Mailjet API"
+                            log.error("Mailjet bulk API returned error response: {}. Raw: {}", apiErrors, responseBody)
+                            results.addAll(
+                                batch.map { email ->
+                                    NotificationResult(
+                                        success = false,
+                                        messageId = null,
+                                        failedRecipients = email.to,
+                                        errorMessage = "Mailjet API error: $apiErrors",
+                                        metadata = mapOf(
+                                            "provider" to "mailjet",
+                                            "errorType" to "BULK_API_ERROR",
+                                            "rawResponse" to responseBody.take(500)
+                                        )
+                                    )
+                                }
+                            )
+                            continue
+                        }
+                        
                         results.addAll(
                             sendResponse.messages.mapIndexed { index, message ->
                                 val originalEmail = batch.getOrNull(index)
@@ -298,7 +349,31 @@ class MailjetEmailService(
                 }
 
                 if (response.status.isSuccess()) {
-                    val sendResponse: MailjetSendResponse = response.body()
+                    val responseBody = response.bodyAsText()
+                    log.debug("Mailjet template API response: {}", responseBody)
+                    
+                    val sendResponse: MailjetSendResponse = json.decodeFromString(responseBody)
+                    
+                    // Handle API-level errors for templated email
+                    if (sendResponse.messages == null || sendResponse.messages.isEmpty()) {
+                        val apiErrors = sendResponse.errors?.joinToString(", ") { 
+                            "${it.errorCode}: ${it.errorMessage}" 
+                        } ?: "Empty response from Mailjet API"
+                        log.error("Mailjet template API returned error response: {}. Raw: {}", apiErrors, responseBody)
+                        return@withContext NotificationResult(
+                            success = false,
+                            messageId = null,
+                            failedRecipients = to,
+                            errorMessage = "Mailjet API error: $apiErrors",
+                            metadata = mapOf(
+                                "provider" to "mailjet",
+                                "templateId" to templateId,
+                                "errorType" to "TEMPLATE_API_ERROR",
+                                "rawResponse" to responseBody.take(500)
+                            )
+                        )
+                    }
+                    
                     val message = sendResponse.messages.firstOrNull()
 
                     if (message != null && message.status == "success") {
@@ -471,9 +546,9 @@ class MailjetEmailService(
     }
 
     /**
-     * TODO Close the HTTP client when done
+     * Close the HTTP client when done.
      */
-    fun close() {
+    override fun close() {
         try {
             httpClient.close()
         } catch (e: Exception) {
@@ -574,17 +649,25 @@ data class MailjetAttachment(
 
 @Serializable
 data class MailjetSendResponse(
-    val messages: List<MailjetMessageResponse>
+    @SerialName("Messages")
+    val messages: List<MailjetMessageResponse>? = null,
+    @SerialName("Errors")
+    val errors: List<MailjetError>? = null
 )
 
 @Serializable
 data class MailjetMessageResponse(
+    @SerialName("Status")
     val status: String,
-    @SerialName("customID")
+    @SerialName("CustomID")
     val customId: String? = null,
+    @SerialName("To")
     val to: List<MailjetRecipientResponse>,
+    @SerialName("Cc")
     val cc: List<MailjetRecipientResponse>? = null,
+    @SerialName("Bcc")
     val bcc: List<MailjetRecipientResponse>? = null,
+    @SerialName("Errors")
     val errors: List<MailjetError>? = null
 )
 

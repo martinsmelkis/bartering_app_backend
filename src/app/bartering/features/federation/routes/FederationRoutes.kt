@@ -66,10 +66,10 @@ fun Route.federationRoutes() {
             }
         }
 
-        // TODO used?
         /**
          * POST /federation/v1/handshake
          * Receives handshake requests from other servers wanting to federate.
+         * Triggered from FederationService
          */
         post("/handshake") {
             try {
@@ -292,7 +292,8 @@ fun Route.federationRoutes() {
                             FederatedAttribute(
                                 attributeId = it.attributeId,
                                 type = it.type, // Already an Int (0=SEEKING, 1=PROVIDING)
-                                relevancy = it.relevancy
+                                relevancy = it.relevancy,
+                                uiStyleHint = it.uiStyleHint
                             )
                         },
                         lastOnline = lastOnlineTimestamp?.let { java.time.Instant.ofEpochMilli(it) },
@@ -374,7 +375,7 @@ fun Route.federationRoutes() {
                         val senderFederatedId = "${request.senderUserId}@${request.requestingServerId}"
                         val senderProfile = FederatedUserProfile(
                             userId = request.senderUserId,
-                            name = null, // Will be populated from server name if available, TODO - append part of user id
+                            name = "${server.serverName} (${request.senderUserId.take(8)}...)",
                             publicKey = request.senderPublicKey
                         )
                         
@@ -680,6 +681,9 @@ fun Route.federationRoutes() {
                 val serverId = call.request.queryParameters["serverId"] ?: ""
                 val query = call.request.queryParameters["q"] ?: ""
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 20
+                val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
+                val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
+                val radius = call.request.queryParameters["radius"]?.toDoubleOrNull() ?: 50.0 // Default 50km
                 val signature = call.request.queryParameters["signature"] ?: ""
                 val timestamp = call.request.queryParameters["timestamp"]?.toLongOrNull()
                     ?: System.currentTimeMillis()
@@ -709,13 +713,13 @@ fun Route.federationRoutes() {
                 if (call.handleAuthFailure(authResult)) return@get
                 val server = (authResult as FederationAuthResult.Success).server
 
-                // Perform search on local profiles
+                // Perform search on local profiles with optional location filtering
                 val searchResults = userProfileDao.searchProfilesByKeyword(
                     userId = "", // Not filtering by user for federated search
                     searchText = query,
-                    latitude = null, // TODO filter by location for federated searches?
-                    longitude = null,
-                    radiusMeters = null,
+                    latitude = lat,
+                    longitude = lon,
+                    radiusMeters = if (lat != null && lon != null) radius * 1000 else null,
                     limit = limit.coerceAtMost(50), // Cap at 50 to prevent abuse
                     customWeight = 50,
                     seeking = true,
@@ -748,7 +752,8 @@ fun Route.federationRoutes() {
                             FederatedAttribute(
                                 attributeId = it.attributeId,
                                 type = it.type, // Already an Int
-                                relevancy = it.relevancy
+                                relevancy = it.relevancy,
+                                uiStyleHint = it.uiStyleHint
                             )
                         },
                         lastOnline = profile.lastOnlineAt?.let {
@@ -764,11 +769,14 @@ fun Route.federationRoutes() {
                     serverId = serverId,
                     action = "profile_keyword_search",
                     outcome = FederationOutcome.SUCCESS,
-                    details = mapOf(
-                        "query" to query,
-                        "limit" to limit,
-                        "resultsCount" to federatedProfiles.size
-                    )
+                    details = buildMap {
+                        put("query", query)
+                        put("limit", limit)
+                        put("resultsCount", federatedProfiles.size)
+                        if (lat != null) put("lat", lat)
+                        if (lon != null) put("lon", lon)
+                        if (lat != null && lon != null) put("radiusKm", radius)
+                    }
                 )
 
                 call.respond(HttpStatusCode.OK, FederationApiResponse(

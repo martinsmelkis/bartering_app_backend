@@ -11,6 +11,7 @@ import io.ktor.serialization.jackson.jackson
 import io.ktor.serialization.kotlinx.KotlinxSerializationConverter
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -49,6 +50,7 @@ import app.bartering.features.reviews.di.reviewsModule
 import app.bartering.features.notifications.jobs.DigestNotificationJobManager
 import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.tasks.InactiveUserCleanupTask
+import app.bartering.features.notifications.service.EmailService
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
@@ -157,6 +159,13 @@ fun Application.module(testing: Boolean = false) {
             migrationModule,
             federationModule
         )
+    }
+
+    // Register shutdown hook to close resources
+    monitor.subscribe(ApplicationStopped) {
+        val emailService: EmailService by inject(EmailService::class.java)
+        emailService.close()
+        log.info("✅ Email service closed")
     }
 
     val attributesDao: AttributesDao by inject<AttributesDaoImpl>(AttributesDaoImpl::class.java)

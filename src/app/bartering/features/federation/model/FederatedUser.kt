@@ -72,5 +72,6 @@ data class FederatedLocation(
 data class FederatedAttribute(
     val attributeId: String,
     val type: Int, // 0 = SEEKING, 1 = PROVIDING
-    val relevancy: Double = 0.5
+    val relevancy: Double = 0.5,
+    val uiStyleHint: String? = null // Client-side styling hint (e.g., "icon_nature", "color_blue")
 )

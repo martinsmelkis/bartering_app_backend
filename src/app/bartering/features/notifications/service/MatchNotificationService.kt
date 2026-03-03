@@ -31,10 +31,31 @@ class MatchNotificationService(
     
     /**
      * Get localized attribute name from attributeId
+     * Falls back to normalized (human-readable) format if localization not found
      */
     private fun getLocalizedAttribute(attributeId: String, locale: Locale): String {
         val key = "attr_$attributeId"
-        return Localization.getString(key, locale)
+        val localized = Localization.getString(key, locale)
+        
+        // If localization returns the key itself, it wasn't found - normalize instead
+        return if (localized == key) {
+            normalizeAttributeId(attributeId)
+        } else {
+            localized
+        }
+    }
+    
+    /**
+     * Normalize an attribute ID to human-readable format when localization is not available
+     * Converts "android_emulator" -> "Android emulator", "fresh_fruits" -> "Fresh fruits"
+     */
+    private fun normalizeAttributeId(attributeId: String): String {
+        return attributeId
+            .replace("_", " ")
+            .split(" ")
+            .joinToString(" ") { word ->
+                word.replaceFirstChar { it.uppercase() }
+            }
     }
     
     /**

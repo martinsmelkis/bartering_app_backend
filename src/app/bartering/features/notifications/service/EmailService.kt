@@ -48,4 +48,12 @@ interface EmailService {
      * Check if email provider is healthy
      */
     suspend fun healthCheck(): Boolean
+
+    /**
+     * Close any resources held by the email service.
+     * Called during application shutdown.
+     */
+    fun close() {
+        // Default: no-op for implementations that don't need cleanup
+    }
 }

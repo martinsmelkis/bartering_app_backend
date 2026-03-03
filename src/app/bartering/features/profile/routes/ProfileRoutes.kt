@@ -377,7 +377,8 @@ private suspend fun searchFederatedProfiles(
                                 attributeId = attr.attributeId,
                                 type = attr.type, // Preserve type from federated source
                                 relevancy = attr.relevancy,
-                                description = null
+                                description = null,
+                                uiStyleHint = attr.uiStyleHint
                             )
                         } ?: emptyList(),
                         profileKeywordDataMap = null,

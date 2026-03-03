@@ -146,7 +146,8 @@ class FederatedUserDaoImpl(
                     app.bartering.features.federation.model.FederatedAttribute(
                         attributeId = it.attributeId,
                         type = it.type,
-                        relevancy = it.relevancy
+                        relevancy = it.relevancy,
+                        uiStyleHint = it.uiStyleHint
                     )
                 },
                 lastOnline = try {
