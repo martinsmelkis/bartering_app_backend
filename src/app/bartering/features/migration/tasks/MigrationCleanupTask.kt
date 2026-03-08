@@ -1,72 +1,43 @@
 package app.bartering.features.migration.tasks
 
+import app.bartering.features.migration.dao.MigrationDao
 import kotlinx.coroutines.*
-import app.bartering.features.migration.dao.MigrationSessionDao
 import org.slf4j.LoggerFactory
-import kotlin.time.Duration.Companion.hours
+import java.util.concurrent.TimeUnit
 
 /**
- * Background task to clean up expired and old migration sessions.
- *
- * This task:
- * 1. Marks sessions that have passed their expiry time as EXPIRED
- * 2. Deletes completed/expired/cancelled sessions older than 7 days
- * 3. Prevents accumulation of stale migration data
- *
- * Runs every hour by default.
+ * Background task to clean up expired migration sessions.
  */
 class MigrationCleanupTask(
-    private val migrationDao: MigrationSessionDao,
-    private val intervalHours: Long = 1
+    private val migrationDao: MigrationDao
 ) {
     private val log = LoggerFactory.getLogger(this::class.java)
     private var cleanupJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    /**
-     * Start the cleanup task
-     */
-    fun start(scope: CoroutineScope) {
-        if (cleanupJob?.isActive == true) {
-            log.warn("MigrationCleanupTask already running")
-            return
-        }
+    fun start(intervalMinutes: Long = 60) {
+        if (cleanupJob != null) return
 
+        log.info("Starting migration cleanup task (interval: {} min)", intervalMinutes)
         cleanupJob = scope.launch {
-            // Initial cleanup on startup
-            runCleanup()
-
             while (isActive) {
-                // Wait for the next check cycle
-                delay(intervalHours.hours)
-                runCleanup()
+                try {
+                    val cleaned = migrationDao.cleanupExpiredSessions()
+                    if (cleaned > 0) log.info("Cleaned up {} expired migration sessions", cleaned)
+                    delay(TimeUnit.MINUTES.toMillis(intervalMinutes))
+                } catch (e: CancellationException) {
+                    break
+                } catch (e: Exception) {
+                    log.error("Error during cleanup", e)
+                    delay(TimeUnit.MINUTES.toMillis(5))
+                }
             }
         }
-
-        log.info("MigrationCleanupTask started (interval: {}h)", intervalHours)
     }
 
-    /**
-     * Run a single cleanup cycle
-     */
-    private suspend fun runCleanup() {
-        try {
-                log.debug("Running migration session cleanup")
-
-                val deletedCount = migrationDao.cleanupExpiredSessions()
-                if (deletedCount > 0) {
-                        log.info("Cleaned up {} old migration sessions", deletedCount)
-                    }
-            } catch (e: Exception) {
-                log.error("Error during migration session cleanup", e)
-            }
-        }
-
-    /**
-     * Stop the cleanup task
-     */
     fun stop() {
         cleanupJob?.cancel()
         cleanupJob = null
-        log.info("MigrationCleanupTask stopped")
+        scope.cancel()
     }
 }

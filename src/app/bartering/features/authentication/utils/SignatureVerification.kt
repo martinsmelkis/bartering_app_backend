@@ -135,14 +135,15 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
     // --- 7. BACKWARD COMPATIBILITY: Check migration sessions for newly migrated devices ---
     // Target devices have new keypairs not yet registered in user_device_keys
     // Check if this signature matches any completed migration session's target key
-    val migrationDao = org.koin.java.KoinJavaComponent.getKoin().get<app.bartering.features.migration.dao.MigrationSessionDao>()
-    val completedSessions = migrationDao.getRecentCompletedSessions(userId)
+    val migrationDao = org.koin.java.KoinJavaComponent.getKoin().get<app.bartering.features.migration.dao.MigrationDao>()
+    val completedSessions = migrationDao.getRecentCompletedSessions(userId, sinceMinutes = 60)
     
     for (session in completedSessions) {
-        // Check if signature matches the target device's ephemeral key from migration
-        if (session.targetPublicKey != null) {
+        // Check if signature matches the target/new device's ephemeral key from migration
+        val devicePublicKey = session.targetPublicKey
+        if (devicePublicKey != null) {
             try {
-                val publicKey = convertRawB64KeyToECPublicKey(session.targetPublicKey)
+                val publicKey = convertRawB64KeyToECPublicKey(devicePublicKey)
                 val sig = Signature.getInstance("SHA256withECDSA")
                 sig.initVerify(publicKey)
                 sig.update(challenge.toByteArray())
@@ -150,29 +151,28 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
                 if (sig.verify(signatureBytes)) {
                     // Success! This is a newly migrated device
                     // Auto-register the device key for future requests
-                    if (session.targetDeviceId != null && session.targetPublicKey != null) {
+                    val deviceId = session.targetDeviceId
+                    if (deviceId != null) {
                         GlobalScope.launch {
                             authDao.registerDeviceKey(
                                 app.bartering.features.authentication.model.DeviceKeyInfo(
                                     id = java.util.UUID.randomUUID().toString(),
                                     userId = userId,
-                                    deviceId = session.targetDeviceId,
-                                    publicKey = session.targetPublicKey,
-                                    deviceName = "Migrated Device",
+                                    deviceId = deviceId,
+                                    publicKey = devicePublicKey,
+                                    deviceName = if (session.type == "email_recovery") "Recovered Device" else "Migrated Device",
                                     deviceType = "mobile",
-                                    platform = null,
+                                    platform = "unknown",
                                     isActive = true,
                                     lastUsedAt = java.time.Instant.now().toString(),
-                                    createdAt = java.time.Instant.now().toString(),
-                                    deactivatedAt = null,
-                                    deactivatedReason = null
+                                    createdAt = java.time.Instant.now().toString()
                                 )
                             )
                         }
                     }
                     return Pair(userId, requestBodyAsJsonString)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // This session's key doesn't match, try next
                 continue
             }

@@ -1935,4 +1935,16 @@ class UserProfileDaoImpl : UserProfileDao {
         }
     }
 
+    override suspend fun updateUserPublicKey(userId: String, publicKey: String): Boolean = dbQuery {
+        try {
+            val updatedRows = UserRegistrationDataTable.update({ UserRegistrationDataTable.id eq userId }) {
+                it[UserRegistrationDataTable.publicKey] = publicKey
+            }
+            updatedRows > 0
+        } catch (e: Exception) {
+            log.error("Failed to update public key for user {}", userId, e)
+            false
+        }
+    }
+
 }

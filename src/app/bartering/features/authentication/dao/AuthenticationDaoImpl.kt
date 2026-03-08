@@ -10,6 +10,7 @@ import app.bartering.features.authentication.db.UserDeviceKeysTable
 import app.bartering.features.authentication.model.DeviceKeyConstraints
 import app.bartering.features.authentication.model.DeviceKeyInfo
 import app.bartering.features.authentication.model.UserInfoDto
+import app.bartering.features.migration.dao.MigrationDao
 import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.service.ImageStorageService
@@ -414,8 +415,8 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 log.info("Deleted {} device keys for user {}", deviceKeysDeleted, userId)
 
                 // Step 4: Delete migration sessions
-                val migrationDao: app.bartering.features.migration.dao.MigrationSessionDao by inject(
-                    app.bartering.features.migration.dao.MigrationSessionDao::class.java
+                val migrationDao: MigrationDao by inject(
+                    MigrationDao::class.java
                 )
                 val migrationSessionsDeleted = try {
                     migrationDao.deleteAllSessionsForUser(userId)

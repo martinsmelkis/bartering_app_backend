@@ -54,7 +54,7 @@ import app.bartering.features.notifications.service.EmailService
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
-import app.bartering.features.migration.dao.MigrationSessionDao
+import app.bartering.features.migration.dao.MigrationDao
 import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import app.bartering.features.federation.di.federationModule
@@ -106,6 +106,7 @@ fun Application.module(testing: Boolean = false) {
 
             // Also allow common headers. `HttpHeaders.ContentType` is good practice.
             allowHeader(HttpHeaders.ContentType)
+            allowHeader(HttpHeaders.Accept) // Required for WebP content negotiation
             allowHeader(HttpHeaders.Authorization) // Good to have if you add token auth later
 
             // Allow cookies or other credentials to be sent. Good practice to have.
@@ -192,10 +193,10 @@ fun Application.module(testing: Boolean = false) {
     hardDeletionTask.start(GlobalScope)
     log.info("✅ Posting hard deletion task started (grace period: 30 days)")
 
-    // Start migration session cleanup task
-    val migrationDao: MigrationSessionDao by inject(MigrationSessionDao::class.java)
+    // Start migration cleanup task
+    val migrationDao: MigrationDao by inject(MigrationDao::class.java)
     val migrationCleanupTask = MigrationCleanupTask(migrationDao)
-    migrationCleanupTask.start(GlobalScope)
+    migrationCleanupTask.start(intervalMinutes = 60)
     log.info("✅ Migration cleanup task started")
     
     // Start risk tracking data cleanup task

@@ -1,7 +1,5 @@
 package app.bartering.features.federation.dao
 
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.federation.db.FederatedUsersTable
 import app.bartering.features.federation.model.CachedFederatedProfileData
@@ -10,16 +8,12 @@ import app.bartering.features.federation.model.FederatedUserProfile
 import app.bartering.features.profile.dao.UserProfileDao
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import java.time.Instant
 
 class FederatedUserDaoImpl(
     private val userProfileDao: UserProfileDao
 ) : FederatedUserDao {
-    
-    private val json = Json { ignoreUnknownKeys = true }
-    
+
     override suspend fun upsertFederatedUser(
         remoteUserId: String,
         originServerId: String,
@@ -153,7 +147,7 @@ class FederatedUserDaoImpl(
                 lastOnline = try {
                     app.bartering.features.profile.cache.UserActivityCache.getLastSeen(profile.userId)
                         ?.let { Instant.ofEpochMilli(it) }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     null
                 },
                 publicKey = publicKey // Include for E2E encrypted chat

@@ -49,7 +49,13 @@ interface UserProfileDao {
     ): List<UserProfileWithDistance>
 
     suspend fun getUserCreatedAt(userId: String): java.time.Instant?
-    
+
+    /**
+     * Updates the user's public key in user_registration_data.
+     * Used after device migration to update the signing key.
+     */
+    suspend fun updateUserPublicKey(userId: String, publicKey: String): Boolean
+
     /**
      * Gets all users with pagination support.
      * Optionally filters by federation_enabled flag and updated since timestamp.

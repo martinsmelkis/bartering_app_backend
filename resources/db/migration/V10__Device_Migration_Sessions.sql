@@ -1,142 +1,146 @@
--- V11__device_migration_sessions.sql
--- Secure device migration support for cross-device data transfer
--- Enables users to migrate their profile to a new device while maintaining E2EE
+-- V10__Device_Migration_Sessions.sql
+-- Unified migration system supporting both device-to-device and email-based recovery
+-- ============================================================================
 
 -- ============================================================================
--- MIGRATION SESSIONS TABLE
+-- UNIFIED MIGRATION SESSIONS TABLE
 -- ============================================================================
--- Stores ephemeral sessions for device-to-device data migration.
--- Each session is time-limited (15 minutes) and single-use.
-
--- For backward compatibility with old clients, user_id can be NULL initially
--- (when target device creates the session before source device sends payload)
+-- Supports two modes:
+-- 1. 'device_to_device': Both devices functional, direct transfer via session code
+-- 2. 'email_recovery': Source device broken/lost, recovery via email code
 
 CREATE TABLE IF NOT EXISTS device_migration_sessions (
-    id VARCHAR(36) PRIMARY KEY,              -- UUID for the session
-    session_code VARCHAR(10) NOT NULL,       -- 10-character user-facing code (e.g., "X7B9K2M4P1")
-    user_id VARCHAR(255),                    -- NULL until source device sends payload (backward compatibility)
-    
-    -- Source device (the one initiating migration)
-    source_device_id VARCHAR(64),            -- NULL until source device sends payload
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL REFERENCES user_registration_data(id) ON DELETE CASCADE,
+
+    -- Migration type
+    type VARCHAR(30) NOT NULL DEFAULT 'device_to_device',
+
+    -- Session identification
+    session_code VARCHAR(10),              -- For device-to-device (NULL for email recovery)
+    recovery_code_hash VARCHAR(255),        -- For email recovery (NULL for device-to-device)
+
+    -- Source device info (NULL for email recovery when device is broken)
+    source_device_id VARCHAR(64),
     source_device_key_id VARCHAR(36) REFERENCES user_device_keys(id),
-    source_public_key TEXT,                    -- Ephemeral ECDH public key from source
-    
-    -- Target device (populated when target joins)
-    target_device_id VARCHAR(64),            -- Nullable until target joins
+    source_public_key TEXT,
+
+    -- Target/New device info
+    target_device_id VARCHAR(64),           -- For device-to-device
     target_device_key_id VARCHAR(36) REFERENCES user_device_keys(id),
-    target_public_key TEXT,                    -- Ephemeral ECDH public key from target
-    
+    target_public_key TEXT,
+    new_device_id VARCHAR(64),              -- For email recovery (alias for clarity)
+    new_device_public_key TEXT,
+
+    -- For email recovery: contact info
+    contact_email VARCHAR(255),
+
     -- Session state
-    status VARCHAR(30) NOT NULL DEFAULT 'pending', -- pending, awaiting_confirmation, transferring, completed, expired, cancelled
-    
-    -- Encrypted payload storage (temporary, max 5 min)
-    encrypted_payload TEXT,                    -- The encrypted migration data
-    payload_created_at TIMESTAMPTZ,            -- When payload was stored
-    
+    -- device_to_device: pending -> awaiting_confirmation -> transferring -> completed
+    -- email_recovery: pending -> verified -> completed
+    status VARCHAR(30) NOT NULL DEFAULT 'pending',
+
+    -- Data transfer (device-to-device only)
+    encrypted_payload TEXT,
+    payload_created_at TIMESTAMPTZ,
+
+    -- Security tracking
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    ip_address VARCHAR(45),
+
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL,         -- 15 minutes from created_at
-    completed_at TIMESTAMPTZ,                -- When session was completed
-    
-    -- Rate limiting and security
-    attempt_count INTEGER NOT NULL DEFAULT 0, -- Failed code entry attempts
-    
-    CONSTRAINT unique_session_code UNIQUE(session_code),
-    CONSTRAINT check_status CHECK (status IN ('pending', 'awaiting_confirmation', 'transferring', 'completed', 'expired', 'cancelled'))
+    expires_at TIMESTAMPTZ NOT NULL,         -- 15 min for device, 24 hours for recovery
+    verified_at TIMESTAMPTZ,                 -- Email code verified or target confirmed
+    completed_at TIMESTAMPTZ,
+
+    CONSTRAINT check_migration_type CHECK (type IN ('device_to_device', 'email_recovery')),
+    CONSTRAINT check_migration_status CHECK (status IN (
+        'pending', 'awaiting_confirmation', 'transferring', 'verified', 'completed', 'expired', 'cancelled', 'failed'
+    )),
+    -- Either session_code or recovery_code_hash should be set based on type
+    CONSTRAINT check_code_presence CHECK (
+        (type = 'device_to_device' AND session_code IS NOT NULL) OR
+        (type = 'email_recovery' AND recovery_code_hash IS NOT NULL)
+    )
 );
 
--- Index for session code lookup (user enters the code)
+-- Indexes for common queries
+CREATE INDEX idx_device_migration_sessions_user ON device_migration_sessions(user_id, created_at DESC);
 CREATE INDEX idx_device_migration_sessions_code ON device_migration_sessions(session_code, status)
-    WHERE status IN ('pending', 'awaiting_confirmation');
-
--- Index for user sessions
-CREATE INDEX idx_device_migration_sessions_user ON device_migration_sessions(user_id, created_at DESC)
-    WHERE user_id IS NOT NULL;
-
--- Index for cleanup of expired sessions
+    WHERE type = 'device_to_device' AND status IN ('pending', 'awaiting_confirmation');
 CREATE INDEX idx_device_migration_sessions_expired ON device_migration_sessions(expires_at)
-    WHERE status IN ('pending', 'awaiting_confirmation', 'transferring');
-
--- Index for source device lookups
-CREATE INDEX idx_device_migration_sessions_source ON device_migration_sessions(source_device_id, status)
-    WHERE source_device_id IS NOT NULL;
+    WHERE status IN ('pending', 'awaiting_confirmation', 'transferring', 'verified');
+CREATE INDEX idx_device_migration_sessions_type ON device_migration_sessions(type, status);
 
 -- ============================================================================
--- MIGRATION PAYLOADS TABLE (Alternative: Separate table for larger payloads)
+-- UNIFIED MIGRATION AUDIT LOG
 -- ============================================================================
--- If payloads are large or you want more granular control, store separately
--- For now, we store in the sessions table to reduce complexity
+-- Tracks all migration and recovery events
+
+CREATE TABLE IF NOT EXISTS device_migration_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(50) NOT NULL,       -- 'initiated', 'code_sent', 'verified', 'completed', 'failed', etc.
+    migration_type VARCHAR(30) NOT NULL,   -- 'device_to_device' or 'email_recovery'
+    user_id VARCHAR(255) NOT NULL REFERENCES user_registration_data(id) ON DELETE CASCADE,
+    session_id VARCHAR(36),  -- No FK constraint to avoid timing issues
+    ip_address VARCHAR(45),
+    details JSONB,                          -- Flexible metadata
+    risk_score INTEGER DEFAULT 0,           -- 0-100 risk assessment
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_migration_audit_user ON device_migration_audit_log(user_id, created_at DESC);
+CREATE INDEX idx_migration_audit_session ON device_migration_audit_log(session_id, created_at DESC);
+CREATE INDEX idx_migration_audit_ip ON device_migration_audit_log(ip_address, created_at DESC)
+    WHERE event_type IN ('failed', 'initiated');
 
 -- ============================================================================
--- FUNCTIONS AND TRIGGERS
+-- CLEANUP FUNCTION
 -- ============================================================================
 
--- Function to cleanup expired sessions (run periodically)
-CREATE OR REPLACE FUNCTION cleanup_expired_device_migration_sessions(cutoff_hours INTEGER DEFAULT 24)
+CREATE OR REPLACE FUNCTION cleanup_expired_device_migration_sessions()
 RETURNS INTEGER AS $$
 DECLARE
+    expired_count INTEGER;
     deleted_count INTEGER;
 BEGIN
-    DELETE FROM device_migration_sessions
-    WHERE status IN ('pending', 'awaiting_confirmation', 'transferring')
+    -- Mark expired sessions
+    UPDATE device_migration_sessions
+    SET status = 'expired'
+    WHERE status IN ('pending', 'awaiting_confirmation', 'transferring', 'verified')
       AND expires_at < NOW();
-    
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
-END;
-$$ LANGUAGE plpgsql;
 
--- Function to cleanup completed/old sessions (after some retention period)
-CREATE OR REPLACE FUNCTION cleanup_old_device_migration_sessions(retention_days INTEGER DEFAULT 7)
-RETURNS INTEGER AS $$
-DECLARE
-    deleted_count INTEGER;
-BEGIN
+    GET DIAGNOSTICS expired_count = ROW_COUNT;
+
+    -- Delete old completed/expired/cancelled sessions (keep 30 days for audit)
     DELETE FROM device_migration_sessions
-    WHERE (status IN ('completed', 'expired', 'cancelled') 
-           AND created_at < (NOW() - (retention_days || ' days')::INTERVAL))
-       OR (payload_created_at IS NOT NULL 
-           AND payload_created_at < (NOW() - INTERVAL '10 minutes'));
-    
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
-END;
-$$ LANGUAGE plpgsql;
+    WHERE status IN ('completed', 'expired', 'cancelled', 'failed')
+      AND created_at < NOW() - INTERVAL '30 days';
 
--- Function to check if user has too many active sessions (rate limiting)
-CREATE OR REPLACE FUNCTION check_user_migration_session_limit(
-    p_user_id VARCHAR,
-    p_max_sessions INTEGER DEFAULT 3
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-    active_count INTEGER;
-BEGIN
-    SELECT COUNT(*) INTO active_count
-    FROM device_migration_sessions
-    WHERE user_id = p_user_id
-      AND status IN ('pending', 'awaiting_confirmation', 'transferring')
-      AND expires_at > NOW();
-    
-    RETURN active_count >= p_max_sessions;
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+
+    -- Clean up old audit logs (keep 90 days)
+    DELETE FROM device_migration_audit_log
+    WHERE created_at < NOW() - INTERVAL '90 days';
+
+    RETURN expired_count + deleted_count;
 END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================================================
--- COMMENTS FOR DOCUMENTATION
+-- COMMENTS
 -- ============================================================================
 
 COMMENT ON TABLE device_migration_sessions IS
-    'Ephemeral sessions for secure device-to-device data migration. Sessions expire after 15 minutes. user_id and source_device_id can be NULL for backward compatibility with old clients that create sessions on-demand.';
+    'Unified migration sessions supporting device-to-device transfer and email-based recovery';
 
-COMMENT ON COLUMN device_migration_sessions.session_code IS
-    '10-character alphanumeric code that users enter to join a migration session';
-
-COMMENT ON COLUMN device_migration_sessions.user_id IS
-    'User ID. Can be NULL initially for backward compatibility (when target creates session before source sends payload)';
+COMMENT ON COLUMN device_migration_sessions.type IS
+    'device_to_device: both devices functional; email_recovery: source device broken/lost';
 
 COMMENT ON COLUMN device_migration_sessions.status IS
-    'Session lifecycle: pending -> awaiting_confirmation -> transferring -> completed';
+    'pending -> awaiting_confirmation/verified -> transferring -> completed';
 
-COMMENT ON COLUMN device_migration_sessions.encrypted_payload IS
-    'Temporary storage for encrypted migration data (AES-256-GCM). Auto-deleted after 10 minutes.';
+COMMENT ON TABLE device_migration_audit_log IS
+    'Audit trail for all migration and recovery attempts';

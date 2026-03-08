@@ -3,190 +3,179 @@ package app.bartering.features.migration.model
 import kotlinx.serialization.Serializable
 
 /**
- * Represents the status of a migration session.
+ * Migration event types for audit logging.
  */
-enum class MigrationSessionStatus {
-    PENDING,              // Session created, waiting for target device
-    AWAITING_CONFIRMATION, // Target joined, waiting for source confirmation
-    TRANSFERRING,         // Data transfer in progress
-    COMPLETED,            // Migration completed successfully
-    EXPIRED,              // Session timed out
-    CANCELLED             // Cancelled by user or system
+object MigrationEventType {
+    const val INITIATED = "migration_initiated"
+    const val CODE_SENT = "code_sent"
+    const val CODE_VERIFIED = "code_verified"
+    const val TARGET_REGISTERED = "target_registered"
+    const val PAYLOAD_STORED = "payload_stored"
+    const val COMPLETED = "migration_completed"
+    const val FAILED = "migration_failed"
+    const val CANCELLED = "migration_cancelled"
 }
 
 /**
- * Request to register a target device for a migration session.
- * Called by the target device when user enters the migration code.
+ * Migration type constants.
  */
+object MigrationType {
+    const val DEVICE_TO_DEVICE = "device_to_device"
+    const val EMAIL_RECOVERY = "email_recovery"
+}
+
+// ============================================================================
+// EMAIL RECOVERY REQUESTS/RESPONSES
+// ============================================================================
+
 @Serializable
-data class RegisterMigrationTargetRequest(
-    val sessionId: String,        // The 10-character session code (e.g., "X7B9K2M4P1")
-    val targetDeviceId: String,   // Target device fingerprint/ID
-    val targetPublicKey: String   // Target's ephemeral ECDH public key (Base64)
+data class InitiateRecoveryRequest(
+    val userId: String,
+    val email: String? = null,
+    val newDeviceId: String,
+    val newDevicePublicKey: String
 )
 
-/**
- * Response after target device registers for migration.
- */
+@Serializable
+data class InitiateRecoveryResponse(
+    val success: Boolean,
+    val sessionId: String? = null,
+    val message: String,
+    val emailMasked: String? = null,
+    val expiresAt: String? = null,
+    val errorMessage: String? = null
+)
+
+@Serializable
+data class VerifyRecoveryCodeRequest(
+    val sessionId: String,
+    val recoveryCode: String,
+    val newDeviceId: String,
+    val newDevicePublicKey: String
+)
+
+@Serializable
+data class VerifyRecoveryCodeResponse(
+    val success: Boolean,
+    val message: String,
+    val errorMessage: String? = null
+)
+
+// ============================================================================
+// DEVICE MIGRATION REQUESTS/RESPONSES
+// ============================================================================
+
+@Serializable
+data class InitiateMigrationRequest(
+    val userId: String,
+    val sourceDeviceId: String,
+    val sourcePublicKey: String
+)
+
+@Serializable
+data class InitiateMigrationResponse(
+    val success: Boolean,
+    val sessionCode: String? = null,
+    val expiresAt: String? = null,
+    val errorMessage: String? = null
+)
+
+@Serializable
+data class RegisterMigrationTargetRequest(
+    val sessionCode: String,
+    val targetDeviceId: String,
+    val targetPublicKey: String
+)
+
 @Serializable
 data class RegisterMigrationTargetResponse(
     val success: Boolean,
+    val sessionId: String? = null,
     val sourceDeviceId: String? = null,
+    val targetPublicKey: String? = null,
     val userId: String? = null,
-    val requiresConfirmation: Boolean = true,
     val errorMessage: String? = null
 )
 
-/**
- * Request to get a device's public key for signature verification.
- */
-@Serializable
-data class GetMigrationPublicKeyRequest(
-    val sessionId: String,
-    val deviceId: String
-)
-
-/**
- * Response containing a device's public key.
- */
-@Serializable
-data class GetMigrationPublicKeyResponse(
-    val success: Boolean,
-    val publicKey: String? = null,
-    val errorMessage: String? = null
-)
-
-/**
- * Encrypted migration payload data structure.
- */
-@Serializable
-data class EncryptedMigrationPayloadData(
-    val encryptedData: String,           // Base64 encrypted data (salt + IV + ciphertext)
-    val ephemeralPublicKey: String,    // Source's ephemeral ECDH public key (Base64)
-    val signature: String,             // ECDSA signature of the encrypted payload
-    val sourceDeviceId: String,
-    val targetDeviceId: String,
-    val sessionId: String,
-    val keyVersion: Int = 1,
-    val sourceSigningPublicKey: String? = null  // Source device's main signing key (for sig verification)
-)
-
-/**
- * Request to send encrypted migration payload.
- * Called by source device after user confirms the migration.
- */
 @Serializable
 data class SendMigrationPayloadRequest(
     val sessionId: String,
     val encryptedPayload: EncryptedMigrationPayloadData
 )
 
-/**
- * Response after sending migration payload.
- */
 @Serializable
-data class SendMigrationPayloadResponse(
+data class GetMigrationPayloadResponse(
     val success: Boolean,
-    val message: String? = null
-)
-
-/**
- * Request to confirm migration completion.
- * Called by target device after successfully receiving and decrypting data.
- */
-@Serializable
-data class ConfirmMigrationRequest(
-    val sessionId: String,
-    val targetDeviceId: String
-)
-
-/**
- * Response after confirming migration completion.
- */
-@Serializable
-data class ConfirmMigrationResponse(
-    val success: Boolean,
-    val message: String? = null
-)
-
-/**
- * Internal data class representing a migration session in the database.
- */
-data class MigrationSession(
-    val id: String,
-    val sessionCode: String,
-    val userId: String?,                    // NULL for backward compatibility (target creates first)
-    val sourceDeviceId: String?,            // NULL until source sends payload
-    val sourceDeviceKeyId: String?,
-    val sourcePublicKey: String?,     // Ephemeral ECDH key
-    val targetDeviceId: String?,
-    val targetDeviceKeyId: String?,
-    val targetPublicKey: String?,     // Ephemeral ECDH key
-    val status: MigrationSessionStatus,
-    val encryptedPayload: String?,
-    val payloadCreatedAt: java.time.Instant?,
-    val createdAt: java.time.Instant,
-    val expiresAt: java.time.Instant,
-    val completedAt: java.time.Instant?,
-    val attemptCount: Int
-) {
-    val isExpired: Boolean
-        get() = java.time.Instant.now().isAfter(expiresAt)
-    
-    val isActive: Boolean
-        get() = status in listOf(
-            MigrationSessionStatus.PENDING, 
-            MigrationSessionStatus.AWAITING_CONFIRMATION, 
-            MigrationSessionStatus.TRANSFERRING
-        ) && !isExpired
-}
-
-/**
- * Request to initiate a migration session (from source device).
- * This is called internally by the device management service.
- */
-@Serializable
-data class InitiateMigrationRequest(
-    val userId: String,
-    val sourceDeviceId: String,
-    val sourcePublicKey: String  // Ephemeral ECDH public key
-)
-
-/**
- * Response after initiating a migration session.
- */
-@Serializable
-data class InitiateMigrationResponse(
-    val success: Boolean,
-    val sessionId: String? = null,      // The 10-character code
-    val expiresAt: String? = null,    // ISO 8601 timestamp
+    val encryptedPayload: EncryptedMigrationPayloadData,
     val errorMessage: String? = null
 )
 
-/**
- * Response for getting migration session status.
- */
 @Serializable
-data class MigrationSessionStatusResponse(
+data class EncryptedMigrationPayloadData(
+    val encryptedData: String,
+    val ephemeralPublicKey: String,
+    val signature: String,
+    val sourceDeviceId: String,
+    val targetDeviceId: String,
+    val sessionId: String,
+    val keyVersion: Int = 1,
+    val sourceSigningPublicKey: String? = null
+)
+
+// ============================================================================
+// COMMON REQUESTS/RESPONSES
+// ============================================================================
+
+@Serializable
+data class CompleteMigrationRequest(
+    val sessionId: String,
+    val newDeviceId: String,
+    val devicePublicKey: String,
+    val deviceName: String? = null
+)
+
+@Serializable
+data class CompleteMigrationResponse(
+    val success: Boolean,
+    val message: String,
+    val userId: String? = null,
+    val warning: String? = null,
+    val errorMessage: String? = null
+)
+
+@Serializable
+data class CancelMigrationRequest(
+    val sessionId: String
+)
+
+@Serializable
+data class CancelMigrationResponse(
+    val success: Boolean,
+    val message: String
+)
+
+@Serializable
+data class MigrationStatusResponse(
     val success: Boolean,
     val sessionId: String? = null,
+    val type: String? = null,
     val status: String? = null,
-    val sourceDeviceId: String? = null,
-    val targetDeviceId: String? = null,
-    val targetPublicKey: String? = null,  // Added for source device to encrypt payload
-    val createdAt: String? = null,
+    val targetPublicKey: String? = null,
+    val attemptsRemaining: Int? = null,
     val expiresAt: String? = null,
     val errorMessage: String? = null
 )
 
-/**
- * Constraints and constants for migration sessions.
- */
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 object MigrationConstraints {
-    const val SESSION_CODE_LENGTH = 10
-    const val SESSION_EXPIRY_MINUTES = 15
-    const val PAYLOAD_MAX_AGE_MINUTES = 5
-    const val MAX_ACTIVE_SESSIONS_PER_USER = 3
-    const val MAX_ATTEMPTS_PER_SESSION = 5
-    const val RATE_LIMIT_WINDOW_MINUTES = 15
+    const val RECOVERY_CODE_LENGTH = 8
+    const val RECOVERY_EXPIRY_HOURS = 24
+    const val MIGRATION_EXPIRY_MINUTES = 15
+    const val MAX_ACTIVE_SESSIONS = 2
+    const val MAX_ATTEMPTS = 5
+    const val RATE_LIMIT_WINDOW_MINUTES = 60
+    const val RATE_LIMIT_MAX_ATTEMPTS = 5
 }

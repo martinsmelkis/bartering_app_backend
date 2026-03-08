@@ -1,11 +1,13 @@
 package app.bartering.features.migration.di
 
-import app.bartering.features.migration.dao.MigrationSessionDao
+import app.bartering.features.migration.dao.MigrationDao
+import app.bartering.features.migration.tasks.MigrationCleanupTask
 import org.koin.dsl.module
 
 /**
- * Dependency injection module for the migration feature.
+ * DI module for unified migration system (device-to-device and email recovery).
  */
 val migrationModule = module {
-    single { MigrationSessionDao() }
+    single { MigrationDao() }
+    single { MigrationCleanupTask(get()) }
 }
