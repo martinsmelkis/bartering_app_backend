@@ -22,6 +22,7 @@ import app.bartering.features.chat.tasks.MessageCleanupTask
 import app.bartering.features.chat.utils.ChatUtils
 import app.bartering.features.federation.dao.FederatedUserDao
 import app.bartering.features.federation.service.FederationService
+import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.reviews.dao.BarterTransactionDao
 import app.bartering.features.notifications.service.PushNotificationService
@@ -58,6 +59,9 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     
     // Read receipt DAO for tracking message status
     val readReceiptDao = app.bartering.features.chat.dao.ReadReceiptDaoImpl()
+    
+    // Authentication DAO for verifying device-specific public keys
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     
     // Relationships DAO for checking blocked status
     val relationshipsDao: UserRelationshipsDaoImpl by inject(UserRelationshipsDaoImpl::class.java)
@@ -152,9 +156,25 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 return@webSocket
                             }
 
-                            // 2. Get the user's registered public key from the database
-                            val registeredPublicKey = try {
-                                usersDao.getUserPublicKeyById(authRequest.userId)
+                            // 2. Get the user's registered public key
+                            // Support both master key (user_registration_data) and device-specific keys
+                            val (registeredPublicKey, keySource) = try {
+                                val masterKey = usersDao.getUserPublicKeyById(authRequest.userId)
+                                if (masterKey != null && masterKey == authRequest.publicKey) {
+                                    masterKey to "master"
+                                } else {
+                                    // Check device-specific keys for email recovery scenarios
+                                    val deviceKeys = authDao.getAllActiveDeviceKeys(authRequest.userId)
+                                    val matchingDevice = deviceKeys.find { it.publicKey == authRequest.publicKey }
+                                    if (matchingDevice != null) {
+                                        matchingDevice.publicKey to "device:${matchingDevice.deviceId}"
+                                    } else if (masterKey != null) {
+                                        // Master key exists but doesn't match - will fail in step 3
+                                        masterKey to "master"
+                                    } else {
+                                        null to null
+                                    }
+                                }
                             } catch (e: Exception) {
                                 log.error("Error fetching public key for userId={}: {}", authRequest.userId, e.message)
                                 ChatUtils.sendErrorAndClose(
@@ -191,7 +211,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 return@webSocket
                             }
 
-                            // 4. Verify the signature
+                            // 4. Verify the signature using the matched key
                             val challenge = ChatUtils.buildAuthChallenge(
                                 authRequest.timestamp,
                                 authRequest.userId,
@@ -199,7 +219,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             )
 
                             if (!ChatUtils.verifySignature(challenge, authRequest.signature, registeredPublicKey)) {
-                                log.warn("Invalid signature for userId={}", authRequest.userId)
+                                log.warn("Invalid signature for userId={} (key source: {})", authRequest.userId, keySource)
                                 ChatUtils.sendErrorAndClose(
                                     session = this,
                                     serializer = socketSerializer,

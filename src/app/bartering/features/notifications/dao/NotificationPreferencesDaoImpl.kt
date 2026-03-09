@@ -27,6 +27,14 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             .mapNotNull { rowToUserContacts(it) }
             .singleOrNull()
     }
+
+    override suspend fun getUserByEmail(email: String): UserNotificationContacts? = dbQuery {
+        UserNotificationContactsTable
+            .selectAll()
+            .where { UserNotificationContactsTable.email.lowerCase() eq email.lowercase() }
+            .mapNotNull { rowToUserContacts(it) }
+            .singleOrNull()
+    }
     
     override suspend fun saveUserContacts(contacts: UserNotificationContacts): UserNotificationContacts = dbQuery {
         UserNotificationContactsTable.insert {

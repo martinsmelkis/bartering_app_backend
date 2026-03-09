@@ -30,8 +30,7 @@ object MigrationType {
 
 @Serializable
 data class InitiateRecoveryRequest(
-    val userId: String,
-    val email: String? = null,
+    val email: String,
     val newDeviceId: String,
     val newDevicePublicKey: String
 )
@@ -171,7 +170,7 @@ data class MigrationStatusResponse(
 // ============================================================================
 
 object MigrationConstraints {
-    const val RECOVERY_CODE_LENGTH = 8
+    const val RECOVERY_CODE_LENGTH = 6
     const val RECOVERY_EXPIRY_HOURS = 24
     const val MIGRATION_EXPIRY_MINUTES = 15
     const val MAX_ACTIVE_SESSIONS = 2

@@ -79,7 +79,28 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
 
     override suspend fun registerDeviceKey(deviceKey: DeviceKeyInfo): Boolean = dbQuery {
         try {
-            // Check device limits
+            // Check if device already exists (reactivate or update)
+            val existingDevice = getDeviceKey(deviceKey.userId, deviceKey.deviceId)
+            if (existingDevice != null) {
+                // Update existing device with new key info and reactivate if needed
+                val updated = UserDeviceKeysTable.update({
+                    (UserDeviceKeysTable.userId eq deviceKey.userId) and
+                    (UserDeviceKeysTable.deviceId eq deviceKey.deviceId)
+                }) {
+                    it[publicKey] = deviceKey.publicKey
+                    it[deviceName] = deviceKey.deviceName
+                    it[isActive] = true
+                    it[lastUsedAt] = Instant.now()
+                    it[deactivatedAt] = null
+                    it[deactivatedReason] = null
+                }
+                if (updated > 0) {
+                    log.info("Updated existing device {} for user {}", deviceKey.deviceId, deviceKey.userId)
+                    return@dbQuery true
+                }
+            }
+
+            // Check device limits for new device
             val activeCount = getActiveDeviceCount(deviceKey.userId)
             if (activeCount >= DeviceKeyConstraints.MAX_ACTIVE_DEVICES) {
                 log.warn("User {} has reached the maximum number of active devices ({})",

@@ -32,6 +32,19 @@ class MigrationDao {
         ipAddress: String?
     ): Pair<String, String>? = dbQuery {
         try {
+            // Cancel any existing email_recovery sessions for this user
+            // (User can only have one active email recovery at a time)
+            val cancelled = MigrationSessionsTable.update({
+                (MigrationSessionsTable.userId eq userId) and
+                (MigrationSessionsTable.type eq "email_recovery") and
+                (MigrationSessionsTable.status inList listOf("pending", "verified"))
+            }) {
+                it[MigrationSessionsTable.status] = "cancelled"
+            }
+            if (cancelled > 0) {
+                log.info("Cancelled {} existing email recovery session(s) for user {}", cancelled, userId)
+            }
+
             // Check active session limit
             val activeCount = MigrationSessionsTable
                 .select(MigrationSessionsTable.id)
@@ -48,8 +61,14 @@ class MigrationDao {
             }
 
             val sessionId = UUID.randomUUID().toString()
-            val recoveryCode = generateRecoveryCode()
-            val hashedCode = BCrypt.hashpw(recoveryCode, BCrypt.gensalt(12))
+            
+            // Generate raw code (no formatting) and hash it
+            val rawCode = generateRawRecoveryCode()
+            val hashedCode = BCrypt.hashpw(rawCode, BCrypt.gensalt(12))
+            
+            // Format code with dashes for display/email: "ABC-DEF"
+            val formattedCode = rawCode.chunked(3).joinToString("-")
+            
             val now = Instant.now()
             val expiresAt = now.plusSeconds(MigrationConstraints.RECOVERY_EXPIRY_HOURS * 60L * 60L)
 
@@ -76,7 +95,7 @@ class MigrationDao {
                 riskScore = 25
             )
 
-            Pair(sessionId, recoveryCode)
+            Pair(sessionId, formattedCode)
         } catch (e: Exception) {
             log.error("Failed to create email recovery session for user {}", userId, e)
             null
@@ -109,7 +128,7 @@ class MigrationDao {
             it[attemptCount] = attemptCount + 1
         }
 
-        // Verify code
+        // Get stored hash
         val hashedCode = MigrationSessionsTable
             .select(MigrationSessionsTable.recoveryCodeHash)
             .where { MigrationSessionsTable.id eq sessionId }
@@ -117,7 +136,10 @@ class MigrationDao {
             ?.get(MigrationSessionsTable.recoveryCodeHash)
             ?: return@dbQuery false
 
-        if (!BCrypt.checkpw(plaintextCode, hashedCode)) {
+        // Verify code (normalize input: remove dashes/spaces, uppercase)
+        val normalizedCode = plaintextCode.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        
+        if (!BCrypt.checkpw(normalizedCode, hashedCode)) {
             return@dbQuery false
         }
 
@@ -334,6 +356,28 @@ class MigrationDao {
     }
 
     /**
+     * Mark a session as failed (e.g., when email delivery fails).
+     * This removes it from the active session count.
+     */
+    suspend fun failSession(sessionId: String, userId: String, errorMessage: String): Boolean = dbQuery {
+        val updated = MigrationSessionsTable.update({
+            MigrationSessionsTable.id eq sessionId
+        }) {
+            it[status] = "failed"
+        }
+        if (updated > 0) {
+            logAudit(
+                eventType = MigrationEventType.FAILED,
+                migrationType = "email_recovery",
+                userId = userId,
+                sessionId = sessionId,
+                details = mapOf("error" to errorMessage, "reason" to "email_send_failed")
+            )
+        }
+        updated > 0
+    }
+
+    /**
      * Delete all migration sessions for a user (used when user is deleted).
      */
     suspend fun deleteAllSessionsForUser(userId: String): Int = dbQuery {
@@ -410,7 +454,7 @@ class MigrationDao {
                 it[MigrationAuditLogTable.userId] = userId
                 it[MigrationAuditLogTable.sessionId] = sessionId
                 it[MigrationAuditLogTable.ipAddress] = ipAddress
-                it[MigrationAuditLogTable.details] = details?.let { Json.encodeToString(it) }
+                it[MigrationAuditLogTable.details] = details
                 it[MigrationAuditLogTable.riskScore] = riskScore
                 it[createdAt] = Instant.now()
             }
@@ -429,12 +473,14 @@ class MigrationDao {
         }
     }
 
-    private fun generateRecoveryCode(): String {
+    /**
+     * Generate raw recovery code (without formatting)
+     */
+    private fun generateRawRecoveryCode(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        val code = (1..MigrationConstraints.RECOVERY_CODE_LENGTH)
+        return (1..MigrationConstraints.RECOVERY_CODE_LENGTH)
             .map { chars.random() }
             .joinToString("")
-        return code.chunked(4).joinToString("-")
     }
 
     private fun generateSessionCode(): String {

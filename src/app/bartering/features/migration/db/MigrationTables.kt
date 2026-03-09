@@ -2,6 +2,9 @@ package app.bartering.features.migration.db
 
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.javatime.timestamp
+import org.jetbrains.exposed.sql.json.jsonb
+import kotlinx.serialization.json.Json
+import java.time.Instant
 
 /**
  * Unified migration sessions table supporting device-to-device and email recovery.
@@ -63,7 +66,7 @@ object MigrationAuditLogTable : Table("device_migration_audit_log") {
     val userId = varchar("user_id", 255).references(app.bartering.features.profile.db.UserRegistrationDataTable.id)
     val sessionId = varchar("session_id", 36).nullable()
     val ipAddress = varchar("ip_address", 45).nullable()
-    val details = text("details").nullable() // JSON
+    val details = jsonb<Map<String, String>>("details", Json).nullable()
     val riskScore = integer("risk_score").default(0)
     val createdAt = timestamp("created_at")
 

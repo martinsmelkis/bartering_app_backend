@@ -673,6 +673,7 @@ data class MailjetMessageResponse(
 
 @Serializable
 data class MailjetRecipientResponse(
+    @SerialName("Email")
     val email: String,
     @SerialName("MessageUUID")
     val messageUuid: String? = null,

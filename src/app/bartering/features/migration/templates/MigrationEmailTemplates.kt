@@ -15,7 +15,7 @@ object MigrationEmailTemplates {
         userId: String,
         recoveryCode: String
     ): EmailNotification {
-        val formattedCode = recoveryCode.chunked(4).joinToString("-")
+        // recoveryCode is formatted with dashes (e.g., "D24-S65")
 
         val htmlBody = """
             <!DOCTYPE html>
@@ -37,7 +37,7 @@ object MigrationEmailTemplates {
                     <p>Hello,</p>
                     <p>Use this code to recover your account on your new device:</p>
                     <div class="code-box">
-                        <div class="recovery-code">$formattedCode</div>
+                        <div class="recovery-code">$recoveryCode</div>
                     </div>
                     <div class="warning">
                         <strong>Important:</strong>
@@ -57,7 +57,7 @@ object MigrationEmailTemplates {
             DEVICE RECOVERY
             ================
 
-            Use this code to recover your account: $formattedCode
+            Use this code to recover your account: $recoveryCode
 
             IMPORTANT:
             - Expires in 24 hours
@@ -72,7 +72,7 @@ object MigrationEmailTemplates {
             subject = "Account Recovery Code",
             htmlBody = htmlBody,
             textBody = textBody,
-            from = "security@barter.app",
+            from = "info@bartering.app",
             tags = listOf("migration", "recovery"),
             metadata = mapOf("type" to "email_recovery")
         )

@@ -10,6 +10,7 @@ interface NotificationPreferencesDao {
     
     // User Notification Contacts
     suspend fun getUserContacts(userId: String): UserNotificationContacts?
+    suspend fun getUserByEmail(email: String): UserNotificationContacts?
     suspend fun saveUserContacts(contacts: UserNotificationContacts): UserNotificationContacts
     suspend fun updateUserContacts(userId: String, request: UpdateUserNotificationContactsRequest): UserNotificationContacts?
     suspend fun addPushToken(userId: String, tokenInfo: PushTokenInfo): Boolean

@@ -43,9 +43,10 @@ fun Route.initiateEmailRecoveryRoute() {
                 ))
             }
 
-            val userContacts = notificationDao.getUserContacts(request.userId)
+            // Look up user by email address
+            val userContacts = notificationDao.getUserByEmail(request.email)
                 ?: return@post call.respond(HttpStatusCode.NotFound, InitiateRecoveryResponse(
-                    success = false, message = "User not found"
+                    success = false, message = "No account found with this email"
                 ))
 
             val email = userContacts.email
@@ -53,17 +54,7 @@ fun Route.initiateEmailRecoveryRoute() {
                     success = false, message = "No email registered"
                 ))
 
-            if (request.email != null && request.email.lowercase() != email.lowercase()) {
-                migrationDao.logAudit(
-                    eventType = MigrationEventType.FAILED, migrationType = MigrationType.EMAIL_RECOVERY,
-                    userId = request.userId, ipAddress = clientIP, details = mapOf("reason" to "email_mismatch"), riskScore = 50
-                )
-                return@post call.respond(HttpStatusCode.BadRequest, InitiateRecoveryResponse(
-                    success = false, message = "Email does not match"
-                ))
-            }
-
-            val result = migrationDao.createEmailRecoverySession(userId = request.userId, email = email, ipAddress = clientIP)
+            val result = migrationDao.createEmailRecoverySession(userId = userContacts.userId, email = email, ipAddress = clientIP)
                 ?: return@post call.respond(HttpStatusCode.TooManyRequests, InitiateRecoveryResponse(
                     success = false, message = "Too many active sessions"
                 ))
@@ -71,10 +62,22 @@ fun Route.initiateEmailRecoveryRoute() {
             val (sessionId, recoveryCode) = result
 
             try {
-                val emailNotification = MigrationEmailTemplates.createRecoveryEmail(email, request.userId, recoveryCode)
-                emailService.sendEmail(emailNotification)
+                val emailNotification = MigrationEmailTemplates.createRecoveryEmail(email, userContacts.userId, recoveryCode)
+                val emailResult = emailService.sendEmail(emailNotification)
+                
+                if (!emailResult.success) {
+                    // Mark session as failed since email couldn't be sent
+                    migrationDao.failSession(sessionId, userContacts.userId, emailResult.errorMessage ?: "Email delivery failed")
+                    return@post call.respond(HttpStatusCode.ServiceUnavailable, InitiateRecoveryResponse(
+                        success = false, message = "Failed to send recovery email. Please try again."
+                    ))
+                }
             } catch (e: Exception) {
                 log.error("Failed to send recovery email", e)
+                migrationDao.failSession(sessionId, userContacts.userId, e.message ?: "Email service error")
+                return@post call.respond(HttpStatusCode.ServiceUnavailable, InitiateRecoveryResponse(
+                    success = false, message = "Failed to send recovery email. Please try again."
+                ))
             }
 
             call.respond(HttpStatusCode.OK, InitiateRecoveryResponse(
@@ -292,9 +295,23 @@ fun Route.completeMigrationRoute() {
                 ))
             }
 
-            // Update user's public key in user_registration_data to match the migrated key
-            // The migrated device has imported the source device's keypair
-            userProfileDao.updateUserPublicKey(session.userId, request.devicePublicKey)
+            // For email recovery: deactivate all other devices (old device is lost/broken)
+            if (session.type == MigrationType.EMAIL_RECOVERY) {
+                val existingDevices = authDao.getAllActiveDeviceKeys(session.userId)
+                    .filter { it.deviceId != request.newDeviceId }
+                
+                for (oldDevice in existingDevices) {
+                    authDao.deactivateDeviceKey(session.userId, oldDevice.deviceId, "device_recovered_via_email")
+                    log.info("Deactivated old device {} for user {} due to email recovery", oldDevice.deviceId, session.userId)
+                }
+            }
+
+            // Update user's public key in user_registration_data for device-to-device migration
+            // where the keypair is imported. For email recovery, the device has a new keypair
+            // so we only update device-specific key, not the master public key.
+            if (session.type != MigrationType.EMAIL_RECOVERY) {
+                userProfileDao.updateUserPublicKey(session.userId, request.devicePublicKey)
+            }
 
             call.respond(HttpStatusCode.OK, CompleteMigrationResponse(
                 success = true, message = "Migration completed", userId = session.userId,
