@@ -137,6 +137,7 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 it[deactivatedAt] = null
                 it[deactivatedReason] = null
             }
+            log.info("Inserted NEW device {} for user {}", deviceKey.deviceId, deviceKey.userId)
 
             logDeviceActivityInternal(deviceKey.userId, deviceKey.deviceId, "register", null)
 

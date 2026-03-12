@@ -269,13 +269,7 @@ fun Route.completeMigrationRoute() {
                 ))
             }
 
-            if (!migrationDao.completeSession(request.sessionId)) {
-                return@post call.respond(HttpStatusCode.InternalServerError, CompleteMigrationResponse(
-                    success = false, message = "Failed to complete"
-                ))
-            }
-
-            // Register new device
+            // Register new device FIRST - if this fails, session stays "verified" for retry
             val deviceKeyInfo = DeviceKeyInfo(
                 id = UUID.randomUUID().toString(),
                 userId = session.userId,
@@ -290,8 +284,19 @@ fun Route.completeMigrationRoute() {
             )
 
             if (!authDao.registerDeviceKey(deviceKeyInfo)) {
+                log.error("Failed to register device for user {}: deviceId={}", session.userId, request.newDeviceId)
                 return@post call.respond(HttpStatusCode.InternalServerError, CompleteMigrationResponse(
                     success = false, message = "Failed to register device"
+                ))
+            }
+            
+            log.info("Successfully registered device {} for user {}", request.newDeviceId, session.userId)
+
+            // NOW complete the session - only after device is successfully registered
+            if (!migrationDao.completeSession(request.sessionId)) {
+                log.error("Failed to complete session {} after device registration succeeded", request.sessionId)
+                return@post call.respond(HttpStatusCode.InternalServerError, CompleteMigrationResponse(
+                    success = false, message = "Failed to complete session"
                 ))
             }
 

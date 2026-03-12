@@ -8,9 +8,12 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.utils.CryptoUtils.convertRawB64KeyToECPublicKey
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
 import java.security.Signature
 import java.util.Base64
 import kotlin.math.abs
+
+private val log = LoggerFactory.getLogger("SignatureVerification")
 
 /**
  * Verifies the client's request signature.
@@ -35,6 +38,8 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
     val requestBodyAsJsonString = call.receiveText()
 
     if (userId == null || timestampStr == null || clientSignatureB64 == null) {
+        log.warn("Missing auth headers: userId={}, timestamp={}, signature={}", 
+            userId != null, timestampStr != null, clientSignatureB64 != null)
         call.respond(HttpStatusCode.BadRequest, "Missing authentication headers")
         return Pair(null, null)
     }
@@ -70,9 +75,11 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
     // --- 4. BACKWARD COMPATIBILITY: Try legacy public key if no device keys ---
     // This supports existing users who haven't registered device keys yet
     val userInfo = if (deviceKeys.isEmpty()) {
+        log.warn("No device keys found for user {}, trying legacy public key", userId)
         try {
             authDao.getUserInfoById(userId)
         } catch (e: Exception) {
+            log.error("Failed to get user info for {}: {}", userId, e.message)
             null
         }
     } else {
@@ -86,12 +93,15 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
     val signatureBytes = try {
         Base64.getDecoder().decode(clientSignatureB64)
     } catch (e: IllegalArgumentException) {
+        log.error("Failed to decode base64 signature: {}", e.message)
         call.respond(HttpStatusCode.BadRequest, "Invalid signature format")
         return Pair(null, null)
     }
+    
+    log.debug("Signature bytes length: {}", signatureBytes.size)
 
     // Try each device key until one validates
-    for (deviceKey in deviceKeys) {
+    for ((index, deviceKey) in deviceKeys.withIndex()) {
         try {
             val publicKey = convertRawB64KeyToECPublicKey(deviceKey.publicKey)
             val signature = Signature.getInstance("SHA256withECDSA")
@@ -101,18 +111,21 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
             if (signature.verify(signatureBytes)) {
                 // Success! Update last used timestamp asynchronously (don't block response)
                 // Note: We don't await this to keep authentication fast
-                kotlinx.coroutines.GlobalScope.launch {
+                GlobalScope.launch {
                     authDao.updateDeviceLastUsed(userId, deviceKey.deviceId)
                 }
                 
                 return Pair(userId, requestBodyAsJsonString)
+            } else {
+                log.debug("Device key {} failed signature verification", index)
             }
         } catch (e: Exception) {
-            // Log error but continue trying other keys
-            // This can happen if a key is corrupted or in wrong format
+            log.warn("Device key {} verification error: {}", index, e.message)
             continue
         }
     }
+    
+    log.warn("All {} device keys failed for user {}", deviceKeys.size, userId)
 
     // --- 6. BACKWARD COMPATIBILITY: Try legacy public key if no device keys worked ---
     // This supports existing users who haven't migrated to device keys yet
@@ -135,8 +148,11 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
     // --- 7. BACKWARD COMPATIBILITY: Check migration sessions for newly migrated devices ---
     // Target devices have new keypairs not yet registered in user_device_keys
     // Check if this signature matches any completed migration session's target key
+    log.debug("Checking migration sessions for user {} (since 60 min)", userId)
     val migrationDao = org.koin.java.KoinJavaComponent.getKoin().get<app.bartering.features.migration.dao.MigrationDao>()
     val completedSessions = migrationDao.getRecentCompletedSessions(userId, sinceMinutes = 60)
+    
+    log.debug("Found {} completed migration sessions for user {}", completedSessions.size, userId)
     
     for (session in completedSessions) {
         // Check if signature matches the target/new device's ephemeral key from migration
@@ -171,13 +187,17 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
                         }
                     }
                     return Pair(userId, requestBodyAsJsonString)
+                } else {
+                    log.debug("Migration session {} key failed signature verification", session.id)
                 }
-            } catch (_: Exception) {
-                // This session's key doesn't match, try next
+            } catch (e: Exception) {
+                log.warn("Migration session {} verification error: {}", session.id, e.message)
                 continue
             }
         }
     }
+    
+    log.warn("All fallbacks failed for user {} - returning 401", userId)
 
     // --- 8. All Keys Failed ---
     call.respond(HttpStatusCode.Unauthorized, "Invalid signature")
