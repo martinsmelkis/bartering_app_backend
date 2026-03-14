@@ -1,6 +1,7 @@
 package app.bartering.features.profile.dao
 
 import app.bartering.config.AiConfig
+import app.bartering.localization.Localization
 import org.slf4j.LoggerFactory
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.attributes.db.UserAttributesTable
@@ -988,7 +989,7 @@ class UserProfileDaoImpl : UserProfileDao {
         val clampedWeight = customWeight.coerceIn(10, 100)
         val weightMultiplier = 0.5 + (clampedWeight - 10) * 0.7 / 90.0
 
-        log.debug("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {}, seeking: {}, offering: {})",
+        log.info("Starting multi-stage search for: '{}' (customWeight: {}, multiplier: {}, seeking: {}, offering: {})",
             sanitizedSearchText, customWeight, weightMultiplier, seeking, offering)
 
         // Stage 1: Fast keyword-only search (no embedding generation)
@@ -1003,12 +1004,32 @@ class UserProfileDaoImpl : UserProfileDao {
             seeking,
             offering
         )
-
         log.debug("Stage 1 complete: Found {} keyword matches", keywordResults.size)
 
+        // Multi-language fallback: If no results OR less than 5 results, try translation
+        val translatedResults = if (keywordResults.isEmpty() || keywordResults.size < 5) {
+            log.debug("Keyword results: {} - attempting translation fallback for '{}'", keywordResults.size, sanitizedSearchText)
+            attemptTranslationFallback(
+                userId = userId,
+                searchText = sanitizedSearchText,
+                latitude = latitude,
+                longitude = longitude,
+                radiusMeters = radiusMeters,
+                limit = limit,
+                weightMultiplier = weightMultiplier,
+                seeking = seeking,
+                offering = offering
+            )
+        } else {
+            emptyList()
+        }
+        
+        // Combine results (translation results have slightly lower priority)
+        val allKeywordResults = keywordResults + translatedResults.map { it.first to (it.second * 0.9) } // Slight penalty for translated matches
+        
         // Decision point: Should we enhance with semantic search?
-        val hasLowKeywordScores = keywordResults.any { it.second < 0.5 }
-        val useSemanticEnhancement = keywordResults.size < 10 || hasLowKeywordScores
+        val hasLowKeywordScores = allKeywordResults.any { it.second < 0.5 }
+        val useSemanticEnhancement = allKeywordResults.size < 10 || hasLowKeywordScores
 
         val userProfiles = mutableListOf<UserProfileWithDistance>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
@@ -1072,7 +1093,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Add keyword-only results that weren't found in semantic search
         addKeywordOnlyResults(
-            keywordResults,
+            allKeywordResults,
             userProfiles,
             userAttributes,
             latitude,
@@ -1164,29 +1185,6 @@ class UserProfileDaoImpl : UserProfileDao {
                     ${ProfileQueryBuilderUtils.buildAttributeTypeSQLFilter(seeking, offering)}
                 GROUP BY ua.user_id
             ),
-            attribute_description_scores AS (
-                -- Search in user attribute descriptions (negligible performance impact with GIN index)
-                -- Low weight (0.05-0.1) since this is a secondary matching signal
-                SELECT 
-                    ua.user_id,
-                    SUM(
-                        GREATEST(
-                            COALESCE(word_similarity(?, ua.description), 0) * 0.28,
-                            COALESCE(similarity(?, ua.description), 0) * 0.28,
-                            CASE WHEN LOWER(ua.description) LIKE LOWER('%' || ? || '%') THEN 0.3 ELSE 0.0 END
-                        ) * 
-                        CASE 
-                            WHEN ua.relevancy > 0.90 THEN 2.0
-                            WHEN ua.relevancy > 0.75 THEN 1.8
-                            ELSE 1.2
-                        END
-                    ) as description_score
-                FROM user_attributes ua
-                WHERE 
-                    ua.description % ?
-                    OR LOWER(ua.description) LIKE LOWER('%' || ? || '%')
-                GROUP BY ua.user_id
-            ),
             posting_match_scores AS (
                 -- Search in user postings (title and description) - SLIGHTLY HIGHER WEIGHT
                 SELECT 
@@ -1221,11 +1219,10 @@ class UserProfileDaoImpl : UserProfileDao {
                     u.id as user_id,
                     up.name,
                     up.location,
-                    -- Combine attribute, posting, and description scores
+                    -- Base score from attribute and posting matches only
                     COALESCE(ums.attribute_score, 0) + 
                     COALESCE(ums.priority_bonus, 0) +
-                    COALESCE(pms.posting_score, 0) +
-                    COALESCE(ads.description_score, 0) as keyword_score
+                    COALESCE(pms.posting_score, 0) as keyword_score
                     ${
             if (latitude != null && longitude != null) {
                 ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
@@ -1237,9 +1234,8 @@ class UserProfileDaoImpl : UserProfileDao {
                 INNER JOIN user_profiles up ON u.id = up.user_id
                 LEFT JOIN user_match_scores ums ON u.id = ums.user_id
                 LEFT JOIN posting_match_scores pms ON u.id = pms.user_id
-                LEFT JOIN attribute_description_scores ads ON u.id = ads.user_id
                 WHERE 
-                    (ums.user_id IS NOT NULL OR pms.user_id IS NOT NULL OR ads.user_id IS NOT NULL)
+                    (ums.user_id IS NOT NULL OR pms.user_id IS NOT NULL)
                     AND u.id != ?
                     ${
             if (latitude != null && longitude != null && radiusMeters != null) {
@@ -1262,12 +1258,6 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Parameters for matching_attributes CTE (5 occurrences)
         repeat(5) { keywordParams.add(VarCharColumnType() to searchText) }
-
-        // Parameters for attribute_description_scores CTE (5 occurrences)
-        // word_similarity, similarity, LIKE
-        repeat(3) { keywordParams.add(VarCharColumnType() to searchText) }
-        // WHERE clause: description %, description LIKE
-        repeat(2) { keywordParams.add(VarCharColumnType() to searchText) }
 
         // Parameters for posting_match_scores CTE (10 occurrences)
         // Title: word_similarity, similarity, LIKE
@@ -1356,6 +1346,61 @@ class UserProfileDaoImpl : UserProfileDao {
         }
 
         cachedEmbedding
+    }
+
+    /**
+     * Attempt to find translation of the search term in any available locale.
+     * If found, search with the English (or other language) equivalent.
+     * This enables multi-language search support.
+     * 
+     * @return List of (userId, score) pairs from translated search, or empty if no translation found
+     */
+    private suspend fun attemptTranslationFallback(
+        userId: String,
+        searchText: String,
+        latitude: Double?,
+        longitude: Double?,
+        radiusMeters: Double?,
+        limit: Int,
+        weightMultiplier: Double?,
+        seeking: Boolean?,
+        offering: Boolean?
+    ): List<Pair<String, Double>> {
+        log.debug("Attempting translation lookup for: '{}'", searchText)
+        
+        // Try to find the search term in translation files and get the English key
+        val englishEquivalent = findEnglishKeyForTranslation(searchText)
+        
+        if (englishEquivalent != null && englishEquivalent != searchText) {
+            log.info("Translation fallback: '{}' -> '{}'", searchText, englishEquivalent)
+            
+            // Search with the English equivalent
+            return executeKeywordSearch(
+                userId = userId,
+                searchText = englishEquivalent,
+                latitude = latitude,
+                longitude = longitude,
+                radiusMeters = radiusMeters,
+                limit = limit,
+                weightMultiplier = weightMultiplier,
+                seeking = seeking,
+                offering = offering
+            )
+        }
+        
+        log.debug("No translation found for '{}'", searchText)
+        return emptyList()
+    }
+    
+    /**
+     * Reverse lookup: Find the English key that corresponds to a translated value.
+     * Searches through all available locale bundles to find a match.
+     * 
+     * @param searchText The translated text (e.g., "Celtniecība")
+     * @return The English key/value (e.g., "Construction") or null if not found
+     */
+    private fun findEnglishKeyForTranslation(searchText: String): String? {
+        return Localization.findEnglishForTranslation(searchText)
     }
 
     /**
@@ -1626,13 +1671,13 @@ class UserProfileDaoImpl : UserProfileDao {
      * Add keyword-only results that weren't found in semantic search
      */
     private suspend fun addKeywordOnlyResults(
-        keywordResults: List<Pair<String, Double>>,
+        allKeywordResults: List<Pair<String, Double>>,
         userProfiles: MutableList<UserProfileWithDistance>,
         userAttributes: MutableMap<String, MutableList<UserAttributeDto>>,
         latitude: Double?,
         longitude: Double?
     ) = dbQuery {
-        val userIdList = keywordResults
+        val userIdList = allKeywordResults
             .filter { !userProfiles.any { p -> p.profile.userId == it.first } }
             .map { it.first }
             .joinToString(",") { "'$it'" }
@@ -1677,7 +1722,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     val keywordsJson = rs.getString("profile_keywords_with_weights")
                     val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
 
-                    val keywordScore = keywordResults.first { foundUserId == it.first }.second
+                    val keywordScore = allKeywordResults.first { foundUserId == it.first }.second
                     userProfiles.add(
                         UserProfileWithDistance(
                             profile = UserProfile(

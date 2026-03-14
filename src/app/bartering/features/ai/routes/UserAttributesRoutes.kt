@@ -310,9 +310,7 @@ private suspend fun updateUserAttributesFromMap(
     }
 
     // Step 2: Ensure all attributes exist FIRST (separate transactions for each)
-    val validAttributes = mutableListOf<Triple<String, Double, String?>>() // attributeKey, relevancy, translatedDescription (null for English)
-
-    val locale = Locale(language)
+    val validAttributes = mutableListOf<Pair<String, Double>>() // attributeKey, relevancy
 
     for ((attributeNameKey, relevancy) in attributesMap) {
         try {
@@ -334,24 +332,8 @@ private suspend fun updateUserAttributesFromMap(
                 continue
             }
 
-            // Get translated attribute name from localization files (only for non-English locales)
-            // The localization key is stored in the format "attr_<attributeKey>"
-            val localizationKey = attribute.localizationKey
-            val translatedName = if (language != "en") {
-                try {
-                    val translation = Localization.getString(localizationKey, locale)
-                    // If translation equals the key (not found), use original attribute name as fallback
-                    if (translation == localizationKey) attributeNameKey else translation
-                } catch (_: Exception) {
-                    application.log.debug("No translation found for key: $localizationKey in language: $language")
-                    attributeNameKey
-                }
-            } else {
-                null // Don't store description for English locale
-            }
-
             println("@@@@@@@@@@@ Validated attribute exists: ${attribute.attributeNameKey}")
-            validAttributes.add(Triple(attribute.attributeNameKey, validatedRelevancy, translatedName))
+            validAttributes.add(Pair(attribute.attributeNameKey, validatedRelevancy))
 
         } catch (e: Exception) {
             application.log.error(
@@ -364,7 +346,7 @@ private suspend fun updateUserAttributesFromMap(
 
     // Step 3: Now batch insert all user_attribute links (all attributes are guaranteed to exist)
     dbQuery {
-        for ((attributeKey, relevancy, translatedDescription) in validAttributes) {
+        for ((attributeKey, relevancy) in validAttributes) {
             try {
                 val relevancyBigDecimal = try {
                     relevancy.toBigDecimal()
@@ -373,20 +355,12 @@ private suspend fun updateUserAttributesFromMap(
                 }
 
                 // Create the link between the user and this attribute
-                // For non-English locales: use translated description if available, fallback to attributeKey
-                // For English locale: description is null (not stored)
-                val effectiveDescription = when {
-                    translatedDescription != null -> translatedDescription // Non-English with translation or fallback
-                    language != "en" -> attributeKey // Non-English without translation fallback
-                    else -> null // English locale - don't store description
-                }
-
                 userAttributesDao.create(
                     userId = userId,
                     attributeId = attributeKey,
                     type = type,
                     relevancy = relevancyBigDecimal,
-                    description = effectiveDescription
+                    description = null
                 )
             } catch (e: Exception) {
                 application.log.error("Error linking attribute '$attributeKey' to user $userId", e)
