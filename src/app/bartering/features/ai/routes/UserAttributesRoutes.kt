@@ -19,12 +19,9 @@ import app.bartering.features.profile.model.OnboardingDataRequest
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
-import app.bartering.localization.Localization
 import app.bartering.utils.ValidationUtils
-import org.jetbrains.exposed.sql.select
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
-import java.util.Locale
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.collections.iterator

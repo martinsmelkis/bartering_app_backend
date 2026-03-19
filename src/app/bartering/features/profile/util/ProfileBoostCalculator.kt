@@ -146,7 +146,8 @@ object ProfileBoostCalculator {
 
             // Get reputation data for rating fields (from cache or fallback)
             val (reputation, badges) = reputationDataMap[userId] ?: (null to emptyList())
-            
+            val userBadges = badges.ifEmpty { null }
+
             // Try cached reputation first, then fallback to reviews table
             val averageRating = reputation?.averageRating 
                 ?: fallbackRatingsMap[userId]?.first
@@ -160,7 +161,8 @@ object ProfileBoostCalculator {
                 return@map profileWithDistance.copy(
                     profile = updatedProfile,
                     averageRating = averageRating,
-                    totalReviews = totalReviews
+                    totalReviews = totalReviews,
+                    badges = userBadges
                 )
             }
 
@@ -267,13 +269,15 @@ object ProfileBoostCalculator {
                     profile = updatedProfile,
                     matchRelevancyScore = boostedScore,
                     averageRating = averageRating,
-                    totalReviews = totalReviews
+                    totalReviews = totalReviews,
+                    badges = userBadges
                 )
             } else {
                 profileWithDistance.copy(
                     profile = updatedProfile,
                     averageRating = averageRating,
-                    totalReviews = totalReviews
+                    totalReviews = totalReviews,
+                    badges = userBadges
                 )
             }
         }

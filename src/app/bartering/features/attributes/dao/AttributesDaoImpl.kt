@@ -313,10 +313,9 @@ class AttributesDaoImpl : AttributesDao {
                 log.debug("Attribute already exists: {}", attributeNameKey)
                 return@dbQuery existingAttribute
             }
-            val originalCustomUserText = attributeNameKey
 
             var mostRelevantCategoryLinks =
-                attributeCategorizer.findBestCategory(originalCustomUserText)
+                attributeCategorizer.findBestCategory(attributeNameKey)
 
             if (mostRelevantCategoryLinks.toList().isEmpty()) {
                 // Misc/Non-relevant/Unknow Category
@@ -328,7 +327,7 @@ class AttributesDaoImpl : AttributesDao {
                 normalizedAttr,
                 localizationKey,
                 mostRelevantCategoryLinks,
-                originalCustomUserText,
+                attributeNameKey,
                 isApproved
             )
 

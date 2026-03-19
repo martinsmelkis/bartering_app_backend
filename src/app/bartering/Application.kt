@@ -29,7 +29,7 @@ import kotlinx.serialization.json.Json
 import app.bartering.errors.GenericServerError
 import app.bartering.extensions.DatabaseFactory
 import app.bartering.features.ai.AttributeCategorizer
-import app.bartering.features.ai.data.ExpandedInterests
+import app.bartering.features.ai.data.Attributes
 import app.bartering.features.attributes.dao.AttributesDao
 import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.authentication.di.authenticationModule
@@ -56,8 +56,8 @@ import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
 import app.bartering.features.migration.dao.MigrationDao
 import app.bartering.features.migration.tasks.MigrationCleanupTask
-import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import app.bartering.features.federation.di.federationModule
+import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
@@ -173,8 +173,8 @@ fun Application.module(testing: Boolean = false) {
     runBlocking { // Use runBlocking for a one-time startup task
         AttributeCategorizer().initialize()
         // Initialize all ExpandedInterests attributes as approved
-        log.info("Initializing ${ExpandedInterests.all.size} approved attributes from ExpandedInterests...")
-        ExpandedInterests.all.forEach {
+        log.info("Initializing ${Attributes.all.size} approved attributes from ExpandedInterests...")
+        Attributes.all.forEach {
             attributesDao.findOrCreate(it, isApproved = true)
         }
         log.info("✅ ExpandedInterests attributes initialized as approved")

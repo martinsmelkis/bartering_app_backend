@@ -1,6 +1,6 @@
 package app.bartering.features.ai.data
 
-object ExpandedInterests {
+object Attributes {
     val all = listOf(
         "3D printing", "Artificial Intelligence", "Acting", "Amateur radio", "Animation", "Baking",
         "Beekeeping", "Blogging", "Board games", "Books",

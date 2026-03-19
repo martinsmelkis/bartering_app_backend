@@ -5,7 +5,7 @@ import kotlinx.coroutines.runBlocking
 import net.postgis.jdbc.geometry.Point
 import app.bartering.extensions.DatabaseFactory
 import app.bartering.extensions.normalizeAttributeForDBProcessing
-import app.bartering.features.ai.data.ExpandedInterests
+import app.bartering.features.ai.data.Attributes
 import app.bartering.features.attributes.db.AttributesMasterTable
 import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.attributes.model.UserAttributeType
@@ -43,7 +43,7 @@ object TestRandom100UsersGenAndSimilarity {
             )
 
             val sampleAttributeKeys =
-                ExpandedInterests.all.map { it.normalizeAttributeForDBProcessing() }
+                Attributes.all.map { it.normalizeAttributeForDBProcessing() }
 
             usersToInsert = (1..userCount).map {
                 val id = UUID.randomUUID().toString()

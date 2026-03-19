@@ -392,7 +392,8 @@ private suspend fun searchFederatedProfiles(
                             distanceKm = -1.0, // Unknown distance for federated
                             matchRelevancyScore = 0.5, // Default score
                             averageRating = null,
-                            totalReviews = null
+                            totalReviews = null,
+                            badges = null
                         )
                     )
                 }
