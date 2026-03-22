@@ -12,6 +12,7 @@ import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.profile.model.UserProfile
 import app.bartering.features.profile.model.UserProfileUpdateRequest
+import app.bartering.features.profile.model.UserConsentUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.service.LocationPatternDetectionService
 import app.bartering.features.federation.model.*
@@ -173,6 +174,46 @@ fun Route.updateProfileRoute() {
         }
     }
 
+}
+
+fun Route.updateUserConsentRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/profile-consent-update") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val request = Json.decodeFromString<UserConsentUpdateRequest>(requestBody)
+
+            if (authenticatedUserId != request.userId) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    "You are not authorized to update consent for this profile."
+                )
+            }
+
+            userProfileDao.updateProfile(
+                request.userId,
+                UserProfileUpdateRequest(
+                    locationConsent = request.locationConsent,
+                    aiProcessingConsent = request.aiProcessingConsent,
+                    analyticsCookiesConsent = request.analyticsCookiesConsent,
+                    federationConsent = request.federationConsent,
+                    privacyPolicyVersion = request.privacyPolicyVersion
+                )
+            )
+
+            call.respond(HttpStatusCode.OK, mapOf("success" to true))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(HttpStatusCode.BadRequest, "Invalid request body: ${e.message}")
+        }
+    }
 }
 
 fun Route.searchProfilesByKeywordRoute() {

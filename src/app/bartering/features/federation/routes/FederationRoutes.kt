@@ -288,7 +288,7 @@ fun Route.federationRoutes() {
                                 country = null // Not implemented
                             )
                         } else null,
-                        attributes = profile.attributes.map { 
+                        attributes = profile.attributes.map {
                             FederatedAttribute(
                                 attributeId = it.attributeId,
                                 type = it.type, // Already an Int (0=SEEKING, 1=PROVIDING)

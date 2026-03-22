@@ -8,6 +8,7 @@ fun Application.profileManagementRoutes() {
         getProfileInfoRoute()
         createProfileRoute()
         updateProfileRoute()
+        updateUserConsentRoute()
         getProfilesNearbyRoute()
         searchProfilesByKeywordRoute()
         similarProfilesRoute()

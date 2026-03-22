@@ -233,6 +233,36 @@ class UserProfileDaoImpl : UserProfileDao {
             table[UserProfilesTable.updatedAt] = java.time.Instant.now()
         }
 
+        val consentChanged = request.locationConsent != null ||
+            request.aiProcessingConsent != null ||
+            request.analyticsCookiesConsent != null ||
+            request.federationConsent != null ||
+            request.privacyPolicyVersion != null
+
+        if (consentChanged) {
+            UserPrivacyConsentsTable.upsert { consentTable ->
+                consentTable[UserPrivacyConsentsTable.userId] = userId
+                request.locationConsent?.let { consent ->
+                    consentTable[UserPrivacyConsentsTable.locationConsent] = consent
+                }
+                request.aiProcessingConsent?.let { consent ->
+                    consentTable[UserPrivacyConsentsTable.aiProcessingConsent] = consent
+                }
+                request.analyticsCookiesConsent?.let { consent ->
+                    consentTable[UserPrivacyConsentsTable.analyticsCookiesConsent] = consent
+                }
+                request.federationConsent?.let { consent ->
+                    consentTable[UserPrivacyConsentsTable.federationConsent] = consent
+                }
+                consentTable[UserPrivacyConsentsTable.consentUpdatedAt] = java.time.Instant.now()
+
+                request.privacyPolicyVersion?.let { version ->
+                    consentTable[UserPrivacyConsentsTable.privacyPolicyVersion] = version
+                    consentTable[UserPrivacyConsentsTable.privacyPolicyAcceptedAt] = java.time.Instant.now()
+                }
+            }
+        }
+
         request.attributes?.forEach { attr ->
             UserAttributesTable.insertIgnore {
                 it[UserAttributesTable.userId] = userId
@@ -1907,8 +1937,17 @@ class UserProfileDaoImpl : UserProfileDao {
         try {
             // Build base query
             var query = UserProfilesTable
+                .join(
+                    UserPrivacyConsentsTable,
+                    JoinType.INNER,
+                    onColumn = UserProfilesTable.userId,
+                    otherColumn = UserPrivacyConsentsTable.userId
+                )
                 .selectAll()
-                .where { UserProfilesTable.federationEnabled eq federationEnabled }
+                .where {
+                    (UserProfilesTable.federationEnabled eq federationEnabled) and
+                    (UserPrivacyConsentsTable.federationConsent eq true)
+                }
 
             // Apply updatedSince filter if provided
             if (updatedSince != null) {
@@ -1964,7 +2003,8 @@ class UserProfileDaoImpl : UserProfileDao {
                         attributes = attributes,
                         profileKeywordDataMap = row[UserProfilesTable.profileKeywordDataMap],
                         activePostingIds = emptyList(), // Not needed for federation sync
-                        lastOnlineAt = lastOnlineAt
+                        lastOnlineAt = lastOnlineAt,
+                        preferredLanguage = row[UserProfilesTable.preferredLanguage]
                     )
                 } catch (e: Exception) {
                     e.printStackTrace()
