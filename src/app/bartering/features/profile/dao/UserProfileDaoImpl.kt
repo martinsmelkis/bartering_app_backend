@@ -9,7 +9,8 @@ import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
 import app.bartering.features.profile.model.*
 import app.bartering.features.profile.util.*
-import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
 import net.postgis.jdbc.geometry.Point
 import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.attributes.model.UserAttributeType
@@ -19,8 +20,8 @@ import app.bartering.model.BidirectionalMatchType
 import app.bartering.model.Quadruple
 import app.bartering.utils.HashUtils
 import app.bartering.utils.SecurityUtils
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.koin.java.KoinJavaComponent.inject
 import kotlin.collections.component1
 import kotlin.collections.component2
@@ -77,9 +78,9 @@ class UserProfileDaoImpl : UserProfileDao {
         var profileData: Triple<String, Pair<Double?, Double?>?, String>? = null
         var profileKeywords: Map<String, Double>? = null
 
-        TransactionManager.current().connection.prepareStatement(profileQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(profileQuery)
             .also { statement ->
-                statement[1] = userId
+                statement.setString(1, userId)
                 val rs = statement.executeQuery()
                 if (rs.next()) {
                     val name = rs.getString("name") ?: ""
@@ -347,12 +348,19 @@ class UserProfileDaoImpl : UserProfileDao {
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         // Execute the nearby profiles query
-        TransactionManager.current().connection.prepareStatement(nearbyQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(nearbyQuery)
             .also { statement ->
                 // Set all parameters at once with proper types
-                statement.fillParameters(queryParams.mapIndexed { _, (columnType, value) ->
-                    columnType to value
-                })
+                queryParams.forEachIndexed { index, (_, value) ->
+                    when (value) {
+                        is String -> statement.setString(index + 1, value)
+                        is Double -> statement.setDouble(index + 1, value)
+                        is Int -> statement.setInt(index + 1, value)
+                        is Boolean -> statement.setBoolean(index + 1, value)
+                        null -> statement.setObject(index + 1, null)
+                        else -> statement.setObject(index + 1, value)
+                    }
+                }
 
                 val rs = statement.executeQuery()
                 while (rs.next()) {
@@ -658,9 +666,15 @@ class UserProfileDaoImpl : UserProfileDao {
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         // Execute query
-        TransactionManager.current().connection.prepareStatement(bidirectionalQuery, false).also { statement ->
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(bidirectionalQuery).also { statement ->
             queryParams.forEachIndexed { index, (_, value) ->
-                statement[index + 1] = value!!
+                when (value) {
+                    is String -> statement.setString(index + 1, value)
+                    is Double -> statement.setDouble(index + 1, value)
+                    is Int -> statement.setInt(index + 1, value)
+                    is Boolean -> statement.setBoolean(index + 1, value)
+                    else -> statement.setObject(index + 1, value)
+                }
             }
             val rs = statement.executeQuery()
             while (rs.next()) {
@@ -797,9 +811,15 @@ class UserProfileDaoImpl : UserProfileDao {
         val userProfiles = mutableListOf<UserProfileWithDistance>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
-        TransactionManager.current().connection.prepareStatement(postingMatchQuery, false).also { statement ->
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(postingMatchQuery).also { statement ->
             queryParams.forEachIndexed { index, (_, value) ->
-                statement[index + 1] = value!!
+                when (value) {
+                    is String -> statement.setString(index + 1, value)
+                    is Double -> statement.setDouble(index + 1, value)
+                    is Int -> statement.setInt(index + 1, value)
+                    is Boolean -> statement.setBoolean(index + 1, value)
+                    else -> statement.setObject(index + 1, value)
+                }
             }
             val rs = statement.executeQuery()
             while (rs.next()) {
@@ -920,9 +940,9 @@ class UserProfileDaoImpl : UserProfileDao {
                         updated_at = CURRENT_TIMESTAMP;
                 """.trimIndent()
 
-                    TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
+                    (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(finalUpsertQuery)
                         .also { statement ->
-                            statement[1] = userId
+                            statement.setString(1, userId)
                             statement.executeUpdate() }
                 } else {
                     val userProfile = UserProfilesTable
@@ -960,9 +980,9 @@ class UserProfileDaoImpl : UserProfileDao {
                                 embedding_profile = EXCLUDED.embedding_profile,
                                 updated_at = CURRENT_TIMESTAMP;
                         """.trimIndent()
-                    TransactionManager.current().connection.prepareStatement(finalUpsertQuery, false)
+                    (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(finalUpsertQuery)
                         .also { statement ->
-                            statement[1] = userId
+                            statement.setString(1, userId)
                             statement.executeUpdate()
                         }
                 }
@@ -1318,10 +1338,17 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = mutableListOf<Pair<String, Double>>()
 
-        TransactionManager.current().connection.prepareStatement(keywordOnlyQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(keywordOnlyQuery)
             .also { statement ->
                 keywordParams.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value ?: ""
+                    when (value) {
+                        is String -> statement.setString(index + 1, value)
+                        is Int -> statement.setInt(index + 1, value)
+                        is Double -> statement.setDouble(index + 1, value)
+                        is Boolean -> statement.setBoolean(index + 1, value)
+                        null -> statement.setObject(index + 1, null)
+                        else -> statement.setObject(index + 1, value)
+                    }
                 }
 
                 val rs = statement.executeQuery()
@@ -1352,8 +1379,8 @@ class UserProfileDaoImpl : UserProfileDao {
                     SELECT ai.ollama_embed('${AiConfig.embedModel}', ?, host => '${AiConfig.ollamaHost}')::text as embedding
                 """.trimIndent()
 
-                val stmt = TransactionManager.current().connection.prepareStatement(embeddingGenQuery, false)
-                stmt[1] = searchText
+                val stmt = (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(embeddingGenQuery)
+                stmt.setString(1, searchText)
                 val rs = stmt.executeQuery()
                 if (rs.next()) {
                     val embeddingStr = rs.getString("embedding")
@@ -1549,10 +1576,16 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = mutableListOf<Triple<UserProfile, Double, Double>>()
 
-        TransactionManager.current().connection.prepareStatement(semanticQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(semanticQuery)
             .also { statement ->
                 params.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value!!
+                    when (value) {
+                    is String -> statement.setString(index + 1, value)
+                    is Double -> statement.setDouble(index + 1, value)
+                    is Int -> statement.setInt(index + 1, value)
+                    is Boolean -> statement.setBoolean(index + 1, value)
+                    else -> statement.setObject(index + 1, value)
+                }
                 }
 
                 val rs = statement.executeQuery()
@@ -1657,10 +1690,16 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val results = mutableListOf<Triple<UserProfile, Double, Double>>()
 
-        TransactionManager.current().connection.prepareStatement(postingQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(postingQuery)
             .also { statement ->
                 params.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value!!
+                    when (value) {
+                    is String -> statement.setString(index + 1, value)
+                    is Double -> statement.setDouble(index + 1, value)
+                    is Int -> statement.setInt(index + 1, value)
+                    is Boolean -> statement.setBoolean(index + 1, value)
+                    else -> statement.setObject(index + 1, value)
+                }
                 }
 
                 val rs = statement.executeQuery()
@@ -1738,10 +1777,16 @@ class UserProfileDaoImpl : UserProfileDao {
             simpleParams.add(DoubleColumnType() to latitude)
         }
 
-        TransactionManager.current().connection.prepareStatement(simpleProfileQuery, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(simpleProfileQuery)
             .also { statement ->
                 simpleParams.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value!!
+                    when (value) {
+                    is String -> statement.setString(index + 1, value)
+                    is Double -> statement.setDouble(index + 1, value)
+                    is Int -> statement.setInt(index + 1, value)
+                    is Boolean -> statement.setBoolean(index + 1, value)
+                    else -> statement.setObject(index + 1, value)
+                }
                 }
 
                 val rs = statement.executeQuery()
@@ -1788,9 +1833,9 @@ class UserProfileDaoImpl : UserProfileDao {
 
         val postingIds = mutableListOf<String>()
 
-        TransactionManager.current().connection.prepareStatement(sql, false)
+        (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(sql)
             .also { statement ->
-                statement[1] = userId
+                statement.setString(1, userId)
                 val rs = statement.executeQuery()
                 while (rs.next()) {
                     postingIds.add(rs.getString("id"))
@@ -1985,8 +2030,8 @@ class UserProfileDaoImpl : UserProfileDao {
 
                     // Parse location
                     val location = row[UserProfilesTable.location]
-                    val latitude = location?.firstPoint?.y
-                    val longitude = location?.firstPoint?.x
+                    val latitude = location?.y
+                    val longitude = location?.x
 
                     // Get last online timestamp from activity cache
                     val lastOnlineAt = try {

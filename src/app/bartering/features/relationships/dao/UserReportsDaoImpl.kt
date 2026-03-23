@@ -3,8 +3,9 @@ package app.bartering.features.relationships.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.relationships.db.UserReportsTable
 import app.bartering.features.relationships.model.*
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.format.DateTimeFormatter

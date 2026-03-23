@@ -3,9 +3,9 @@ package app.bartering.features.categories
 import com.pgvector.PGvector
 import app.bartering.features.attributes.db.AttributesMasterTable
 import app.bartering.model.VectorColumnType
-import org.jetbrains.exposed.dao.id.IntIdTable
-import org.jetbrains.exposed.sql.Column
-import org.jetbrains.exposed.sql.ReferenceOption
+import org.jetbrains.exposed.v1.core.dao.id.IntIdTable
+import org.jetbrains.exposed.v1.core.Column
+import org.jetbrains.exposed.v1.core.ReferenceOption
 
 fun CategoriesMasterTable.embeddingField(name: String, dimensions: Int): Column<PGvector> =
     registerColumn(name, VectorColumnType(dimensions)

@@ -1,8 +1,8 @@
 package app.bartering.features.reviews.db
 
-import io.propertium.gis.point
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.javatime.timestamp
+import app.bartering.model.point
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.javatime.timestamp
 import java.time.Instant
 
 /**

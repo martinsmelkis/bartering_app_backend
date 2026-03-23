@@ -1,6 +1,9 @@
 package app.bartering.features.profile.util
 
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.DoubleColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.VarCharColumnType
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 
 /**
@@ -46,15 +49,15 @@ object UserStatisticsUtils {
                     )
             """.trimIndent()
 
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
-                    statement[1] = userId
-                    statement[2] = longitude
-                    statement[3] = latitude
-                    statement[4] = radiusMeters
+                    statement.setString(1, userId)
+                    statement.setDouble(2, longitude)
+                    statement.setDouble(3, latitude)
+                    statement.setDouble(4, radiusMeters)
                     val rs = statement.executeQuery()
                     if (rs.next()) {
-                        return rs.getInt("user_count")
+                        return (rs.getObject("user_count") as? Number)?.toInt() ?: 0
                     }
                 }
             0
@@ -82,12 +85,12 @@ object UserStatisticsUtils {
                 WHERE u.id != ?
             """.trimIndent()
 
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
-                    statement[1] = excludeUserId
+                    statement.setString(1, excludeUserId)
                     val rs = statement.executeQuery()
                     if (rs.next()) {
-                        return rs.getInt("user_count")
+                        return (rs.getObject("user_count") as? Number)?.toInt() ?: 0
                     }
                 }
             0
@@ -114,11 +117,11 @@ object UserStatisticsUtils {
                     AND status IN ('online', 'away')
             """.trimIndent()
 
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
                     val rs = statement.executeQuery()
                     if (rs.next()) {
-                        return rs.getInt("user_count")
+                        return (rs.getObject("user_count") as? Number)?.toInt() ?: 0
                     }
                 }
             0
@@ -148,12 +151,12 @@ object UserStatisticsUtils {
             """.trimIndent()
 
             val postingIds = mutableListOf<String>()
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
-                    statement[1] = userId
+                    statement.setString(1, userId)
                     val rs = statement.executeQuery()
                     while (rs.next()) {
-                        postingIds.add(rs.getString("id"))
+                        postingIds.add((rs.getObject("id") as? String) ?: "")
                     }
                 }
             postingIds
@@ -189,15 +192,15 @@ object UserStatisticsUtils {
             """.trimIndent()
 
             val result = mutableMapOf<String, MutableList<String>>()
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
                     userIds.forEachIndexed { index, userId ->
-                        statement[index + 1] = userId
+                        statement.setString(index + 1, userId)
                     }
                     val rs = statement.executeQuery()
                     while (rs.next()) {
-                        val uid = rs.getString("user_id")
-                        val postingId = rs.getString("id")
+                        val uid = (rs.getObject("user_id") as? String) ?: ""
+                        val postingId = (rs.getObject("id") as? String) ?: ""
                         result.getOrPut(uid) { mutableListOf() }.add(postingId)
                     }
                 }
@@ -229,15 +232,15 @@ object UserStatisticsUtils {
                 LEFT JOIN user_presence p ON u.id = p.user_id
             """.trimIndent()
 
-            TransactionManager.current().connection.prepareStatement(query, false)
+            (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
                 .also { statement ->
                     val rs = statement.executeQuery()
                     if (rs.next()) {
                         return UserActivityStats(
-                            totalUsers = rs.getInt("total_users"),
-                            activeLast24h = rs.getInt("active_24h"),
-                            activeLast7d = rs.getInt("active_7d"),
-                            usersWithLocation = rs.getInt("with_location")
+                            totalUsers = (rs.getObject("total_users") as? Number)?.toInt() ?: 0,
+                            activeLast24h = (rs.getObject("active_24h") as? Number)?.toInt() ?: 0,
+                            activeLast7d = (rs.getObject("active_7d") as? Number)?.toInt() ?: 0,
+                            usersWithLocation = (rs.getObject("with_location") as? Number)?.toInt() ?: 0
                         )
                     }
                 }

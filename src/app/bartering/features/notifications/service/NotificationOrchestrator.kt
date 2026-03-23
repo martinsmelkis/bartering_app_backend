@@ -49,7 +49,7 @@ class NotificationOrchestrator(
         }
         
         // Send email if available and verified
-        if (emailService != null && contacts.email != null && contacts.emailVerified) {
+        if (emailService != null && contacts.email != null/* && contacts.emailVerified*/) {
             val email = emailTemplate ?: buildDefaultEmail(
                 to = contacts.email,
                 notification = notification

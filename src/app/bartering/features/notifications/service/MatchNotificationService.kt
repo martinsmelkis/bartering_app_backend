@@ -11,7 +11,10 @@ import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.model.UserPosting
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.localization.Localization
-import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.transactions.experimental.newSuspendedTransaction
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.Locale
@@ -648,16 +651,16 @@ class MatchNotificationService(
                 
                 val results = mutableListOf<app.bartering.features.profile.model.UserProfileWithDistance>()
                 
-                org.jetbrains.exposed.sql.transactions.TransactionManager.current().connection
-                    .prepareStatement(query, false).also { statement ->
-                        statement[1] = longitude
-                        statement[2] = latitude
-                        statement[3] = attributeId
-                        statement[4] = attributeType.name
-                        statement[5] = excludeUserId
-                        statement[6] = longitude
-                        statement[7] = latitude
-                        statement[8] = radiusMeters
+                (org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager.current().connection.connection as java.sql.Connection)
+                    .prepareStatement(query).also { statement ->
+                        statement.setDouble(1, longitude)
+                        statement.setDouble(2, latitude)
+                        statement.setString(3, attributeId)
+                        statement.setString(4, attributeType.name)
+                        statement.setString(5, excludeUserId)
+                        statement.setDouble(6, longitude)
+                        statement.setDouble(7, latitude)
+                        statement.setDouble(8, radiusMeters)
                         
                         val rs = statement.executeQuery()
                         while (rs.next()) {

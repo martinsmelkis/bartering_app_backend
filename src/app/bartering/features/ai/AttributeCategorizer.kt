@@ -4,9 +4,11 @@ import app.bartering.config.AiConfig
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.attributes.model.CategoryLink
 import app.bartering.features.categories.CategoriesMasterTable
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.select
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.statements.jdbc.JdbcResult
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 
 class AttributeCategorizer {
@@ -44,8 +46,8 @@ class AttributeCategorizer {
                 TransactionManager.current().connection.prepareStatement(updateSql, false)
                     .also { statement ->
                         for ((id, description) in categoriesToUpdate) {
-                            statement.set(1, description)
-                            statement.set(2, id)
+                            statement.set(1, description, CategoriesMasterTable.description.columnType)
+                            statement.set(2, id, CategoriesMasterTable.id.columnType)
                             statement.addBatch()
                         }
                         statement.executeBatch()
@@ -86,11 +88,11 @@ class AttributeCategorizer {
 
             try {
                 TransactionManager.current().connection.prepareStatement(findBestCategorySql, false).also { statement ->
-                    statement[1] = newAttributeText
-                    statement.executeQuery().use { rs ->
+                    statement.set(1, newAttributeText, CategoriesMasterTable.categoryNameKey.columnType)
+                    (statement.executeQuery() as JdbcResult).use { rs ->
                         if (rs.next()) {
-                            log.debug("bestCategoryMatchResponse for '{}': {}", newAttributeText, rs.getString("category_key"))
-                            bestMatch = rs.getInt("id") to rs.getString("category_key")
+                            log.debug("bestCategoryMatchResponse for '{}': {}", newAttributeText, rs.getString(2))
+                            bestMatch = (rs.getObject(1) as Number).toInt() to (rs.getString(2) ?: "main_yellow")
                         }
                     }
                 }

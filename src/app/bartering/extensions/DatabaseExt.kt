@@ -3,10 +3,9 @@ package app.bartering.extensions
 import com.typesafe.config.ConfigFactory
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import kotlinx.coroutines.Dispatchers
 import org.flywaydb.core.Flyway
-import org.jetbrains.exposed.sql.Database
-import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
+import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.sql.DataSource
@@ -101,7 +100,7 @@ object DatabaseFactory {
      * This is the ONLY function that should be used for database access from DAOs.
      */
     suspend fun <T> dbQuery(block: suspend () -> T): T =
-        newSuspendedTransaction(Dispatchers.IO) {
+        suspendTransaction {
             // Add a logger here to see all SQL statements in dev.
             // addLogger(StdOutSqlLogger)
             block()

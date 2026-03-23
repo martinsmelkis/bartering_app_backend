@@ -6,8 +6,9 @@ import app.bartering.features.reviews.db.IpTrackingTable
 import app.bartering.features.reviews.db.RiskPatternsTable
 import app.bartering.features.reviews.db.UserLocationChangesTable
 import app.bartering.features.reviews.model.*
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.less
 import org.slf4j.LoggerFactory
 import net.postgis.jdbc.geometry.Point
 import java.time.Instant

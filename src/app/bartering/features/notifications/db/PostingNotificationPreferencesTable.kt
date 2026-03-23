@@ -1,8 +1,8 @@
 package app.bartering.features.notifications.db
 
 import app.bartering.features.postings.db.UserPostingsTable
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.javatime.timestamp
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.javatime.timestamp
 import java.time.Instant
 
 /**

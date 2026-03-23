@@ -5,7 +5,9 @@ import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.db.UserPresenceTable
 import app.bartering.features.profile.model.UserProfileWithDistance
 import kotlinx.coroutines.runBlocking
-import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.temporal.ChronoUnit

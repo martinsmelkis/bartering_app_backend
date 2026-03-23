@@ -1,7 +1,7 @@
 package app.bartering.features.categories
 
 import app.bartering.features.attributes.db.AttributesMasterTable
-import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.v1.core.Table
 
 /**
  * A join table to create a many-to-many relationship between Attributes and Categories.

@@ -341,5 +341,3 @@ fun Route.getTransactionWithPartnerRoute() {
         }
     }
 }
-
-// Request/Response models moved to ApiModels.kt

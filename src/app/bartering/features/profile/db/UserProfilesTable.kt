@@ -1,10 +1,10 @@
 package app.bartering.features.profile.db
 
-import io.propertium.gis.point
+import app.bartering.model.point
 import kotlinx.serialization.json.Json
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.javatime.timestamp
-import org.jetbrains.exposed.sql.json.jsonb
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.javatime.timestamp
+import org.jetbrains.exposed.v1.json.jsonb
 import java.time.Instant
 
 object UserProfilesTable : Table("user_profiles") {

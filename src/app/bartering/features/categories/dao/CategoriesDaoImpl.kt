@@ -6,11 +6,12 @@ import app.bartering.features.attributes.model.CategoryLink
 import app.bartering.features.categories.AttributeCategoriesLinkTable
 import app.bartering.features.categories.CategoriesMasterTable
 import app.bartering.features.categories.model.LinkedCategory
-import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insertAndGetId
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import kotlin.Int
 
 class CategoriesDaoImpl: CategoriesDao {

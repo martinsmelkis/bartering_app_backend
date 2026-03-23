@@ -3,8 +3,9 @@ package app.bartering.features.reviews.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.reviews.db.BarterTransactionsTable
 import app.bartering.features.reviews.model.TransactionStatus
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.time.Instant

@@ -7,9 +7,10 @@ import app.bartering.features.postings.db.UserPostingsTable
 import app.bartering.features.postings.model.*
 import app.bartering.features.postings.service.ImageStorageService
 import app.bartering.utils.SecurityUtils
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -244,28 +245,28 @@ class UserPostingDaoImpl : UserPostingDao {
 
         TransactionManager.current().connection.prepareStatement(nearbyQuery, false)
             .also { statement ->
-                queryParams.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value.toString()
+                queryParams.forEachIndexed { index, (columnType, value) ->
+                    statement.set(index + 1, value ?: "", columnType)
                 }
 
                 val rs = statement.executeQuery()
                 while (rs.next()) {
-                    val postingId = rs.getString("id")
-                    val distanceMeters = rs.getDouble("distance_meters")
+                    val postingId = rs.getObject("id") as String
+                    val distanceMeters = rs.getObject("distance_meters") as Double
 
                     val posting = UserPosting(
                         id = postingId,
-                        userId = rs.getString("user_id"),
-                        title = rs.getString("title"),
-                        description = rs.getString("description"),
-                        value = rs.getBigDecimal("value")?.toDouble(),
-                        expiresAt = rs.getTimestamp("expires_at")?.toInstant(),
-                        imageUrls = parseImageUrls(rs.getString("image_urls")),
-                        isOffer = rs.getBoolean("is_offer"),
-                        status = PostingStatus.valueOf(rs.getString("status").uppercase()),
+                        userId = rs.getObject("user_id") as String,
+                        title = rs.getObject("title") as String,
+                        description = rs.getObject("description") as String,
+                        value = rs.getObject("value") as? Double,
+                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
+                        isOffer = rs.getObject("is_offer") as Boolean,
+                        status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getTimestamp("created_at").toInstant(),
-                        updatedAt = rs.getTimestamp("updated_at").toInstant()
+                        createdAt = rs.getObject("created_at") as Instant,
+                        updatedAt = rs.getObject("updated_at") as Instant
                     )
 
                     postings.add(
@@ -402,31 +403,31 @@ class UserPostingDaoImpl : UserPostingDao {
 
         TransactionManager.current().connection.prepareStatement(semanticSearchQuery, false)
             .also { statement ->
-                queryParams.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value ?: ""
+                queryParams.forEachIndexed { index, (columnType, value) ->
+                    statement.set(index + 1, value ?: "", columnType)
                 }
 
                 val rs = statement.executeQuery()
                 while (rs.next()) {
-                    val postingId = rs.getString("id")
-                    val similarityScore = rs.getDouble("similarity_score")
-                    val distanceMeters = rs.getDouble("distance_meters")
+                    val postingId = rs.getObject("id") as String
+                    val distanceMeters = rs.getObject("distance_meters") as Double
+                    val similarityScore = rs.getObject("similarity_score") as Double
 
                     if (similarityScore < 0.5) continue
 
                     val posting = UserPosting(
                         id = postingId,
-                        userId = rs.getString("user_id"),
-                        title = rs.getString("title"),
-                        description = rs.getString("description"),
-                        value = rs.getBigDecimal("value")?.toDouble(),
-                        expiresAt = rs.getTimestamp("expires_at")?.toInstant(),
-                        imageUrls = parseImageUrls(rs.getString("image_urls")),
-                        isOffer = rs.getBoolean("is_offer"),
-                        status = PostingStatus.valueOf(rs.getString("status").uppercase()),
+                        userId = rs.getObject("user_id") as String,
+                        title = rs.getObject("title") as String,
+                        description = rs.getObject("description") as String,
+                        value = rs.getObject("value") as? Double,
+                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
+                        isOffer = rs.getObject("is_offer") as Boolean,
+                        status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getTimestamp("created_at").toInstant(),
-                        updatedAt = rs.getTimestamp("updated_at").toInstant()
+                        createdAt = rs.getObject("created_at") as Instant,
+                        updatedAt = rs.getObject("updated_at") as Instant
                     )
 
                     postings.add(
@@ -561,31 +562,31 @@ class UserPostingDaoImpl : UserPostingDao {
 
         TransactionManager.current().connection.prepareStatement(matchingQuery, false)
             .also { statement ->
-                queryParams.forEachIndexed { index, (_, value) ->
-                    statement[index + 1] = value.toString()
+                queryParams.forEachIndexed { index, (columnType, value) ->
+                    statement.set(index + 1, value ?: "", columnType)
                 }
 
                 val rs = statement.executeQuery()
                 while (rs.next()) {
-                    val postingId = rs.getString("id")
-                    val matchScore = rs.getDouble("match_score")
-                    val distanceMeters = rs.getDouble("distance_meters")
+                    val postingId = rs.getObject("id") as String
+                    val distanceMeters = rs.getObject("distance_meters") as Double
+                    val matchScore = rs.getObject("match_score") as Double
 
                     if (matchScore < 0.5) continue
 
                     val posting = UserPosting(
                         id = postingId,
-                        userId = rs.getString("user_id"),
-                        title = rs.getString("title"),
-                        description = rs.getString("description"),
-                        value = rs.getBigDecimal("value")?.toDouble(),
-                        expiresAt = rs.getTimestamp("expires_at")?.toInstant(),
-                        imageUrls = parseImageUrls(rs.getString("image_urls")),
-                        isOffer = rs.getBoolean("is_offer"),
-                        status = PostingStatus.valueOf(rs.getString("status").uppercase()),
+                        userId = rs.getObject("user_id") as String,
+                        title = rs.getObject("title") as String,
+                        description = rs.getObject("description") as String,
+                        value = rs.getObject("value") as? Double,
+                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
+                        isOffer = rs.getObject("is_offer") as Boolean,
+                        status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getTimestamp("created_at").toInstant(),
-                        updatedAt = rs.getTimestamp("updated_at").toInstant()
+                        createdAt = rs.getObject("created_at") as Instant,
+                        updatedAt = rs.getObject("updated_at") as Instant
                     )
 
                     postings.add(
@@ -654,8 +655,8 @@ class UserPostingDaoImpl : UserPostingDao {
 
             val rowsUpdated = TransactionManager.current().connection.prepareStatement(embeddingQuery, false)
                 .also { statement ->
-                    statement[1] = combinedText
-                    statement[2] = postingId
+                    statement.set(1, combinedText ?: "", VarCharColumnType())
+                    statement.set(2, postingId ?: "", VarCharColumnType())
                     statement.executeUpdate()
                 }
 

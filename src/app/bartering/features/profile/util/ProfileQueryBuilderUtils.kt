@@ -1,6 +1,6 @@
 package app.bartering.features.profile.util
 
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 
 /**

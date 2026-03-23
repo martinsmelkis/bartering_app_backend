@@ -2,8 +2,9 @@ package app.bartering.features.chat.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.chat.db.ChatResponseTimesTable
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.less
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant

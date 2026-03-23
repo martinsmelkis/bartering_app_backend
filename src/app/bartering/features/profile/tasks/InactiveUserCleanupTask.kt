@@ -7,9 +7,9 @@ import app.bartering.features.profile.db.UserRegistrationDataTable
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.features.notifications.model.NotificationData
 import kotlinx.coroutines.runBlocking
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.core.eq
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.temporal.ChronoUnit

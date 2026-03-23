@@ -6,8 +6,9 @@ import app.bartering.features.federation.model.CachedFederatedProfileData
 import app.bartering.features.federation.model.FederatedUser
 import app.bartering.features.federation.model.FederatedUserProfile
 import app.bartering.features.profile.dao.UserProfileDao
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
 import java.time.Instant
 
 class FederatedUserDaoImpl(

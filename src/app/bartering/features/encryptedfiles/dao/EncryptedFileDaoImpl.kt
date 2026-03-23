@@ -3,10 +3,11 @@ package app.bartering.features.encryptedfiles.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.encryptedfiles.db.EncryptedFilesTable
 import app.bartering.features.encryptedfiles.model.EncryptedFileDto
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
-import org.jetbrains.exposed.sql.statements.api.ExposedBlob
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.statements.api.ExposedBlob
 import java.time.Instant
 
 /**

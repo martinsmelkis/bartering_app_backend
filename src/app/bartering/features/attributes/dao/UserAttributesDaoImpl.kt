@@ -3,10 +3,10 @@ package app.bartering.features.attributes.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.attributes.model.UserAttributeType
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.insertIgnore
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import java.math.BigDecimal
 
 class UserAttributesDaoImpl : UserAttributesDao {

@@ -4,8 +4,9 @@ import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.profile.db.UserProfilesTable
 import app.bartering.features.relationships.db.UserRelationshipsTable
 import app.bartering.features.relationships.model.*
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
 import org.slf4j.LoggerFactory
 import java.time.format.DateTimeFormatter
 

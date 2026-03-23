@@ -11,8 +11,10 @@ import app.bartering.features.attributes.model.AttributeSuggestion
 import app.bartering.features.attributes.model.CategoryLink
 import app.bartering.features.categories.AttributeCategoriesLinkTable
 import app.bartering.utils.SecurityUtils
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.jdbc.statements.jdbc.JdbcResult
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import kotlin.math.abs
 
 class AttributesDaoImpl : AttributesDao {
@@ -77,8 +79,8 @@ class AttributesDaoImpl : AttributesDao {
 
                     TransactionManager.current().connection.prepareStatement(embeddingSql, false)
                         .also { statement ->
-                            statement[1] = key
-                            statement[2] = key
+                            statement.set(1, key, AttributesMasterTable.attributeNameKey.columnType)
+                            statement.set(2, key, AttributesMasterTable.attributeNameKey.columnType)
                             statement.executeUpdate()
                         }
                     successCount++
@@ -136,8 +138,8 @@ class AttributesDaoImpl : AttributesDao {
                 // Use parameterized query for safety
                 TransactionManager.current().connection.prepareStatement(embeddingSql, false)
                     .also { statement ->
-                        statement[1] = customUserAttrText
-                        statement[2] = newAttributeId
+                        statement.set(1, customUserAttrText, AttributesMasterTable.customUserAttrText.columnType)
+                        statement.set(2, newAttributeId, AttributesMasterTable.id.columnType)
                         statement.executeUpdate()
                     }
             } catch (e: Exception) {
@@ -202,15 +204,15 @@ class AttributesDaoImpl : AttributesDao {
         dbQuery {
             TransactionManager.current().connection.prepareStatement(finalQuery, false)
                 .also { statement ->
-                    // Set the parameter for the LIMIT clause
-                    statement[1] = userId
-                    statement[2] = limit
-                    val rs = statement.executeQuery()
-                    while (rs.next()) {
-                        val key = rs.getString("attribute_key")
-                        val similarity = rs.getDouble("similarity")
-                        val uiStyleHint = rs.getString("ui_style_hint")
-                        results.add(AttributeSuggestion(key, similarity, uiStyleHint))
+                    statement.set(1, userId, TextColumnType())
+                    statement.set(2, limit, IntegerColumnType())
+                    (statement.executeQuery() as JdbcResult).use { rs ->
+                        while (rs.next()) {
+                            val key = rs.getString(1) ?: continue
+                            val similarity = (rs.getObject(2) as Number).toDouble()
+                            val uiStyleHint = rs.getString(3)
+                            results.add(AttributeSuggestion(key, similarity, uiStyleHint))
+                        }
                     }
                 }
         }
@@ -394,16 +396,16 @@ class AttributesDaoImpl : AttributesDao {
         dbQuery {
             TransactionManager.current().connection.prepareStatement(finalQuery, false)
                 .also { statement ->
-                    // Set the parameter for the LIMIT clause
-                    statement[1] = userId
-                    statement[2] = userId
-                    statement[3] = limit
-                    val rs = statement.executeQuery()
-                    while (rs.next()) {
-                        val key = rs.getString("attribute_key")
-                        val similarity = rs.getDouble("similarity")
-                        val uiStyleHint = rs.getString("ui_style_hint")
-                        results.add(AttributeSuggestion(key, similarity, uiStyleHint))
+                    statement.set(1, userId, TextColumnType())
+                    statement.set(2, userId, TextColumnType())
+                    statement.set(3, limit, IntegerColumnType())
+                    (statement.executeQuery() as JdbcResult).use { rs ->
+                        while (rs.next()) {
+                            val key = rs.getString(1) ?: continue
+                            val similarity = (rs.getObject(2) as Number).toDouble()
+                            val uiStyleHint = rs.getString(3)
+                            results.add(AttributeSuggestion(key, similarity, uiStyleHint))
+                        }
                     }
                 }
         }

@@ -13,7 +13,9 @@ import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.profile.db.UserRegistrationDataTable
 import app.bartering.features.profile.model.UserProfile
 import app.bartering.features.profile.db.UserProfilesTable
-import org.jetbrains.exposed.sql.batchInsert
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.jdbc.batchInsert
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.java.KoinJavaComponent.inject
 import java.util.UUID
 import kotlin.random.Random
@@ -681,3 +683,6 @@ object TestArchetypeUsersGenAndSimilarity {
         }
     }
 }
+
+
+

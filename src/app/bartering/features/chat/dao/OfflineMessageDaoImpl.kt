@@ -3,9 +3,10 @@ package app.bartering.features.chat.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.chat.db.OfflineMessagesTable
 import app.bartering.features.chat.model.OfflineMessageDto
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.less
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 

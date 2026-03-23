@@ -3,9 +3,10 @@ package app.bartering.features.reviews.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.reviews.db.ReviewsTable
 import app.bartering.features.reviews.model.TransactionStatus
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
@@ -182,15 +183,15 @@ class ReviewDaoImpl : ReviewDao {
         """.trimIndent()
         
         val result = mutableListOf<Pair<Double, Int>>()
-        org.jetbrains.exposed.sql.transactions.TransactionManager.current().connection
-            .prepareStatement(query, false)
+        (org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager.current().connection.connection as java.sql.Connection)
+            .prepareStatement(query)
             .also { statement ->
-                statement[1] = userId
+                statement.setString(1, userId)
                 val rs = statement.executeQuery()
                 if (rs.next()) {
-                    val avgRating = rs.getDouble("avg_rating")
-                    val count = rs.getInt("review_count")
-                    if (!rs.wasNull() && count > 0) {
+                    val avgRating = (rs.getObject("avg_rating") as? Number)?.toDouble() ?: 0.0
+                    val count = (rs.getObject("review_count") as? Number)?.toInt() ?: 0
+                    if (count > 0) {
                         result.add(avgRating to count)
                     }
                 }

@@ -20,6 +20,9 @@ import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
 import app.bartering.utils.ValidationUtils
+import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.jdbc.*
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
 import kotlin.collections.component1
