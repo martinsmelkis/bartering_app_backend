@@ -3,7 +3,11 @@ package app.bartering.middleware
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import app.bartering.features.profile.cache.UserActivityCache
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
+import app.bartering.features.profile.dao.UserProfileDaoImpl
+import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
+import kotlin.getValue
 
 /**
  * Middleware that automatically tracks user activity for presence detection.
@@ -31,6 +35,8 @@ import org.slf4j.LoggerFactory
 fun Application.installActivityTracking() {
 
     val log = LoggerFactory.getLogger("UserActivityTrackingMiddleware")
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     log.info("Installing Activity Tracking Middleware")
     
@@ -40,13 +46,17 @@ fun Application.installActivityTracking() {
         
         if (!userId.isNullOrBlank()) {
             try {
-                // Determine activity type from request path
-                val path = call.request.path()
-                val activityType = determineActivityType(path)
-                
-                // Update activity in cache (extremely fast, non-blocking)
-                UserActivityCache.updateActivity(userId, activityType)
-                
+                val hasAnalyticsConsent = userProfileDao.hasAnalyticsConsent(userId)
+                if (hasAnalyticsConsent) {
+                    // Determine activity type from request path
+                    val path = call.request.path()
+                    val activityType = determineActivityType(path)
+
+                    // Update activity in cache (extremely fast, non-blocking)
+                    UserActivityCache.updateActivity(userId, activityType)
+                    userDailyActivityStatsService.recordActivity(userId, activityType)
+                }
+
             } catch (e: Exception) {
                 // Silent fail - activity tracking should never break requests
                 // Only log in development/debug mode

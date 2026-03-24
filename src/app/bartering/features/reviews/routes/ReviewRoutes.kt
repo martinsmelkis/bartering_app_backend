@@ -12,6 +12,7 @@ import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.reviews.dao.*
 import app.bartering.features.reviews.model.*
 import app.bartering.features.reviews.service.*
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -34,6 +35,7 @@ fun Route.submitReviewRoute() {
     val riskAnalysisService: RiskAnalysisService by inject(RiskAnalysisService::class.java)
     val deviceService: DevicePatternDetectionService by inject(DevicePatternDetectionService::class.java)
     val ipService: IpPatternDetectionService by inject(IpPatternDetectionService::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     post("/api/v1/reviews/submit") {
         val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
@@ -233,6 +235,8 @@ fun Route.submitReviewRoute() {
             val success = reviewDao.createReview(review)
 
             if (success) {
+                userDailyActivityStatsService.recordReviewSubmitted(request.reviewerId)
+                userDailyActivityStatsService.recordSuccessfulAction(request.reviewerId)
                 // Check if both parties have submitted, reveal if ready
                 if (transaction != null) {
                     val bothSubmitted = reviewDao.haveBothPartiesSubmitted(
@@ -269,6 +273,7 @@ fun Route.submitReviewRoute() {
                     )
                 )
             } else {
+                userDailyActivityStatsService.recordFailedAction(request.reviewerId)
                 call.respond(
                     HttpStatusCode.InternalServerError,
                     mapOf("error" to "Failed to submit review")

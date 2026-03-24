@@ -27,6 +27,7 @@ import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.reviews.dao.BarterTransactionDao
 import app.bartering.features.notifications.service.PushNotificationService
 import app.bartering.features.relationships.dao.UserRelationshipsDaoImpl
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.inject
 import java.util.UUID
@@ -72,6 +73,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     // Federated user DAO for looking up federated user public keys
     val federatedUserDao: FederatedUserDao by inject(FederatedUserDao::class.java)
     
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
+
     // Shared conversation state for tracking when users receive messages
     // Maps "userId:partnerId" -> timestamp when message was received
     // In production with multiple servers, use Redis for distributed state
@@ -477,12 +480,18 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 }
 
                                 // Track when recipient receives this message (for their response time)
-                                ChatUtils.trackMessageReceived(
-                                    userId = clientMessage.data.recipientId,
-                                    senderId = currentUserId,
-                                    conversationState = conversationState,
-                                    log = log
-                                )
+                                val recipientAnalyticsConsent = usersDao.hasAnalyticsConsent(clientMessage.data.recipientId)
+                                if (recipientAnalyticsConsent) {
+                                    ChatUtils.trackMessageReceived(
+                                        userId = clientMessage.data.recipientId,
+                                        senderId = currentUserId,
+                                        conversationState = conversationState,
+                                        log = log
+                                    )
+                                    userDailyActivityStatsService.recordChatMessageReceived(clientMessage.data.recipientId)
+                                }
+
+                                userDailyActivityStatsService.recordChatMessageSent(currentUserId)
 
                                 // Track message count and create transaction if applicable
                                 val recipientConnection = connectionManager.getGeneralConnection(clientMessage.data.recipientId)
@@ -502,14 +511,17 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 }
 
                                 // Check if current user is responding to a previous message from recipient
-                                ChatUtils.recordResponseTimeIfApplicable(
-                                    userId = currentUserId,
-                                    recipientId = clientMessage.data.recipientId,
-                                    conversationState = conversationState,
-                                    chatAnalyticsDao = chatAnalyticsDao,
-                                    scope = cleanupScope,
-                                    log = log
-                                )
+                                val senderAnalyticsConsent = usersDao.hasAnalyticsConsent(currentUserId)
+                                if (senderAnalyticsConsent) {
+                                    ChatUtils.recordResponseTimeIfApplicable(
+                                        userId = currentUserId,
+                                        recipientId = clientMessage.data.recipientId,
+                                        conversationState = conversationState,
+                                        chatAnalyticsDao = chatAnalyticsDao,
+                                        scope = cleanupScope,
+                                        log = log
+                                    )
+                                }
                             } else {
                                 log.debug("Recipient {} not found or inactive. Message from {} stored for offline delivery", 
                                     clientMessage.data.recipientId, currentUserId)

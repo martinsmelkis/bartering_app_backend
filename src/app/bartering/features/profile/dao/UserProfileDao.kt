@@ -57,6 +57,21 @@ interface UserProfileDao {
     suspend fun updateUserPublicKey(userId: String, publicKey: String): Boolean
 
     /**
+     * Returns whether user has granted location processing consent.
+     */
+    suspend fun hasLocationConsent(userId: String): Boolean
+
+    /**
+     * Returns whether user has granted AI processing consent.
+     */
+    suspend fun hasAiProcessingConsent(userId: String): Boolean
+
+    /**
+     * Returns whether user has granted analytics consent.
+     */
+    suspend fun hasAnalyticsConsent(userId: String): Boolean
+
+    /**
      * Gets all users with pagination support.
      * Optionally filters by federation_enabled flag and updated since timestamp.
      * Used for federation user sync.

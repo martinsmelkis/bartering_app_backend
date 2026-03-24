@@ -8,6 +8,7 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.dao.BarterTransactionDao
 import app.bartering.features.reviews.model.*
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -20,6 +21,7 @@ private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes
 fun Route.createTransactionRoute() {
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     post("/api/v1/transactions/create") {
         val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
@@ -63,6 +65,9 @@ fun Route.createTransactionRoute() {
                 user2Id = request.user2Id,
                 estimatedValue = request.estimatedValue
             )
+
+            userDailyActivityStatsService.recordTransactionCreated(authenticatedUserId)
+            userDailyActivityStatsService.recordSuccessfulAction(authenticatedUserId)
 
             // Calculate risk score (async, non-blocking)
             // In production, this would be done in a background job

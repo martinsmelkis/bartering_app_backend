@@ -4,6 +4,7 @@ import app.bartering.features.healthcheck.routes.healthCheckRoutes
 import io.ktor.server.application.*
 import app.bartering.features.ai.routes.userAttributePreferencesRoutes
 import app.bartering.features.authentication.routes.authenticationRoutes
+import app.bartering.features.analytics.routes.getDailyActivityStatsRoute
 import app.bartering.features.authentication.routes.deviceManagementRoutes
 import app.bartering.features.chat.manager.ConnectionManager
 import app.bartering.features.chat.routes.chatRoutes
@@ -47,6 +48,7 @@ fun Application.routes() {
         
         // User Presence/Online Status
         getUserOnlineStatusRoute()
+        getDailyActivityStatsRoute()
         batchUserOnlineStatusRoute()
         getPresenceCacheStatsRoute()
         

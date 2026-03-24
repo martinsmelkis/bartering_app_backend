@@ -17,6 +17,7 @@ import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.service.LocationPatternDetectionService
 import app.bartering.features.federation.model.*
 import app.bartering.features.profile.model.UserAttributeDto
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import io.ktor.client.call.body
 import io.ktor.serialization.kotlinx.json.json
 import org.koin.java.KoinJavaComponent.inject
@@ -44,6 +45,15 @@ fun Route.getProfilesNearbyRoute() {
         val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
         val excludeUserId =
             call.request.queryParameters["excludeUserId"] // Optional: exclude this user from results
+
+        val hasLocationConsent = userProfileDao.hasLocationConsent(authenticatedUserId)
+        if (lat != null && !hasLocationConsent) {
+            call.respond(
+                HttpStatusCode.Forbidden,
+                mapOf("error" to "Location consent is required for nearby search")
+            )
+            return@get
+        }
 
         if (lat == null || lon == null) {
             call.respond(
@@ -99,6 +109,7 @@ fun Route.updateProfileRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     val locationService: LocationPatternDetectionService by inject(LocationPatternDetectionService::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     // Route to update the current user's profile
     post("/api/v1/profile-update") {
@@ -142,8 +153,9 @@ fun Route.updateProfileRoute() {
                 )
             )
 
-            // Track location change if it's a genuine change
-            if (newLatitude != null && newLongitude != null) {
+            // Track location change only when user has granted location consent
+            val hasLocationConsent = userProfileDao.hasLocationConsent(request.userId)
+            if (hasLocationConsent && newLatitude != null && newLongitude != null) {
                 val locationChanged = (oldLatitude != newLatitude || oldLongitude != newLongitude)
 
                 if (locationChanged) {
@@ -154,18 +166,11 @@ fun Route.updateProfileRoute() {
                         newLatitude = newLatitude,
                         newLongitude = newLongitude
                     )
-                } else if (oldLatitude == null && oldLongitude == null) {
-                    // First time setting location
-                    locationService.trackLocationChange(
-                        userId = request.userId,
-                        oldLatitude = null,
-                        oldLongitude = null,
-                        newLatitude = newLatitude,
-                        newLongitude = newLongitude
-                    )
                 }
             }
 
+            userDailyActivityStatsService.recordProfileUpdate(request.userId)
+            userDailyActivityStatsService.recordSuccessfulAction(request.userId)
             call.respond(userName)
 
         } catch (e: Exception) {
@@ -240,6 +245,8 @@ fun Route.searchProfilesByKeywordRoute() {
             return@get
         }
 
+        val hasAiProcessingConsent = userProfileDao.hasAiProcessingConsent(authenticatedUserId)
+
         // Get search text from query parameters
         val searchText = call.request.queryParameters["q"]
             ?: call.request.queryParameters["query"]
@@ -296,19 +303,35 @@ fun Route.searchProfilesByKeywordRoute() {
             return@get
         }
 
+        if (lat != null) {
+            val hasLocationConsent = userProfileDao.hasLocationConsent(authenticatedUserId)
+            if (!hasLocationConsent) {
+                call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "Location consent is required for geo-filtered search")
+                )
+                return@get
+            }
+        }
+
         try {
             // First: Search local profiles
-            var matchingProfiles = userProfileDao.searchProfilesByKeyword(
-                userId = userId,
-                searchText = searchText,
-                latitude = lat,
-                longitude = lon,
-                radiusMeters = radius,
-                limit = limit,
-                customWeight = customWeight,
-                seeking = seeking,
-                offering = offering
-            )
+            var matchingProfiles = if (hasAiProcessingConsent) {
+                userProfileDao.searchProfilesByKeyword(
+                    userId = userId,
+                    searchText = searchText,
+                    latitude = lat,
+                    longitude = lon,
+                    radiusMeters = radius,
+                    limit = limit,
+                    customWeight = customWeight,
+                    seeking = seeking,
+                    offering = offering
+                )
+            } else {
+                // Privacy fallback: no AI ranking, randomized attribute-based profiles
+                userProfileDao.getSimilarProfiles(authenticatedUserId, lat, lon, radius).shuffled().take(limit)
+            }
 
             log.info("Local search returned {} profiles for query: '{}'", 
                 matchingProfiles.size, searchText)
@@ -508,7 +531,7 @@ fun Route.similarProfilesRoute() {
     get("/api/v1/similar-profiles") {
         // Get userId from query parameters
         val userId = call.request.queryParameters["userId"]
-        
+
         if (userId.isNullOrBlank()) {
             call.respond(
                 HttpStatusCode.BadRequest,
@@ -516,7 +539,7 @@ fun Route.similarProfilesRoute() {
             )
             return@get
         }
-        
+
         // Optional location parameters for geo-filtering
         val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
         val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
@@ -530,7 +553,18 @@ fun Route.similarProfilesRoute() {
             )
             return@get
         }
-        
+
+        if (lat != null) {
+            val hasLocationConsent = userProfileDao.hasLocationConsent(userId)
+            if (!hasLocationConsent) {
+                call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "Location consent is required for geo-filtered similar profiles")
+                )
+                return@get
+            }
+        }
+
         val profiles = userProfileDao.getSimilarProfiles(userId, lat, lon, radius)
         
         log.debug("Returning {} similar profiles for user {} (location filter: {})", 
@@ -547,7 +581,7 @@ fun Route.complementaryProfilesRoute() {
     get("/api/v1/complementary-profiles") {
         // Get userId from query parameters
         val userId = call.request.queryParameters["userId"]
-        
+
         if (userId.isNullOrBlank()) {
             call.respond(
                 HttpStatusCode.BadRequest,
@@ -555,7 +589,7 @@ fun Route.complementaryProfilesRoute() {
             )
             return@get
         }
-        
+
         // Optional location parameters for geo-filtering
         val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
         val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
@@ -569,7 +603,18 @@ fun Route.complementaryProfilesRoute() {
             )
             return@get
         }
-        
+
+        if (lat != null) {
+            val hasLocationConsent = userProfileDao.hasLocationConsent(userId)
+            if (!hasLocationConsent) {
+                call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "Location consent is required for geo-filtered complementary profiles")
+                )
+                return@get
+            }
+        }
+
         val profiles = userProfileDao.getHelpfulProfiles(userId, lat, lon, radius)
         
         log.debug("Returning {} complementary profiles for user {} (location filter: {})", 

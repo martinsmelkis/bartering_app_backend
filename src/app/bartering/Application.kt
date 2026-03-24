@@ -33,6 +33,7 @@ import app.bartering.features.ai.data.Attributes
 import app.bartering.features.attributes.dao.AttributesDao
 import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.authentication.di.authenticationModule
+import app.bartering.features.analytics.di.analyticsModule
 import app.bartering.features.categories.di.categoriesModule
 import app.bartering.features.chat.di.chatModule
 import app.bartering.features.healthcheck.di.healthCheckModule
@@ -57,7 +58,6 @@ import app.bartering.config.configureRateLimiting
 import app.bartering.features.migration.dao.MigrationDao
 import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.features.federation.di.federationModule
-import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
@@ -69,7 +69,7 @@ import java.text.DateFormat
 
 private val log = LoggerFactory.getLogger("app.bartering.Application")
 
-fun main(args: Array<String>): Unit {
+fun main() {
 
     embeddedServer(
         Netty,
@@ -149,6 +149,7 @@ fun Application.module(testing: Boolean = false) {
         SLF4JLogger()
         modules(
             authenticationModule,
+            analyticsModule,
             profilesModule,
             categoriesModule,
             chatModule,

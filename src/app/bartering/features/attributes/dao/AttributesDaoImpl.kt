@@ -16,6 +16,7 @@ import org.jetbrains.exposed.v1.jdbc.*
 import org.jetbrains.exposed.v1.jdbc.statements.jdbc.JdbcResult
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import kotlin.math.abs
+import kotlin.random.Random
 
 class AttributesDaoImpl : AttributesDao {
     private val log = LoggerFactory.getLogger(this::class.java)
@@ -106,7 +107,8 @@ class AttributesDaoImpl : AttributesDao {
         localizationKey: String,
         categoryLinks: List<CategoryLink>,
         customUserAttrText: String,
-        isApproved: Boolean = false
+        isApproved: Boolean = false,
+        generateEmbedding: Boolean = true
     ): Attribute? {
         return dbQuery {
             // Step 1: Insert the main attribute. If it already exists, do nothing and return null for this flow.
@@ -117,35 +119,37 @@ class AttributesDaoImpl : AttributesDao {
                 it[AttributesMasterTable.isApproved] = isApproved
             }?.value ?: return@dbQuery null // Exit if the attribute already existed.
 
-            // Step 2: Use pgai to generate and save the embedding for the new attribute.
-            // Validate input length
-            if (customUserAttrText.length > 10000) {
-                log.warn("Custom attribute text too long: {}...", customUserAttrText.take(50))
-                return@dbQuery null
-            }
+            // Step 2: Optionally use pgai to generate and save the embedding for the new attribute.
+            if (generateEmbedding) {
+                // Validate input length
+                if (customUserAttrText.length > 10000) {
+                    log.warn("Custom attribute text too long: {}...", customUserAttrText.take(50))
+                    return@dbQuery null
+                }
 
-            try {
-                val embeddingSql = """
-                    UPDATE attributes
-                    SET embedding = ai.ollama_embed(
-                        '${AiConfig.embedModel}',
-                        ?,
-                        host => '${AiConfig.ollamaHost}'
-                    )
-                    WHERE id = ?
-                """.trimIndent()
+                try {
+                    val embeddingSql = """
+                        UPDATE attributes
+                        SET embedding = ai.ollama_embed(
+                            '${AiConfig.embedModel}',
+                            ?,
+                            host => '${AiConfig.ollamaHost}'
+                        )
+                        WHERE id = ?
+                    """.trimIndent()
 
-                // Use parameterized query for safety
-                TransactionManager.current().connection.prepareStatement(embeddingSql, false)
-                    .also { statement ->
-                        statement.set(1, customUserAttrText, AttributesMasterTable.customUserAttrText.columnType)
-                        statement.set(2, newAttributeId, AttributesMasterTable.id.columnType)
-                        statement.executeUpdate()
-                    }
-            } catch (e: Exception) {
-                log.warn("Failed to generate embedding for new attribute '{}': {}", 
-                    customUserAttrText.take(50), e.message)
-                // Continue without embedding - the attribute still exists
+                    // Use parameterized query for safety
+                    TransactionManager.current().connection.prepareStatement(embeddingSql, false)
+                        .also { statement ->
+                            statement.set(1, customUserAttrText, AttributesMasterTable.customUserAttrText.columnType)
+                            statement.set(2, newAttributeId, AttributesMasterTable.id.columnType)
+                            statement.executeUpdate()
+                        }
+                } catch (e: Exception) {
+                    log.warn("Failed to generate embedding for new attribute '{}': {}", 
+                        customUserAttrText.take(50), e.message)
+                    // Continue without embedding - the attribute still exists
+                }
             }
 
             // Step 3: Link the new attribute to its categories.
@@ -300,59 +304,89 @@ class AttributesDaoImpl : AttributesDao {
         attributeNameKey: String,
         isApproved: Boolean
     ): Attribute? {
+        return findOrCreateInternal(attributeNameKey, isApproved, generateEmbedding = true)
+    }
 
-        return dbQuery {
+    suspend fun findOrCreatePlaintext(
+        attributeNameKey: String,
+        isApproved: Boolean = false
+    ): Attribute? {
+        return findOrCreateInternal(attributeNameKey, isApproved, generateEmbedding = false)
+    }
 
-            val normalizedAttr = attributeNameKey.normalizeAttributeForDBProcessing()
-            // 1. Try to find the attribute by its key.
-            val existingAttribute = AttributesMasterTable
+    private suspend fun findOrCreateInternal(
+        attributeNameKey: String,
+        isApproved: Boolean,
+        generateEmbedding: Boolean
+    ): Attribute? = dbQuery {
+
+        val normalizedAttr = attributeNameKey.normalizeAttributeForDBProcessing()
+        // 1. Try to find the attribute by its key.
+        val existingAttribute = AttributesMasterTable
+            .selectAll().where { AttributesMasterTable.attributeNameKey eq normalizedAttr }
+            .orWhere { AttributesMasterTable.customUserAttrText eq attributeNameKey }
+            .map(::toAttribute)
+            .singleOrNull()
+
+        if (existingAttribute != null) {
+            log.debug("Attribute already exists: {}", attributeNameKey)
+            return@dbQuery existingAttribute
+        }
+
+        var mostRelevantCategoryLinks =
+            attributeCategorizer.findBestCategory(attributeNameKey)
+
+        if (mostRelevantCategoryLinks.toList().isEmpty()) {
+            // Misc/Non-relevant/Unknow Category
+            mostRelevantCategoryLinks = listOf(CategoryLink(8, 1.0.toBigDecimal()))
+        }
+        // 2. If it doesn't exist, call the creation logic.
+        val localizationKey = "attr_$normalizedAttr"
+        val newAttribute = createAttributeWithCategories(
+            normalizedAttr,
+            localizationKey,
+            mostRelevantCategoryLinks,
+            attributeNameKey,
+            isApproved,
+            generateEmbedding
+        )
+
+        // 3. If creation returned null (race condition), try to fetch it again
+        if (newAttribute == null) {
+            log.warn("Attribute creation returned null for '{}', checking if it exists now", attributeNameKey)
+            val retryFetch = AttributesMasterTable
                 .selectAll().where { AttributesMasterTable.attributeNameKey eq normalizedAttr }
                 .orWhere { AttributesMasterTable.customUserAttrText eq attributeNameKey }
                 .map(::toAttribute)
                 .singleOrNull()
 
-            if (existingAttribute != null) {
-                log.debug("Attribute already exists: {}", attributeNameKey)
-                return@dbQuery existingAttribute
+            if (retryFetch != null) {
+                log.info("Found attribute on retry: {}", attributeNameKey)
+                return@dbQuery retryFetch
+            } else {
+                log.error("Failed to create or find attribute: {}", attributeNameKey)
+                return@dbQuery null
             }
-
-            var mostRelevantCategoryLinks =
-                attributeCategorizer.findBestCategory(attributeNameKey)
-
-            if (mostRelevantCategoryLinks.toList().isEmpty()) {
-                // Misc/Non-relevant/Unknow Category
-                mostRelevantCategoryLinks = listOf(CategoryLink(8, 1.0.toBigDecimal()))
-            }
-            // 2. If it doesn't exist, call the creation logic.
-            val localizationKey = "attr_$normalizedAttr"
-            val newAttribute = createAttributeWithCategories(
-                normalizedAttr,
-                localizationKey,
-                mostRelevantCategoryLinks,
-                attributeNameKey,
-                isApproved
-            )
-
-            // 3. If creation returned null (race condition), try to fetch it again
-            if (newAttribute == null) {
-                log.warn("Attribute creation returned null for '{}', checking if it exists now", attributeNameKey)
-                val retryFetch = AttributesMasterTable
-                    .selectAll().where { AttributesMasterTable.attributeNameKey eq normalizedAttr }
-                    .orWhere { AttributesMasterTable.customUserAttrText eq attributeNameKey }
-                    .map(::toAttribute)
-                    .singleOrNull()
-
-                if (retryFetch != null) {
-                    log.info("Found attribute on retry: {}", attributeNameKey)
-                    return@dbQuery retryFetch
-                } else {
-                    log.error("Failed to create or find attribute: {}", attributeNameKey)
-                    return@dbQuery null
-                }
-            }
-
-            return@dbQuery newAttribute
         }
+
+        return@dbQuery newAttribute
+    }
+
+    suspend fun getRandomApprovedAttributeSuggestions(limit: Int): List<AttributeSuggestion> = dbQuery {
+        AttributesMasterTable
+            .selectAll()
+            .where { AttributesMasterTable.isApproved eq true }
+            .limit(limit * 3)
+            .mapNotNull { row ->
+                val key = row[AttributesMasterTable.attributeNameKey]
+                if (key.isBlank()) null else AttributeSuggestion(
+                    attribute = key,
+                    relevancyScore = Random.nextDouble(0.2, 0.9),
+                    uiStyleHint = "main_yellow"
+                )
+            }
+            .shuffled()
+            .take(limit)
     }
 
     override suspend fun getComplementaryInterestSuggestions(

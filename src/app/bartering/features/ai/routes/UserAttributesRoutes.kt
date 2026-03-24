@@ -14,15 +14,11 @@ import app.bartering.features.attributes.model.AttributesRequest
 import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.categories.dao.CategoriesDaoImpl
 import app.bartering.features.profile.dao.UserProfileDaoImpl
-import app.bartering.features.profile.db.UserProfilesTable
 import app.bartering.features.profile.model.OnboardingDataRequest
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
 import app.bartering.utils.ValidationUtils
-import org.jetbrains.exposed.v1.core.*
-import org.jetbrains.exposed.v1.jdbc.*
-import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.java.KoinJavaComponent.inject
 import java.math.BigDecimal
 import kotlin.collections.component1
@@ -83,17 +79,24 @@ fun Route.getInterestsFromOnboardingData() {
         userProfileDao.updateProfile(request.userId, UserProfileUpdateRequest(
             profileKeywordDataMap = extendedMap))
 
-        userProfileDao.updateSemanticProfile(userId, UserAttributeType.PROFILE)
+        val hasAiProcessingConsent = userProfileDao.hasAiProcessingConsent(userId)
+        if (hasAiProcessingConsent) {
+            userProfileDao.updateSemanticProfile(userId, UserAttributeType.PROFILE)
+        }
 
         // TODO also give interest/interaction/popularity/search frequency a weight in suggestions
-        val parsedOfferingsSuggestions = attributesDao.parseInterestSuggestionsFromOnboardingData(
-            extendedMap,
-            userId = userId,
-            limit = 26
-        )
+        val parsedOfferingsSuggestions = if (hasAiProcessingConsent) {
+            attributesDao.parseInterestSuggestionsFromOnboardingData(
+                extendedMap,
+                userId = userId,
+                limit = 26
+            )
+        } else {
+            attributesDao.getRandomApprovedAttributeSuggestions(26)
+        }
 
         // --- Return a Success Response ---
-        call.respond(HttpStatusCode.OK, parsedOfferingsSuggestions)
+        call.respond(HttpStatusCode.OK, parsedOfferingsSuggestions.shuffled())
     }
 }
 
@@ -125,21 +128,8 @@ fun Route.getOfferingsFromInterestsData() {
             }
 
             // --- Persist the Parsed Offerings to the Database ---
-            // Get user's preferred language for attribute name translation
-            val userProfileRow = dbQuery {
-                UserProfilesTable
-                    .select(UserProfilesTable.preferredLanguage)
-                    .where { UserProfilesTable.userId eq requestObj.userId }
-                    .singleOrNull()
-            }
-            val userPreferredLanguage = userProfileRow?.get(UserProfilesTable.preferredLanguage) ?: "en"
-            
-            // Only use Accept-Language header translation if user's preferred language is English
-            val effectiveLanguage = if (userPreferredLanguage == "en") {
-                call.request.headers["Accept-Language"]?.split(",")?.firstOrNull()?.split(";")?.firstOrNull()?.trim() ?: "en"
-            } else {
-                userPreferredLanguage
-            }
+            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+            val hasAiProcessingConsent = userProfileDao.hasAiProcessingConsent(requestObj.userId)
 
             try {
                 updateUserAttributesFromMap(
@@ -149,15 +139,16 @@ fun Route.getOfferingsFromInterestsData() {
                     attributesMap = requestObj.attributesRelevancyData,
                     type = UserAttributeType.SEEKING,
                     application = application,
-                    language = effectiveLanguage
+                    aiProcessingEnabled = hasAiProcessingConsent
                 )
             } catch (e: Exception) {
                 application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
                 return@post call.respond(HttpStatusCode.InternalServerError, "Could not save offerings to profile.")
             }
 
-            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
-            userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.SEEKING)
+            if (hasAiProcessingConsent) {
+                userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.SEEKING)
+            }
 
             // Check for matching postings for each new SEEKING attribute
             val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
@@ -181,13 +172,17 @@ fun Route.getOfferingsFromInterestsData() {
                 }
             }
 
-            val parsedInterestSuggestions = attributesDao.getComplementaryInterestSuggestions(
-                requestObj.attributesRelevancyData,
-                26,
-                requestObj.userId
-            )
+            val parsedInterestSuggestions = if (hasAiProcessingConsent) {
+                attributesDao.getComplementaryInterestSuggestions(
+                    requestObj.attributesRelevancyData,
+                    26,
+                    requestObj.userId
+                )
+            } else {
+                attributesDao.getRandomApprovedAttributeSuggestions(26)
+            }
 
-            call.respond(parsedInterestSuggestions)
+            call.respond(parsedInterestSuggestions.shuffled())
 
         } catch (e: Exception) {
             call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
@@ -225,21 +220,8 @@ fun Route.parseOfferingsAndUpdateProfile() {
             val userAttributesDao: UserAttributesDaoImpl by inject(UserAttributesDaoImpl::class.java)
 
             // --- Persist the Parsed Offerings to the Database ---
-            // Get user's preferred language for attribute name translation
-            val userProfileRow = dbQuery {
-                UserProfilesTable
-                    .select(UserProfilesTable.preferredLanguage)
-                    .where { UserProfilesTable.userId eq requestObj.userId }
-                    .singleOrNull()
-            }
-            val userPreferredLanguage = userProfileRow?.get(UserProfilesTable.preferredLanguage) ?: "en"
-            
-            // Only use Accept-Language header translation if user's preferred language is English
-            val effectiveLanguage = if (userPreferredLanguage == "en") {
-                call.request.headers["Accept-Language"]?.split(",")?.firstOrNull()?.split(";")?.firstOrNull()?.trim() ?: "en"
-            } else {
-                userPreferredLanguage
-            }
+            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+            val hasAiProcessingConsent = userProfileDao.hasAiProcessingConsent(requestObj.userId)
 
             try {
                 updateUserAttributesFromMap(
@@ -249,15 +231,16 @@ fun Route.parseOfferingsAndUpdateProfile() {
                     attributesMap = requestObj.attributesRelevancyData,
                     type = UserAttributeType.PROVIDING,
                     application = application,
-                    language = effectiveLanguage
+                    aiProcessingEnabled = hasAiProcessingConsent
                 )
             } catch (e: Exception) {
                 application.log.error("Failed to save parsed offerings for user ${requestObj.userId}", e)
                 return@post call.respond(HttpStatusCode.InternalServerError, "Could not save offerings to profile.")
             }
 
-            val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
-            userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.PROVIDING)
+            if (hasAiProcessingConsent) {
+                userProfileDao.updateSemanticProfile(requestObj.userId, UserAttributeType.PROVIDING)
+            }
 
             // Check for matching postings for each new PROVIDING/OFFERING attribute
             val matchNotificationService: MatchNotificationService by inject(MatchNotificationService::class.java)
@@ -293,7 +276,6 @@ fun Route.parseOfferingsAndUpdateProfile() {
  * IMPORTANT: This function ensures attributes are created BEFORE linking them to users.
  * Each attribute creation happens in its own transaction to avoid batch insert conflicts.
  * 
- * @param language The user's preferred language for attribute name translation (ISO 639-1 code, e.g., "en", "lv")
  */
 private suspend fun updateUserAttributesFromMap(
     userId: String,
@@ -302,7 +284,7 @@ private suspend fun updateUserAttributesFromMap(
     attributesMap: Map<String, Double>,
     type: UserAttributeType,
     application: Application,
-    language: String = "en"
+    aiProcessingEnabled: Boolean = true
 ) {
     // Step 1: Clear previous attributes in a separate transaction
     dbQuery {
@@ -325,7 +307,11 @@ private suspend fun updateUserAttributesFromMap(
             val validatedRelevancy = ValidationUtils.validateRelevancy(relevancy)
 
             // Each findOrCreate gets its own transaction and is committed before continuing
-            val attribute = attributesDao.findOrCreate(sanitizedKey)
+            val attribute = if (aiProcessingEnabled) {
+                attributesDao.findOrCreate(sanitizedKey)
+            } else {
+                attributesDao.findOrCreatePlaintext(sanitizedKey)
+            }
 
             if (attribute == null) {
                 application.log.warn("Could not find or create attribute for key: $sanitizedKey")

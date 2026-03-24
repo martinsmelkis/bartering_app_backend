@@ -4,6 +4,7 @@ import app.bartering.config.AiConfig
 import app.bartering.localization.Localization
 import org.slf4j.LoggerFactory
 import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.attributes.db.AttributesMasterTable
 import app.bartering.features.attributes.db.UserAttributesTable
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
@@ -54,6 +55,39 @@ class UserProfileDaoImpl : UserProfileDao {
             it[id] = user.id!!
             it[publicKey] = user.publicKey
         }
+    }
+
+    override suspend fun hasLocationConsent(userId: String): Boolean = dbQuery {
+        if (!SecurityUtils.isValidUUID(userId)) return@dbQuery false
+
+        UserPrivacyConsentsTable
+            .select(UserPrivacyConsentsTable.locationConsent)
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserPrivacyConsentsTable.locationConsent)
+            ?: false
+    }
+
+    override suspend fun hasAiProcessingConsent(userId: String): Boolean = dbQuery {
+        if (!SecurityUtils.isValidUUID(userId)) return@dbQuery false
+
+        UserPrivacyConsentsTable
+            .select(UserPrivacyConsentsTable.aiProcessingConsent)
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserPrivacyConsentsTable.aiProcessingConsent)
+            ?: true
+    }
+
+    override suspend fun hasAnalyticsConsent(userId: String): Boolean = dbQuery {
+        if (!SecurityUtils.isValidUUID(userId)) return@dbQuery false
+
+        UserPrivacyConsentsTable
+            .select(UserPrivacyConsentsTable.analyticsCookiesConsent)
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserPrivacyConsentsTable.analyticsCookiesConsent)
+            ?: false
     }
 
     override suspend fun getProfile(userId: String): UserProfile? = dbQuery {
@@ -215,16 +249,29 @@ class UserProfileDaoImpl : UserProfileDao {
             }
         }
 
+        val currentConsents = UserPrivacyConsentsTable
+            .selectAll()
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+
+        val effectiveLocationConsent = request.locationConsent
+            ?: currentConsents?.get(UserPrivacyConsentsTable.locationConsent)
+            ?: false
+
         UserProfilesTable.upsert { table ->
             table[UserProfilesTable.userId] = userId
             table[UserProfilesTable.name] = finalName
-            if (request.latitude != null && request.longitude != null
+
+            if (!effectiveLocationConsent) {
+                table[location] = null
+            } else if (request.latitude != null && request.longitude != null
                 && request.latitude != 0.0 && request.longitude != 0.0) {
                 // Create a geography point from the client's coordinates, setting the SRID to 4326
                 // NOTE: PostGIS Point expects (longitude, latitude) NOT (latitude, longitude)
                 table[location] = Point(request.longitude, request.latitude)
                     .also { p -> p.srid = 4326 }
             }
+
             // Always set profileKeywordDataMap to avoid null constraint violation
             table[profileKeywordDataMap] = extendedMap
             request.preferredLanguage?.let { lang ->
@@ -260,6 +307,18 @@ class UserProfileDaoImpl : UserProfileDao {
                 request.privacyPolicyVersion?.let { version ->
                     consentTable[UserPrivacyConsentsTable.privacyPolicyVersion] = version
                     consentTable[UserPrivacyConsentsTable.privacyPolicyAcceptedAt] = java.time.Instant.now()
+                }
+            }
+
+            if (request.aiProcessingConsent == false) {
+                UserSemanticProfilesTable.update({ UserSemanticProfilesTable.userId eq userId }) {
+                    it[embeddingNeeds] = null
+                    it[embeddingHaves] = null
+                    it[embeddingProfile] = null
+                    it[hashNeeds] = null
+                    it[hashHaves] = null
+                    it[hashProfile] = null
+                    it[updatedAt] = java.time.Instant.now()
                 }
             }
         }
@@ -317,10 +376,12 @@ class UserProfileDaoImpl : UserProfileDao {
             FROM
                 user_registration_data u
             INNER JOIN user_profiles up ON u.id = up.user_id
+            INNER JOIN user_privacy_consents uc ON uc.user_id = u.id
             WHERE
+                uc.location_consent = TRUE
                 -- Use ST_DWithin with geography for accurate distance on Earth's surface
                 -- This uses the spatial GIST index for fast lookup
-                ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)
+                AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)
                 ${if (excludeUserId != null) "AND u.id != ?" else ""}
             ORDER BY
                 distance_meters ASC
@@ -423,6 +484,16 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
+        val hasAiConsent = UserPrivacyConsentsTable
+            .select(UserPrivacyConsentsTable.aiProcessingConsent)
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserPrivacyConsentsTable.aiProcessingConsent)
+            ?: true
+
+        if (!hasAiConsent) {
+            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, radiusMeters, 20)
+        }
         // Adjust threshold multiplier based on user density
         val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
             UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
@@ -482,6 +553,16 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileWithDistance> = dbQuery {
+        val hasAiConsent = UserPrivacyConsentsTable
+            .select(UserPrivacyConsentsTable.aiProcessingConsent)
+            .where { UserPrivacyConsentsTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserPrivacyConsentsTable.aiProcessingConsent)
+            ?: true
+
+        if (!hasAiConsent) {
+            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, radiusMeters, 20)
+        }
         // Adjust threshold multiplier based on user density
         val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
             UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
@@ -865,6 +946,176 @@ class UserProfileDaoImpl : UserProfileDao {
         return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
     }
 
+    private suspend fun getRandomizedAttributeProfiles(
+        currentUserId: String,
+        latitude: Double?,
+        longitude: Double?,
+        radiusMeters: Double?,
+        limit: Int
+    ): List<UserProfileWithDistance> = dbQuery {
+        fun parseProfilesFromResultSet(
+            rs: java.sql.ResultSet,
+            userProfiles: MutableList<UserProfileWithDistance>,
+            userAttributes: MutableMap<String, MutableList<UserAttributeDto>>
+        ) {
+            while (rs.next()) {
+                val foundUserId = rs.getString("user_id")
+                val keywordsJson = rs.getString("profile_keywords_with_weights")
+                val mappedKeyWords: Map<String, Double> = JsonParserUtils.parseKeywordWeights(keywordsJson)
+                val (userLongitude, userLatitude) = LocationParser.parseLocation(rs)
+
+                val distanceMeters = rs.getDouble("distance_meters")
+                val distanceKm = if (rs.wasNull()) 0.0 else distanceMeters / 1000
+
+                userProfiles.add(
+                    UserProfileWithDistance(
+                        profile = UserProfile(
+                            userId = foundUserId,
+                            name = rs.getString("name") ?: "",
+                            latitude = userLatitude,
+                            longitude = userLongitude,
+                            attributes = emptyList(),
+                            profileKeywordDataMap = mappedKeyWords
+                        ),
+                        distanceKm = distanceKm,
+                        matchRelevancyScore = kotlin.random.Random.nextDouble(0.35, 0.85)
+                    )
+                )
+                userAttributes[foundUserId] = mutableListOf()
+            }
+        }
+
+        val plaintextAttributeCount = UserAttributesTable
+            .join(
+                AttributesMasterTable,
+                JoinType.INNER,
+                onColumn = UserAttributesTable.attributeId,
+                otherColumn = AttributesMasterTable.attributeNameKey
+            )
+            .selectAll()
+            .where {
+                (UserAttributesTable.userId eq currentUserId) and
+                    AttributesMasterTable.customUserAttrText.isNotNull()
+            }
+            .count()
+
+        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
+
+        if (plaintextAttributeCount > 0) {
+            val plaintextMatchQuery = """
+                WITH my_attrs AS (
+                    SELECT DISTINCT ua.attribute_id, LOWER(COALESCE(a.custom_user_attr_text, ua.attribute_id)) AS attr_text
+                    FROM user_attributes ua
+                    JOIN attributes a ON a.attribute_key = ua.attribute_id
+                    WHERE ua.user_id = ?
+                ), candidate_scores AS (
+                    SELECT
+                        u.id as user_id,
+                        up.name,
+                        up.location,
+                        up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                        COUNT(DISTINCT ma.attribute_id) as match_count,
+                        ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
+                    FROM user_registration_data u
+                    INNER JOIN user_profiles up ON u.id = up.user_id
+                    INNER JOIN user_attributes ua_other ON ua_other.user_id = u.id
+                    INNER JOIN attributes a_other ON a_other.attribute_key = ua_other.attribute_id
+                    INNER JOIN my_attrs ma ON (
+                        ua_other.attribute_id = ma.attribute_id OR
+                        LOWER(COALESCE(a_other.custom_user_attr_text, ua_other.attribute_id)) = ma.attr_text
+                    )
+                    WHERE u.id != ?
+                    ${if (latitude != null && longitude != null && radiusMeters != null) "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)" else ""}
+                    GROUP BY u.id, up.name, up.location, up.profile_keywords_with_weights
+                )
+                SELECT user_id, name, location, profile_keywords_with_weights, distance_meters
+                FROM candidate_scores
+                ORDER BY match_count DESC, RANDOM()
+                LIMIT ?
+            """.trimIndent()
+
+            val plaintextParams = mutableListOf<Any?>()
+            plaintextParams.add(currentUserId)
+            if (latitude != null && longitude != null) {
+                plaintextParams.add(longitude)
+                plaintextParams.add(latitude)
+            }
+            plaintextParams.add(currentUserId)
+            if (latitude != null && longitude != null && radiusMeters != null) {
+                plaintextParams.add(longitude)
+                plaintextParams.add(latitude)
+                plaintextParams.add(radiusMeters)
+            }
+            plaintextParams.add(limit)
+
+            (TransactionManager.current().connection.connection as java.sql.Connection)
+                .prepareStatement(plaintextMatchQuery)
+                .also { statement ->
+                    plaintextParams.forEachIndexed { index, value ->
+                        when (value) {
+                            is String -> statement.setString(index + 1, value)
+                            is Int -> statement.setInt(index + 1, value)
+                            is Double -> statement.setDouble(index + 1, value)
+                            else -> statement.setObject(index + 1, value)
+                        }
+                    }
+
+                    val rs = statement.executeQuery()
+                    parseProfilesFromResultSet(rs, userProfiles, userAttributes)
+                }
+        }
+
+        if (userProfiles.isEmpty()) {
+            val fallbackRandomQuery = """
+                SELECT
+                    u.id as user_id,
+                    up.name,
+                    up.location,
+                    up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                    ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
+                FROM user_registration_data u
+                INNER JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id != ?
+                ${if (latitude != null && longitude != null && radiusMeters != null) "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)" else ""}
+                ORDER BY RANDOM()
+                LIMIT ?
+            """.trimIndent()
+
+            val fallbackParams = mutableListOf<Any?>()
+            if (latitude != null && longitude != null) {
+                fallbackParams.add(longitude)
+                fallbackParams.add(latitude)
+            }
+            fallbackParams.add(currentUserId)
+            if (latitude != null && longitude != null && radiusMeters != null) {
+                fallbackParams.add(longitude)
+                fallbackParams.add(latitude)
+                fallbackParams.add(radiusMeters)
+            }
+            fallbackParams.add(limit)
+
+            (TransactionManager.current().connection.connection as java.sql.Connection)
+                .prepareStatement(fallbackRandomQuery)
+                .also { statement ->
+                    fallbackParams.forEachIndexed { index, value ->
+                        when (value) {
+                            is String -> statement.setString(index + 1, value)
+                            is Int -> statement.setInt(index + 1, value)
+                            is Double -> statement.setDouble(index + 1, value)
+                            else -> statement.setObject(index + 1, value)
+                        }
+                    }
+
+                    val rs = statement.executeQuery()
+                    parseProfilesFromResultSet(rs, userProfiles, userAttributes)
+                }
+        }
+
+        val results = fetchAttributesForProfiles(userProfiles, userAttributes)
+        return@dbQuery results.shuffled().take(limit)
+    }
+
     /**
      * Calculates and stores a user's semantic profile embedding.
      * This should be called whenever a user's attributes change.
@@ -874,6 +1125,18 @@ class UserProfileDaoImpl : UserProfileDao {
             // Validate userId to prevent SQL injection
             if (!SecurityUtils.isValidUUID(userId)) {
                 log.warn("Invalid userId format in updateSemanticProfile: {}", userId)
+                return@dbQuery
+            }
+
+            val aiProcessingConsent = UserPrivacyConsentsTable
+                .select(UserPrivacyConsentsTable.aiProcessingConsent)
+                .where { UserPrivacyConsentsTable.userId eq userId }
+                .firstOrNull()
+                ?.get(UserPrivacyConsentsTable.aiProcessingConsent)
+                ?: true
+
+            if (!aiProcessingConsent) {
+                log.debug("Skipping semantic profile update for userId={} due to missing AI consent", userId)
                 return@dbQuery
             }
 
