@@ -41,31 +41,45 @@ fun Application.installActivityTracking() {
     log.info("Installing Activity Tracking Middleware")
     
     intercept(ApplicationCallPipeline.Monitoring) {
-        // Get authenticated user ID from request headers
-        val userId = call.request.headers["X-User-ID"]
-        
-        if (!userId.isNullOrBlank()) {
-            try {
-                val hasAnalyticsConsent = userProfileDao.hasAnalyticsConsent(userId)
-                if (hasAnalyticsConsent) {
-                    // Determine activity type from request path
-                    val path = call.request.path()
-                    val activityType = determineActivityType(path)
+        val startedAt = System.currentTimeMillis()
 
-                    // Update activity in cache (extremely fast, non-blocking)
-                    UserActivityCache.updateActivity(userId, activityType)
-                    userDailyActivityStatsService.recordActivity(userId, activityType)
+        try {
+            // Get authenticated user ID from request headers
+            val userId = call.request.headers["X-User-ID"]
+
+            if (!userId.isNullOrBlank()) {
+                try {
+                    val hasAnalyticsConsent = userProfileDao.hasAnalyticsConsent(userId)
+                    if (hasAnalyticsConsent) {
+                        // Determine activity type from request path
+                        val path = call.request.path()
+                        val activityType = determineActivityType(path)
+
+                        // Update activity in cache (extremely fast, non-blocking)
+                        UserActivityCache.updateActivity(userId, activityType)
+                        userDailyActivityStatsService.recordActivity(userId, activityType)
+                    }
+
+                } catch (e: Exception) {
+                    // Silent fail - activity tracking should never break requests
+                    // Only log in development/debug mode
+                    log.debug("Activity tracking error for userId={}", userId, e)
                 }
+            }
 
-            } catch (e: Exception) {
-                // Silent fail - activity tracking should never break requests
-                // Only log in development/debug mode
-                log.debug("Activity tracking error for userId={}", userId, e)
+            // Continue with the request
+            proceed()
+        } finally {
+            val userId = call.request.headers["X-User-ID"]
+            if (!userId.isNullOrBlank()) {
+                val elapsedMs = System.currentTimeMillis() - startedAt
+                try {
+                    userDailyActivityStatsService.recordResponseTime(userId, elapsedMs)
+                } catch (_: Exception) {
+                    // Never break request lifecycle due to analytics
+                }
             }
         }
-        
-        // Continue with the request
-        proceed()
     }
     
     log.info("Activity Tracking Middleware installed")

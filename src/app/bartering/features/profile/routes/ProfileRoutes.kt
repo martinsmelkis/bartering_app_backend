@@ -20,11 +20,16 @@ import app.bartering.features.profile.model.UserAttributeDto
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import io.ktor.client.call.body
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import kotlin.getValue
 
 private val log = LoggerFactory.getLogger("ProfileRoutes")
+private val analyticsRecordingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 fun Route.getProfilesNearbyRoute() {
 
@@ -314,6 +319,8 @@ fun Route.searchProfilesByKeywordRoute() {
             }
         }
 
+        val searchStartedAt = System.currentTimeMillis()
+
         try {
             // First: Search local profiles
             var matchingProfiles = if (hasAiProcessingConsent) {
@@ -358,6 +365,22 @@ fun Route.searchProfilesByKeywordRoute() {
 
             log.info("Returning {} total profiles for search: '{}' (local + federated)", 
                 matchingProfiles.size, searchText)
+
+            val userDailyActivityStatsService: UserDailyActivityStatsService by inject(
+                UserDailyActivityStatsService::class.java
+            )
+            val elapsedMs = System.currentTimeMillis() - searchStartedAt
+            analyticsRecordingScope.launch {
+                try {
+                    userDailyActivityStatsService.recordSearchedKeywordWithResponseTime(
+                        authenticatedUserId,
+                        searchText,
+                        elapsedMs
+                    )
+                } catch (e: Exception) {
+                    log.debug("Async keyword analytics recording failed", e)
+                }
+            }
 
             call.respond(HttpStatusCode.OK, matchingProfiles)
 

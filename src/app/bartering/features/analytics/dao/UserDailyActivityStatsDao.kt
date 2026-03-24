@@ -4,16 +4,24 @@ import app.bartering.features.analytics.model.UserDailyActivityStats
 import java.time.LocalDate
 
 interface UserDailyActivityStatsDao {
-    suspend fun incrementApiRequest(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementSearch(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementNearbySearch(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementProfileUpdate(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementChatMessagesSent(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementChatMessagesReceived(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementTransactionsCreated(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementReviewsSubmitted(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementSuccessfulActions(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementFailedActions(userId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementApiRequest(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementSearch(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementNearbySearch(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementProfileUpdate(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementChatMessagesSent(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementChatMessagesReceived(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementTransactionsCreated(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementReviewsSubmitted(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementSuccessfulActions(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementFailedActions(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementSearchKeyword(anonymizedUserId: String, keyword: String, date: LocalDate = LocalDate.now()): Boolean
+    suspend fun recordSearchKeywordWithResponseTime(
+        anonymizedUserId: String,
+        keyword: String,
+        responseTimeMs: Long,
+        date: LocalDate = LocalDate.now()
+    ): Boolean
+    suspend fun recordResponseTime(anonymizedUserId: String, responseTimeMs: Long, date: LocalDate = LocalDate.now()): Boolean
 
-    suspend fun getUserStats(userId: String, fromDate: LocalDate, toDate: LocalDate): List<UserDailyActivityStats>
+    suspend fun getUserStats(anonymizedUserId: String, fromDate: LocalDate, toDate: LocalDate): List<UserDailyActivityStats>
 }

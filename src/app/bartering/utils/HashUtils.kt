@@ -14,6 +14,11 @@ object HashUtils {
         return hashString(canonicalString)
     }
 
+    /**
+     * Generates a SHA-256 hash for plain string input.
+     */
+    fun sha256(input: String): String = hashString(input)
+
     private fun hashString(input: String): String {
         return MessageDigest
             .getInstance("SHA-256")
