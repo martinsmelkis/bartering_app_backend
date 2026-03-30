@@ -141,7 +141,7 @@ User A and User B coordinate:
 val encrypted = blindReviewService.encryptReview(reviewJson, secretKey)
 pendingReviewsDao.store(encrypted)
 
-// Hidden from both parties for 14 days or until both submit
+// Hidden from both parties until both submit
 val isVisible = both_submitted || deadline_passed
 ```
 
@@ -539,7 +539,7 @@ review.badges.add(if (isVerifiedPurchase) "✅ Verified Trade" else "⚠️ Unve
 
 ```kotlin
 if (targetAccountType == AccountType.BUSINESS_VERIFIED) {
-    MIN_ACCOUNT_AGE = 30.days  // vs 14 days for individuals
+    MIN_ACCOUNT_AGE = 30.days  // vs 7 days for individuals
     MIN_TRANSACTION_VALUE = 50  // vs any value
     REQUIRES_TRANSACTION_PROOF = true
 }

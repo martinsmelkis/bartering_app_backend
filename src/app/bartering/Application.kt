@@ -59,7 +59,8 @@ import app.bartering.features.migration.dao.MigrationDao
 import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.features.federation.di.federationModule
 import app.bartering.features.wallet.di.walletModule
-import app.bartering.tests.TestRandom100UsersGenAndSimilarity
+import app.bartering.features.wallet.service.UserActivityRewardService
+import app.bartering.features.wallet.tasks.UserActivityRewardTask
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
@@ -212,6 +213,12 @@ fun Application.module(testing: Boolean = false) {
     // Start digest notification jobs
     DigestNotificationJobManager.startJobs()
     log.info("✅ Digest notification jobs started")
+
+    // Start activity-count wallet reward task (10 coins for each 30 actions)
+    val userActivityRewardService: UserActivityRewardService by inject(UserActivityRewardService::class.java)
+    val userActivityRewardTask = UserActivityRewardTask(userActivityRewardService)
+    userActivityRewardTask.start(GlobalScope)
+    log.info("✅ User activity reward task started")
     
     // Start inactive user cleanup task
     val notificationOrchestrator: NotificationOrchestrator by inject(NotificationOrchestrator::class.java)

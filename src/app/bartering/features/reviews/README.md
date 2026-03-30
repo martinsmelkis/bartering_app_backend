@@ -19,7 +19,6 @@ reputation scores accurately reflect user trustworthiness.
 ### 2. **Blind Review Period**
 - Reviews are encrypted and hidden until both parties submit
 - Prevents reciprocal manipulation ("I'll give you 5 stars if you give me 5 stars")
-- 14-day deadline - reviews auto-reveal if one party doesn't submit
 
 ### 3. **Weighted Reputation System**
 - Not all reviews carry equal weight
@@ -74,7 +73,7 @@ Users can mark transactions with the following statuses:
 - ✅ Verified transaction requirement
 - ✅ One review per transaction limit
 - ✅ 30-90 day review window
-- ✅ Account age threshold (14+ days)
+- ✅ Account age threshold (7+ days)
 - ✅ Review velocity limits (max 5/day)
 - ✅ Device/IP fingerprinting
 
@@ -176,23 +175,6 @@ CREATE TABLE reviews (
 );
 ```
 
-#### `pending_reviews`
-Encrypted reviews awaiting blind reveal.
-
-```sql
-CREATE TABLE pending_reviews (
-    transaction_id VARCHAR(255),
-    reviewer_id VARCHAR(255),
-    encrypted_review TEXT,
-    submitted_at TIMESTAMP DEFAULT NOW(),
-    reveal_deadline TIMESTAMP,
-    revealed BOOLEAN DEFAULT FALSE,
-    revealed_at TIMESTAMP,
-    PRIMARY KEY (transaction_id, reviewer_id),
-    INDEX idx_deadline (reveal_deadline, revealed)
-);
-```
-
 ### Supporting Tables
 
 - `review_responses` - User responses to received reviews
@@ -236,12 +218,7 @@ val weight = reviewWeightService.calculateReviewWeight(
     isVerifiedTransaction = false
 )
 
-// 4. Encrypt and store (blind review)
-val secretKey = blindReviewService.generateSecretKey()
-val encrypted = blindReviewService.encryptReview(reviewJson, secretKey)
-// Store in pending_reviews table
-
-// 5. Check if both submitted, reveal if ready
+// 4. Check if both submitted, reveal if ready
 if (bothPartiesSubmitted) {
     revealReviews(transactionId)
     updateReputationScores()
@@ -302,10 +279,9 @@ Users can earn badges for achievements:
 ### Review Settings
 
 ```kotlin
-const val MIN_ACCOUNT_AGE_DAYS = 14
+const val MIN_ACCOUNT_AGE_DAYS = 7
 const val MAX_REVIEWS_PER_DAY = 5
 const val REVIEW_WINDOW_DAYS = 90
-const val BLIND_REVIEW_DEADLINE_DAYS = 14
 ```
 
 ### Risk Thresholds

@@ -178,7 +178,6 @@ PUT /api/v1/transactions/{id}/status
 CREATE TABLE barter_transactions (...);
 CREATE TABLE user_reputations (...);
 CREATE TABLE reviews (...);
-CREATE TABLE pending_reviews (...);
 CREATE TABLE review_responses (...);
 CREATE TABLE review_appeals (...);
 CREATE TABLE review_audit_log (...);
@@ -198,12 +197,9 @@ Create configuration file for tunable parameters:
 ```kotlin
 object ReviewsConfig {
     // Eligibility
-    const val MIN_ACCOUNT_AGE_DAYS = 14
+    const val MIN_ACCOUNT_AGE_DAYS = 7
     const val MAX_REVIEWS_PER_DAY = 5
     const val REVIEW_WINDOW_DAYS = 90
-    
-    // Blind Review
-    const val BLIND_REVIEW_DEADLINE_DAYS = 14
     
     // Risk Scoring
     const val LOW_RISK_THRESHOLD = 0.3

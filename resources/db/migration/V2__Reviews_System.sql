@@ -84,25 +84,6 @@ CREATE INDEX idx_reviews_submitted ON user_reviews(submitted_at);
 CREATE INDEX idx_reviews_transaction_reviewer ON user_reviews(transaction_id, reviewer_id);
 
 -- ============================================================================
--- PENDING REVIEWS TABLE
--- ============================================================================
--- Stores reviews that have been submitted but not yet revealed
--- Reviews are encrypted until both parties submit or deadline expires
-CREATE TABLE IF NOT EXISTS pending_reviews (
-    transaction_id VARCHAR(255) NOT NULL,
-    reviewer_id VARCHAR(255) NOT NULL REFERENCES user_registration_data(id) ON DELETE CASCADE,
-    encrypted_review TEXT NOT NULL,
-    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    reveal_deadline TIMESTAMPTZ NOT NULL,
-    revealed BOOLEAN NOT NULL DEFAULT FALSE,
-    revealed_at TIMESTAMPTZ,
-    
-    PRIMARY KEY (transaction_id, reviewer_id)
-);
-
-CREATE INDEX idx_pending_reveal_deadline ON pending_reviews(reveal_deadline, revealed);
-
--- ============================================================================
 -- REVIEW RESPONSES TABLE
 -- ============================================================================
 -- Allows users to respond to reviews they've received
@@ -201,7 +182,6 @@ CREATE INDEX idx_moderation_status ON review_moderation_queue(status, priority, 
 COMMENT ON TABLE barter_transactions IS 'Tracks all barter transactions between users - required for reviews';
 COMMENT ON TABLE user_reputations IS 'Aggregated reputation scores updated when reviews are submitted';
 COMMENT ON TABLE user_reviews IS 'All user reviews - hidden initially for blind review period';
-COMMENT ON TABLE pending_reviews IS 'Encrypted reviews awaiting reveal (14-day deadline or both submitted)';
 COMMENT ON TABLE review_responses IS 'User responses to received reviews for reputation defense';
 COMMENT ON TABLE review_appeals IS 'Disputed reviews requiring moderation';
 COMMENT ON TABLE review_audit_log IS 'Complete audit trail for abuse detection';
@@ -214,7 +194,7 @@ COMMENT ON TABLE review_moderation_queue IS 'Reviews flagged for human review';
 DO $$
 BEGIN
     RAISE NOTICE '✅ Reviews system migration completed successfully!';
-    RAISE NOTICE '📊 Created 9 tables: transactions, reputations, user_reviews, pending_reviews, responses, appeals, audit_log, badges, review_moderation_queue';
+    RAISE NOTICE '📊 Created 9 tables: transactions, reputations, user_reviews, responses, appeals, audit_log, badges, review_moderation_queue';
     RAISE NOTICE '🔒 All anti-abuse mechanisms are in place';
     RAISE NOTICE '🚀 System is ready for use!';
 END $$;

@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.profile.db.UserPresenceTable
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.upsert
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -50,6 +51,7 @@ object UserActivityCache {
     private const val SYNC_INTERVAL_SECONDS = 30L
     private const val ONLINE_THRESHOLD_MILLIS = 5 * 60 * 1000L // 5 minutes
     private const val CLEANUP_THRESHOLD_MILLIS = 30 * 60 * 1000L // 30 minutes
+    private const val COUNTED_ACTION_COOLDOWN_MILLIS = 10 * 30000L // 30 seconds
     
     /**
      * Internal data class to store activity information
@@ -57,7 +59,8 @@ object UserActivityCache {
     private data class ActivityRecord(
         val timestamp: Long,
         val activityType: String,
-        val isDirty: Boolean = true // Needs to be synced to DB
+        val isDirty: Boolean = true, // Needs to be synced to DB
+        val shouldCountAction: Boolean = true
     )
     
     /**
@@ -103,10 +106,14 @@ object UserActivityCache {
      */
     fun updateActivity(userId: String, activityType: String = "active") {
         val now = System.currentTimeMillis()
+        val previous = activityMap[userId]
+        val shouldCountAction = previous == null || (now - previous.timestamp) >= COUNTED_ACTION_COOLDOWN_MILLIS
+
         activityMap[userId] = ActivityRecord(
             timestamp = now,
             activityType = activityType,
-            isDirty = true
+            isDirty = true,
+            shouldCountAction = shouldCountAction
         )
     }
     
@@ -213,15 +220,22 @@ object UserActivityCache {
                 dbQuery {
                     dirtyRecords.forEach { (userId, record) ->
                         try {
+                            val existing = UserPresenceTable
+                                .selectAll()
+                                .where { UserPresenceTable.userId eq userId }
+                                .singleOrNull()
+
                             UserPresenceTable.upsert {
                                 it[UserPresenceTable.userId] = userId
                                 it[lastActivityAt] = Instant.ofEpochMilli(record.timestamp)
                                 it[lastActivityType] = record.activityType
+                                val currentCount = existing?.get(UserPresenceTable.totalActivityCount) ?: 0L
+                                it[totalActivityCount] = if (record.shouldCountAction) currentCount + 1L else currentCount
                                 it[updatedAt] = Instant.now()
                             }
                             
-                            // Mark as clean (not dirty) after successful sync
-                            activityMap[userId] = record.copy(isDirty = false)
+                            // Mark as clean and clear one-time count flag after successful sync
+                            activityMap[userId] = record.copy(isDirty = false, shouldCountAction = false)
                         } catch (e: Exception) {
                             // Check if it's a foreign key constraint violation (user was deleted)
                             val isForeignKeyError = e.message?.contains("foreign key constraint", ignoreCase = true) == true ||

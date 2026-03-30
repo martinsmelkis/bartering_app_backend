@@ -253,11 +253,11 @@ fun Route.submitReviewRoute() {
 
                 val responseMessage = when {
                     riskReport.requiresManualReview -> 
-                        "Review submitted and flagged for manual review due to risk patterns. It will be visible after both parties submit reviews or 14-day deadline."
+                        "Review submitted and flagged for manual review due to risk patterns. It will be visible after both parties submit reviews."
                     riskReport.riskLevel == "HIGH" ->
-                        "Review submitted with reduced weight due to detected risk patterns. It will be visible after both parties submit reviews or 14-day deadline."
+                        "Review submitted with reduced weight due to detected risk patterns. It will be visible after both parties submit reviews."
                     else ->
-                        "Review submitted. It will be visible after both parties submit reviews or 14-day deadline."
+                        "Review submitted. It will be visible after both parties submit reviews."
                 }
                 
                 // Include risk analysis in response if there are any risk concerns
