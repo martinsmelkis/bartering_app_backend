@@ -219,7 +219,6 @@ class FederationDaoImpl : FederationDao {
         val id = UUID.randomUUID().toString()
         // Convert Map to JsonElement for proper serialization
         val detailsJson: kotlinx.serialization.json.JsonElement? = details?.let { detailsMap ->
-            val json = kotlinx.serialization.json.Json { }
             // Build JSON object from map
             kotlinx.serialization.json.JsonObject(
                 detailsMap.mapValues { (_, value) ->
@@ -299,11 +298,11 @@ class FederationDaoImpl : FederationDao {
     private fun rowToFederatedServer(row: ResultRow): FederatedServer {
         val scopeMap = row[FederatedServersTable.scopePermissions]
         val scopePermissions = FederationScope(
-            users = scopeMap["users"] as? Boolean ?: false,
-            postings = scopeMap["postings"] as? Boolean ?: false,
-            chat = scopeMap["chat"] as? Boolean ?: false,
-            geolocation = scopeMap["geolocation"] as? Boolean ?: false,
-            attributes = scopeMap["attributes"] as? Boolean ?: false
+            users = scopeMap["users"] ?: false,
+            postings = scopeMap["postings"] ?: false,
+            chat = scopeMap["chat"] ?: false,
+            geolocation = scopeMap["geolocation"] ?: false,
+            attributes = scopeMap["attributes"] ?: false
         )
 
         return FederatedServer(

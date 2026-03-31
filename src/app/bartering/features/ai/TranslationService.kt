@@ -3,7 +3,6 @@ package app.bartering.features.ai
 import app.bartering.config.AiConfig
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import org.jetbrains.exposed.v1.core.TextColumnType
-import org.jetbrains.exposed.v1.jdbc.statements.jdbc.JdbcResult
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 
@@ -45,7 +44,7 @@ class TranslationService {
                 TransactionManager.current().connection.prepareStatement(translationSql, false)
                     .also { statement ->
                         statement.set(1, translationPrompt, TextColumnType())
-                        (statement.executeQuery() as JdbcResult).use { rs ->
+                        (statement.executeQuery()).use { rs ->
                             if (rs.next()) {
                                 translatedText = rs.getString(1)?.trim()
                             }

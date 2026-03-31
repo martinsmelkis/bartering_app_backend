@@ -15,6 +15,7 @@ import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.transactions.experimental.newSuspendedTransaction
+import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.Locale
@@ -538,9 +539,7 @@ class MatchNotificationService(
                 
                 // Calculate match score based on relevancy and distance
                 val matchScore = calculateProfileAttributeMatchScore(
-                    matchingUserProfile = matchingUserProfile,
-                    attributeId = attributeId,
-                    distance = matchingUserProfile.distanceKm ?: 0.0
+                    distance = matchingUserProfile.distanceKm
                 )
                 
                 if (matchScore < minMatchScore) {
@@ -623,7 +622,7 @@ class MatchNotificationService(
         excludeUserId: String
     ): List<app.bartering.features.profile.model.UserProfileWithDistance> {
         return withContext(Dispatchers.IO) {
-            newSuspendedTransaction(Dispatchers.IO) {
+            suspendTransaction {
                 val radiusMeters = radiusKm * 1000.0
                 
                 // Raw SQL query to find users with the attribute within the radius
@@ -699,11 +698,7 @@ class MatchNotificationService(
      * Calculate match score for profile attribute matching
      * Factors in attribute relevancy and proximity
      */
-    private fun calculateProfileAttributeMatchScore(
-        matchingUserProfile: app.bartering.features.profile.model.UserProfileWithDistance,
-        attributeId: String,
-        distance: Double
-    ): Double {
+    private fun calculateProfileAttributeMatchScore(distance: Double): Double {
         var score = 0.7 // Base score for attribute match
         
         // Distance bonus: closer users score higher
@@ -930,7 +925,7 @@ class MatchNotificationService(
     private suspend fun calculateEmbeddingSimilarity(postingId1: String, postingId2: String): Double? {
         return try {
             withContext(Dispatchers.IO) {
-                newSuspendedTransaction(Dispatchers.IO) {
+                suspendTransaction {
                     // Fetch embeddings from database
                     val embedding1 = app.bartering.features.postings.db.UserPostingsTable
                         .select(app.bartering.features.postings.db.UserPostingsTable.embedding)
@@ -945,7 +940,7 @@ class MatchNotificationService(
                         ?.get(app.bartering.features.postings.db.UserPostingsTable.embedding)
 
                     if (embedding1 == null || embedding2 == null) {
-                        return@newSuspendedTransaction null
+                        return@suspendTransaction null
                     }
 
                     // Parse embeddings (format: "[0.1, 0.2, ...]")
@@ -953,7 +948,7 @@ class MatchNotificationService(
                     val vec2 = parseEmbedding(embedding2)
 
                     if (vec1 == null || vec2 == null || vec1.size != vec2.size) {
-                        return@newSuspendedTransaction null
+                        return@suspendTransaction null
                     }
 
                     // Calculate cosine similarity

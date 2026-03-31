@@ -1843,12 +1843,12 @@ class UserProfileDaoImpl : UserProfileDao {
             .also { statement ->
                 params.forEachIndexed { index, (_, value) ->
                     when (value) {
-                    is String -> statement.setString(index + 1, value)
-                    is Double -> statement.setDouble(index + 1, value)
-                    is Int -> statement.setInt(index + 1, value)
-                    is Boolean -> statement.setBoolean(index + 1, value)
-                    else -> statement.setObject(index + 1, value)
-                }
+                        is String -> statement.setString(index + 1, value)
+                        is Double -> statement.setDouble(index + 1, value)
+                        is Int -> statement.setInt(index + 1, value)
+                        is Boolean -> statement.setBoolean(index + 1, value)
+                        else -> statement.setObject(index + 1, value)
+                    }
                 }
 
                 val rs = statement.executeQuery()

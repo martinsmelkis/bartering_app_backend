@@ -40,13 +40,20 @@ fun Route.getReputationRoute() {
         try {
             // Check if we have cached reputation
             val cachedReputation = reputationDao.getReputation(userId)
-            
-            // If cached and recent (< 1 hour old), return it
-            if (cachedReputation != null && 
-                cachedReputation.lastUpdated.plusSeconds(3600).isAfter(java.time.Instant.now())) {
-                
+
+            // Validate cache consistency against current visible reviews count
+            // (reviews can become visible after blind-review reveal without immediately recalculating cache)
+            val currentVisibleReviewCount = reviewDao.getWeightedReviews(userId).size
+            val isCacheRecent = cachedReputation?.lastUpdated
+                ?.plusSeconds(3600)
+                ?.isAfter(java.time.Instant.now()) == true
+            val isCacheConsistent = cachedReputation?.totalReviews == currentVisibleReviewCount
+
+            // If cached, recent, and consistent with current review visibility state, return it
+            if (cachedReputation != null && isCacheRecent && isCacheConsistent) {
+
                 val badges = reputationDao.getUserBadges(userId)
-                
+
                 call.respond(HttpStatusCode.OK, ReputationResponse(
                     userId = cachedReputation.userId,
                     averageRating = cachedReputation.averageRating,

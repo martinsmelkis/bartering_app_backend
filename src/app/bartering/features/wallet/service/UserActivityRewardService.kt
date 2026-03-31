@@ -22,7 +22,7 @@ class UserActivityRewardService(
     private val log = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        private const val REWARD_ACTIONS_STEP = 30L
+        private const val REWARD_ACTIONS_STEP = 10L
         private const val REWARD_COINS_PER_STEP = 10L
         private const val DAILY_REWARD_CAP_COINS = 20L
     }

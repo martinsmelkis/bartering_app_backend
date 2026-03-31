@@ -1,7 +1,6 @@
 package app.bartering.features.authentication.model
 
 import kotlinx.serialization.Serializable
-import java.time.Instant
 
 /**
  * Represents a device key stored for multi-device authentication.
@@ -91,45 +90,6 @@ data class UpdateDeviceRequest(
 data class UpdateDeviceResponse(
     val success: Boolean,
     val message: String
-)
-
-/**
- * Request to migrate device keys (used during device migration).
- * Transfers device registration from source to target device.
- */
-@Serializable
-data class MigrateDeviceRequest(
-    val sourceDeviceId: String,
-    val targetDeviceId: String,
-    val targetPublicKey: String,
-    val targetDeviceName: String? = null,
-    val targetDeviceType: String? = null,
-    val targetPlatform: String? = null,
-    val sessionId: String? = null  // Migration session ID for verification
-)
-
-/**
- * Response after device migration.
- */
-@Serializable
-data class MigrateDeviceResponse(
-    val success: Boolean,
-    val newDeviceKeyId: String? = null,
-    val sourceDeviceDeactivated: Boolean,
-    val message: String
-)
-
-/**
- * Device activity audit log entry.
- */
-@Serializable
-data class DeviceActivityLog(
-    val id: String,
-    val userId: String,
-    val deviceId: String,
-    val activityType: String,
-    val timestamp: String,
-    val ipAddress: String? = null
 )
 
 /**

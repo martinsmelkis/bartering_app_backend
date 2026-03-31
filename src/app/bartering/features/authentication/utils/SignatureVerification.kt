@@ -6,8 +6,9 @@ import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.utils.CryptoUtils.convertRawB64KeyToECPublicKey
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.koin.core.qualifier.named
 import org.slf4j.LoggerFactory
 import java.security.Signature
 import java.util.Base64
@@ -28,7 +29,11 @@ private val log = LoggerFactory.getLogger("SignatureVerification")
  * @return A Pair containing the authenticated userId and the raw request body string on success.
  *         On failure, it sends an appropriate HTTP error response and returns Pair(null, null).
  */
-suspend fun verifyRequestSignature(call: ApplicationCall, authDao: AuthenticationDaoImpl): Pair<String?, String?> {
+suspend fun verifyRequestSignature(
+    call: ApplicationCall,
+    authDao: AuthenticationDaoImpl,
+    backgroundScope: CoroutineScope = org.koin.java.KoinJavaComponent.getKoin().get(named("authBackgroundScope"))
+): Pair<String?, String?> {
     // --- 1. Extract Authentication Data ---
     val userId = call.request.headers["X-User-ID"]
     val deviceId = call.request.headers["X-Device-ID"]  // Optional: for O(1) device lookup
@@ -111,7 +116,7 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
             if (signature.verify(signatureBytes)) {
                 // Success! Update last used timestamp asynchronously (don't block response)
                 // Note: We don't await this to keep authentication fast
-                GlobalScope.launch {
+                backgroundScope.launch {
                     authDao.updateDeviceLastUsed(userId, deviceKey.deviceId)
                 }
                 
@@ -140,7 +145,7 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
                 // Success with legacy key!
                 return Pair(userId, requestBodyAsJsonString)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Legacy key verification failed, continue to next fallback
         }
     }
@@ -169,7 +174,7 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
                     // Auto-register the device key for future requests
                     val deviceId = session.targetDeviceId
                     if (deviceId != null) {
-                        GlobalScope.launch {
+                        backgroundScope.launch {
                             authDao.registerDeviceKey(
                                 app.bartering.features.authentication.model.DeviceKeyInfo(
                                     id = java.util.UUID.randomUUID().toString(),
@@ -213,10 +218,12 @@ suspend fun verifyRequestSignature(call: ApplicationCall, authDao: Authenticatio
  * @param requiredDeviceId Optional device ID to enforce specific device authentication
  * @return Pair of (userId, requestBody) on success, (null, null) on failure
  */
+// TODO use or remove
 suspend fun verifyRequestSignatureForDevice(
     call: ApplicationCall, 
     authDao: AuthenticationDaoImpl,
-    requiredDeviceId: String? = null
+    requiredDeviceId: String? = null,
+    backgroundScope: CoroutineScope = org.koin.java.KoinJavaComponent.getKoin().get(named("authBackgroundScope"))
 ): Pair<String?, String?> {
     val userId = call.request.headers["X-User-ID"]
     val deviceId = requiredDeviceId ?: call.request.headers["X-Device-ID"]
@@ -262,7 +269,7 @@ suspend fun verifyRequestSignatureForDevice(
 
         if (signature.verify(signatureBytes)) {
             // Update last used asynchronously
-            kotlinx.coroutines.GlobalScope.launch {
+            backgroundScope.launch {
                 authDao.updateDeviceLastUsed(userId, deviceId)
             }
             return Pair(userId, requestBodyAsJsonString)

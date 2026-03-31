@@ -22,8 +22,9 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.websocket.WebSockets
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import app.bartering.errors.GenericServerError
@@ -61,7 +62,9 @@ import app.bartering.features.federation.di.federationModule
 import app.bartering.features.wallet.di.walletModule
 import app.bartering.features.wallet.service.UserActivityRewardService
 import app.bartering.features.wallet.tasks.UserActivityRewardTask
+import app.bartering.tests.TestRandom100UsersGenAndSimilarity
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.koin.core.qualifier.named
 import org.koin.java.KoinJavaComponent.inject
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.SLF4JLogger
@@ -167,11 +170,26 @@ fun Application.module(testing: Boolean = false) {
         )
     }
 
+    val authBackgroundScope: CoroutineScope by inject(
+        CoroutineScope::class.java,
+        qualifier = named("authBackgroundScope")
+    )
+    val appBackgroundScope: CoroutineScope by inject(
+        CoroutineScope::class.java,
+        qualifier = named("appBackgroundScope")
+    )
+
     // Register shutdown hook to close resources
     monitor.subscribe(ApplicationStopped) {
         val emailService: EmailService by inject(EmailService::class.java)
         emailService.close()
         log.info("✅ Email service closed")
+
+        authBackgroundScope.cancel("Application stopping")
+        log.info("✅ Auth background scope cancelled")
+
+        appBackgroundScope.cancel("Application stopping")
+        log.info("✅ App background scope cancelled")
     }
 
     val attributesDao: AttributesDao by inject<AttributesDaoImpl>(AttributesDaoImpl::class.java)
@@ -191,11 +209,11 @@ fun Application.module(testing: Boolean = false) {
 
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
     val expirationTask = PostingExpirationTask(postingDao)
-    expirationTask.start(GlobalScope)
+    expirationTask.start(appBackgroundScope)
     
     // Start posting hard deletion task (GDPR data minimization - deletes postings expired for 30+ days)
     val hardDeletionTask = PostingHardDeletionTask(postingDao, gracePeriodDays = 30, intervalHours = 24)
-    hardDeletionTask.start(GlobalScope)
+    hardDeletionTask.start(appBackgroundScope)
     log.info("✅ Posting hard deletion task started (grace period: 30 days)")
 
     // Start migration cleanup task
@@ -207,7 +225,7 @@ fun Application.module(testing: Boolean = false) {
     // Start risk tracking data cleanup task
     val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)
     val riskCleanupTask = ReviewRiskTrackingCleanupTask(riskPatternDao)
-    riskCleanupTask.start(GlobalScope)
+    riskCleanupTask.start(appBackgroundScope)
     log.info("✅ Risk tracking cleanup task started")
     
     // Start digest notification jobs
@@ -217,7 +235,7 @@ fun Application.module(testing: Boolean = false) {
     // Start activity-count wallet reward task (10 coins for each 30 actions)
     val userActivityRewardService: UserActivityRewardService by inject(UserActivityRewardService::class.java)
     val userActivityRewardTask = UserActivityRewardTask(userActivityRewardService)
-    userActivityRewardTask.start(GlobalScope)
+    userActivityRewardTask.start(appBackgroundScope)
     log.info("✅ User activity reward task started")
     
     // Start inactive user cleanup task

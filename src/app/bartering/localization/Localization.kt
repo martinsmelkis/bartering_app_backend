@@ -73,8 +73,8 @@ object Localization {
     private fun performTranslationLookup(normalizedSearch: String): String? {
         // Locales to check (add more as needed)
         val localesToCheck = listOf(
-            Locale("lv"), // Latvian
-            Locale("de"), // German
+            Locale.forLanguageTag("lv"), // Latvian
+            Locale.forLanguageTag("de"), // German
             // Add more locales here
         )
         

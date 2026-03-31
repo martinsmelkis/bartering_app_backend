@@ -85,6 +85,7 @@ fun Route.getInterestsFromOnboardingData() {
         }
 
         // TODO also give interest/interaction/popularity/search frequency a weight in suggestions
+        // Can be done by parsing user_daily_activity_stats Table
         val parsedOfferingsSuggestions = if (hasAiProcessingConsent) {
             attributesDao.parseInterestSuggestionsFromOnboardingData(
                 extendedMap,

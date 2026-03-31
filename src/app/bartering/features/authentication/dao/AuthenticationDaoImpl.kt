@@ -1,11 +1,22 @@
 package app.bartering.features.authentication.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.chat.db.ChatResponseTimesTable
 import app.bartering.features.chat.db.OfflineMessagesTable
 import app.bartering.features.chat.db.ReadReceiptsTable
 import app.bartering.features.encryptedfiles.db.EncryptedFilesTable
+import app.bartering.features.notifications.db.MatchHistoryTable
 import app.bartering.features.profile.db.UserRegistrationDataTable
-import app.bartering.features.authentication.dao.mapper.AuthenticationMapper
+import app.bartering.features.relationships.db.UserRelationshipsTable
+import app.bartering.features.relationships.db.UserReportsTable
+import app.bartering.features.reviews.db.DeviceTrackingTable
+import app.bartering.features.reviews.db.IpTrackingTable
+import app.bartering.features.reviews.db.ModerationQueueTable
+import app.bartering.features.reviews.db.ReviewAppealsTable
+import app.bartering.features.reviews.db.ReviewAuditLogTable
+import app.bartering.features.reviews.db.ReviewsTable
+import app.bartering.features.reviews.db.UserLocationChangesTable
+import app.bartering.features.authentication.mapper.AuthenticationMapper
 import app.bartering.features.authentication.db.UserDeviceKeysTable
 import app.bartering.features.authentication.model.DeviceKeyConstraints
 import app.bartering.features.authentication.model.DeviceKeyInfo
@@ -447,31 +458,94 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 }
                 log.info("Deleted {} migration sessions for user {}", migrationSessionsDeleted, userId)
 
-                // Step 5: Delete read receipts where user is sender or recipient
-                // (These don't have FK constraints with CASCADE)
+                // Step 5: Delete review-related auxiliary data that does NOT have FK cascade to user_registration_data
+                val reviewAuditLogsDeleted = ReviewAuditLogTable.deleteWhere {
+                    ReviewAuditLogTable.userId eq userId
+                }
+                log.info("Deleted {} review audit log rows for user {}", reviewAuditLogsDeleted, userId)
+
+                val deviceTrackingDeleted = DeviceTrackingTable.deleteWhere {
+                    DeviceTrackingTable.userId eq userId
+                }
+                log.info("Deleted {} device tracking rows for user {}", deviceTrackingDeleted, userId)
+
+                val ipTrackingDeleted = IpTrackingTable.deleteWhere {
+                    IpTrackingTable.userId eq userId
+                }
+                log.info("Deleted {} IP tracking rows for user {}", ipTrackingDeleted, userId)
+
+                val locationChangesDeleted = UserLocationChangesTable.deleteWhere {
+                    UserLocationChangesTable.userId eq userId
+                }
+                log.info("Deleted {} location change rows for user {}", locationChangesDeleted, userId)
+
+                val moderationQueueDeleted = ModerationQueueTable.deleteWhere {
+                    (ModerationQueueTable.reviewerId eq userId) or
+                            (ModerationQueueTable.targetUserId eq userId) or
+                            (ModerationQueueTable.assignedTo eq userId)
+                }
+                log.info("Deleted {} moderation queue rows for user {}", moderationQueueDeleted, userId)
+
+                val reviewAppealsDeleted = ReviewAppealsTable.deleteWhere {
+                    (ReviewAppealsTable.appealedBy eq userId) or
+                            (ReviewAppealsTable.moderatorId eq userId)
+                }
+                log.info("Deleted {} review appeals for user {}", reviewAppealsDeleted, userId)
+
+                // Step 6: Delete relationships/reporting data without FK cascade
+                val userRelationshipsDeleted = UserRelationshipsTable.deleteWhere {
+                    (UserRelationshipsTable.userIdFrom eq userId) or
+                            (UserRelationshipsTable.userIdTo eq userId)
+                }
+                log.info("Deleted {} relationship rows for user {}", userRelationshipsDeleted, userId)
+
+                val userReportsDeleted = UserReportsTable.deleteWhere {
+                    (UserReportsTable.reporterUserId eq userId) or
+                            (UserReportsTable.reportedUserId eq userId) or
+                            (UserReportsTable.reviewedBy eq userId)
+                }
+                log.info("Deleted {} user report rows for user {}", userReportsDeleted, userId)
+
+                // Step 7: Delete chat/files data without FK cascade
                 val readReceiptsDeleted = ReadReceiptsTable.deleteWhere {
                     (ReadReceiptsTable.senderId eq userId) or
                             (ReadReceiptsTable.recipientId eq userId)
                 }
                 log.info("Deleted {} read receipts for user {}", readReceiptsDeleted, userId)
 
-                // Step 6: Delete offline messages where user is sender or recipient
-                // (These don't have FK constraints with CASCADE)
                 val offlineMessagesDeleted = OfflineMessagesTable.deleteWhere {
                     (OfflineMessagesTable.senderId eq userId) or
                             (OfflineMessagesTable.recipientId eq userId)
                 }
                 log.info("Deleted {} offline messages for user {}", offlineMessagesDeleted, userId)
 
-                // Step 7: Delete encrypted files where user is sender or recipient
-                // (These don't have FK constraints with CASCADE)
                 val encryptedFilesDeleted = EncryptedFilesTable.deleteWhere {
                     (EncryptedFilesTable.senderId eq userId) or
                             (EncryptedFilesTable.recipientId eq userId)
                 }
                 log.info("Deleted {} encrypted files for user {}", encryptedFilesDeleted, userId)
 
-                // Step 8: Delete the user from user_registration_data
+                val chatResponseTimesDeleted = ChatResponseTimesTable.deleteWhere {
+                    (ChatResponseTimesTable.userId eq userId) or
+                            (ChatResponseTimesTable.conversationPartnerId eq userId)
+                }
+                log.info("Deleted {} chat response time rows for user {}", chatResponseTimesDeleted, userId)
+
+                // Step 8: Delete notification/matching history without FK cascade guarantees
+                val matchHistoryDeleted = MatchHistoryTable.deleteWhere {
+                    MatchHistoryTable.userId eq userId
+                }
+                log.info("Deleted {} match history rows for user {}", matchHistoryDeleted, userId)
+
+                // Step 9: Delete any remaining direct review rows for this user (defensive cleanup)
+                // (covers legacy rows where reviewer/target do not cascade from user table)
+                val directReviewsDeleted = ReviewsTable.deleteWhere {
+                    (ReviewsTable.reviewerId eq userId) or
+                            (ReviewsTable.targetUserId eq userId)
+                }
+                log.info("Deleted {} direct review rows for user {}", directReviewsDeleted, userId)
+
+                // Step 10: Delete the user from user_registration_data
                 // All related data will be automatically deleted due to ON DELETE CASCADE constraints:
                 // - user_profiles, user_attributes, user_relationships, user_postings
                 // - user_presence, user_notification_contacts, attribute_notification_preferences
@@ -485,7 +559,7 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 if (deletedCount > 0) {
                     log.info("Successfully deleted user {} from database", userId)
 
-                    // Step 7: Delete posting images asynchronously
+                    // Step 11: Delete posting images asynchronously
                     if (allImageUrls.isNotEmpty()) {
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
@@ -511,4 +585,5 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
             }
         }
     }
+
 }

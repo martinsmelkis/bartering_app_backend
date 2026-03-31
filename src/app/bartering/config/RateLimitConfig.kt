@@ -3,7 +3,6 @@ package app.bartering.config
 import io.ktor.server.application.*
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.ratelimit.*
-import io.ktor.server.request.*
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -34,7 +33,8 @@ fun Application.configureRateLimiting() {
         global {
             rateLimiter(limit = 200, refillPeriod = 60.seconds)
         }
-        
+
+        // TODO attach custom limit configs to routes
         // ====================================================================
         // AUTHENTICATION ENDPOINTS - STRICTEST LIMITS
         // ====================================================================
@@ -166,19 +166,4 @@ fun Application.configureRateLimiting() {
             }
         }
     }
-}
-
-/**
- * Rate limit names as constants for easy reference in routes.
- */
-object RateLimitNames {
-    const val AUTHENTICATION = "authentication"
-    const val FILE_UPLOAD = "file_upload"
-    const val EXPENSIVE_QUERY = "expensive_query"
-    const val PROFILE_UPDATE = "profile_update"
-    const val POSTING_CREATION = "posting_creation"
-    const val CHAT_MESSAGES = "chat_messages"
-    const val NOTIFICATION_PREFS = "notification_prefs"
-    const val PASSWORD_RESET = "password_reset"
-    const val EMAIL_SEND = "email_send"
 }

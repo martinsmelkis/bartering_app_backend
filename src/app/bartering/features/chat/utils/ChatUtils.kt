@@ -30,6 +30,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.close
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -550,6 +551,7 @@ object ChatUtils {
      * @param serializer Message serializer
      * @param log Logger instance
      */
+    @OptIn(DelicateCoroutinesApi::class)
     suspend fun handleReadReceipt(
         messageId: String,
         senderId: String,

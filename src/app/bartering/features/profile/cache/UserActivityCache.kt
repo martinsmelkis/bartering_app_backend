@@ -51,7 +51,7 @@ object UserActivityCache {
     private const val SYNC_INTERVAL_SECONDS = 30L
     private const val ONLINE_THRESHOLD_MILLIS = 5 * 60 * 1000L // 5 minutes
     private const val CLEANUP_THRESHOLD_MILLIS = 30 * 60 * 1000L // 30 minutes
-    private const val COUNTED_ACTION_COOLDOWN_MILLIS = 10 * 30000L // 30 seconds
+    private const val COUNTED_ACTION_COOLDOWN_MILLIS = 10 * 3000L // 30 seconds
     
     /**
      * Internal data class to store activity information

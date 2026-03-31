@@ -1,8 +1,10 @@
 package app.bartering.features.chat.model
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 // Use different discriminator to avoid conflict with 'type' field
 @JsonClassDiscriminator("messageType")
@@ -60,13 +62,6 @@ data class FileNotificationMessage(
     val fileSize: Long,
     val expiresAt: Long,
     val timestamp: Long
-) : SocketMessage()
-
-@Serializable
-data class FileUploadResponse(
-    val success: Boolean,
-    val fileId: String? = null,
-    val message: String
 ) : SocketMessage()
 
 @Serializable
