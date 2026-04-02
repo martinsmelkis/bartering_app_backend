@@ -113,7 +113,6 @@ class FederatedUserDaoImpl(
     ): Pair<List<FederatedUserProfile>, Int> {
         // Get local users that have federation enabled
         val (userProfiles, totalCount) = userProfileDao.getAllUsers(
-            federationEnabled = true,
             updatedSince = updatedSince,
             page = page,
             pageSize = pageSize

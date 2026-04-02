@@ -4,6 +4,7 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import app.bartering.extensions.normalizeAttributeForDBProcessing
@@ -39,7 +40,8 @@ fun Application.notificationPreferencesRoutes() {
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     
     routing {
-        route("/api/v1/notifications") {
+        rateLimit(RateLimitName("notification_prefs")) {
+            route("/api/v1/notifications") {
             
             // ============ User Notification Contacts ============
             
@@ -495,6 +497,7 @@ fun Application.notificationPreferencesRoutes() {
                     success = true,
                     message = "Cleared $deletedCount match(es)"
                 ))
+            }
             }
         }
     }

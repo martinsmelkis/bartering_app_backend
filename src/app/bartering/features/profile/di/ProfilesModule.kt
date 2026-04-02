@@ -6,6 +6,7 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.mapper.AuthenticationMapperImpl
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.features.profile.dao.UserProfileDaoImpl
+import app.bartering.features.profile.service.GdprDataExportService
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
@@ -15,4 +16,19 @@ val profilesModule = module {
     single<UserProfileDao> { UserProfileDaoImpl() }
     single { get<UserProfileDao>() as UserProfileDaoImpl } // Bind impl for backward compatibility
     single { UserAttributesDaoImpl() } bind UserAttributesDaoImpl::class
+
+    single {
+        GdprDataExportService(
+            userProfileDao = get(),
+            postingDao = get(),
+            relationshipsDao = get(),
+            userReportsDao = get(),
+            reviewDao = get(),
+            transactionDao = get(),
+            reputationDao = get(),
+            notificationPreferencesDao = get(),
+            walletService = get(),
+            emailService = get()
+        )
+    }
 }

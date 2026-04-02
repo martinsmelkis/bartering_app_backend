@@ -34,7 +34,7 @@ fun Application.configureRateLimiting() {
             rateLimiter(limit = 200, refillPeriod = 60.seconds)
         }
 
-        // TODO attach custom limit configs to routes
+        // Custom configs are attached in route registration via rateLimit(RateLimitName(...)) wrappers.
         // ====================================================================
         // AUTHENTICATION ENDPOINTS - STRICTEST LIMITS
         // ====================================================================
@@ -42,7 +42,7 @@ fun Application.configureRateLimiting() {
         // Industry standard: 3-5 attempts per minute (OWASP recommendation)
         
         register(RateLimitName("authentication")) {
-            rateLimiter(limit = 5, refillPeriod = 60.seconds)
+            rateLimiter(limit = 10, refillPeriod = 60.seconds)
             requestKey { call ->
                 // Rate limit by IP address
                 val ip = call.request.origin.remoteAddress
@@ -57,7 +57,7 @@ fun Application.configureRateLimiting() {
         // Industry standard: 1-3 uploads per minute per user
         
         register(RateLimitName("file_upload")) {
-            rateLimiter(limit = 3, refillPeriod = 60.seconds)
+            rateLimiter(limit = 5, refillPeriod = 60.seconds)
             requestKey { call ->
                 // Rate limit by user ID if available, otherwise IP
                 val userId = call.request.headers["X-User-ID"]
@@ -88,7 +88,7 @@ fun Application.configureRateLimiting() {
         // Industry standard: 20-30 per minute per user
         
         register(RateLimitName("profile_update")) {
-            rateLimiter(limit = 25, refillPeriod = 60.seconds)
+            rateLimiter(limit = 20, refillPeriod = 60.seconds)
             requestKey { call ->
                 val userId = call.request.headers["X-User-ID"]
                 val ip = call.request.origin.remoteAddress
@@ -103,7 +103,7 @@ fun Application.configureRateLimiting() {
         // Industry standard: 10-20 posts per hour per user
         
         register(RateLimitName("posting_creation")) {
-            rateLimiter(limit = 20, refillPeriod = 60.minutes)
+            rateLimiter(limit = 15, refillPeriod = 60.minutes)
             requestKey { call ->
                 val userId = call.request.headers["X-User-ID"]
                 "posting:${userId ?: "anonymous"}"
@@ -117,7 +117,7 @@ fun Application.configureRateLimiting() {
         // Industry standard: 30-60 messages per minute per user
         
         register(RateLimitName("chat_messages")) {
-            rateLimiter(limit = 50, refillPeriod = 60.seconds)
+            rateLimiter(limit = 60, refillPeriod = 60.seconds)
             requestKey { call ->
                 val userId = call.request.headers["X-User-ID"]
                 "chat:${userId ?: "anonymous"}"

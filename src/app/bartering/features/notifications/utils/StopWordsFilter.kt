@@ -171,15 +171,7 @@ object StopWordsFilter {
         }
         return common + transaction
     }
-    
-    // ==================== BACKWARD COMPATIBILITY ====================
-    
-    /**
-     * Combined set of all English stopwords (for backward compatibility)
-     */
-    @Deprecated("Use getAllStopWords(languageCode) instead", ReplaceWith("getAllStopWords(\"en\", includeTransactionKeywords)"))
-    private val allStopWords = englishCommonStopWords + englishTransactionKeywords
-    
+
     // ==================== PUBLIC API ====================
     
     /**
@@ -264,29 +256,10 @@ object StopWordsFilter {
     }
     
     /**
-     * Get all transaction keywords for a language (for debugging/testing)
-     * 
-     * @param locale Locale to determine which language keywords to retrieve
-     */
-    fun getTransactionKeywords(locale: Locale = Locale.ENGLISH): Set<String> {
-        val languageCode = locale.language
-        return transactionKeywordsByLanguage[languageCode] ?: englishTransactionKeywords
-    }
-    
-    /**
-     * Get all common stopwords for a language (for debugging/testing)
-     * 
-     * @param locale Locale to determine which language stopwords to retrieve
-     */
-    fun getCommonStopWords(locale: Locale = Locale.ENGLISH): Set<String> {
-        val languageCode = locale.language
-        return commonStopWordsByLanguage[languageCode] ?: englishCommonStopWords
-    }
-    
-    /**
      * Get list of supported language codes
      */
     fun getSupportedLanguages(): Set<String> {
         return commonStopWordsByLanguage.keys
     }
+
 }

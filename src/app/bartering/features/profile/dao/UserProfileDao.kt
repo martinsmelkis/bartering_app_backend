@@ -4,7 +4,7 @@ import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.model.UserProfile
 import app.bartering.features.profile.model.UserProfileUpdateRequest
-import app.bartering.features.profile.model.UserProfileWithDistance
+import app.bartering.features.profile.model.UserProfileExtended
 
 interface UserProfileDao {
 
@@ -20,19 +20,19 @@ interface UserProfileDao {
         latitude: Double,
         longitude: Double,
         radiusMeters: Double,
-        excludeUserId: String? = null): List<UserProfileWithDistance>
+        excludeUserId: String? = null): List<UserProfileExtended>
 
     suspend fun getSimilarProfiles(
         userId: String,
         latitude: Double? = null,
         longitude: Double? = null,
-        radiusMeters: Double? = null): List<UserProfileWithDistance>
+        radiusMeters: Double? = null): List<UserProfileExtended>
 
     suspend fun getHelpfulProfiles(
         userId: String,
         latitude: Double? = null,
         longitude: Double? = null,
-        radiusMeters: Double? = null): List<UserProfileWithDistance>
+        radiusMeters: Double? = null): List<UserProfileExtended>
 
     suspend fun updateSemanticProfile(userId: String, attributeType: UserAttributeType)
 
@@ -46,7 +46,7 @@ interface UserProfileDao {
         customWeight: Int = 50,
         seeking: Boolean? = null,
         offering: Boolean? = null
-    ): List<UserProfileWithDistance>
+    ): List<UserProfileExtended>
 
     suspend fun getUserCreatedAt(userId: String): java.time.Instant?
 
@@ -73,11 +73,10 @@ interface UserProfileDao {
 
     /**
      * Gets all users with pagination support.
-     * Optionally filters by federation_enabled flag and updated since timestamp.
+     * Returns only users with `user_privacy_consents.federation_consent = true`.
      * Used for federation user sync.
      */
     suspend fun getAllUsers(
-        federationEnabled: Boolean = true,
         updatedSince: java.time.Instant? = null,
         page: Int = 0,
         pageSize: Int = 50

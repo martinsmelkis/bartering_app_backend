@@ -1,6 +1,6 @@
 package app.bartering.features.profile.util
 
-import app.bartering.features.profile.model.UserProfileWithDistance
+import app.bartering.features.profile.model.UserProfileExtended
 
 /**
  * Utility class for aggregating and combining match results from multiple sources.
@@ -30,10 +30,10 @@ object ProfileMatchAggregationUtils {
      * @return Deduplicated, weighted, sorted list of unique profiles
      */
     fun combineMatchResults(
-        resultSets: Map<String, List<UserProfileWithDistance>>,
+        resultSets: Map<String, List<UserProfileExtended>>,
         weights: Map<String, Double>
-    ): List<UserProfileWithDistance> {
-        val combinedMap = mutableMapOf<String, UserProfileWithDistance>()
+    ): List<UserProfileExtended> {
+        val combinedMap = mutableMapOf<String, UserProfileExtended>()
 
         resultSets.forEach { (setName, profiles) ->
             val weight = weights[setName] ?: 1.0
@@ -84,9 +84,9 @@ object ProfileMatchAggregationUtils {
      * @return Deduplicated list with best score for each user
      */
     fun deduplicateKeepBestScore(
-        profiles: List<UserProfileWithDistance>
-    ): List<UserProfileWithDistance> {
-        val bestByUser = mutableMapOf<String, UserProfileWithDistance>()
+        profiles: List<UserProfileExtended>
+    ): List<UserProfileExtended> {
+        val bestByUser = mutableMapOf<String, UserProfileExtended>()
 
         profiles.forEach { profile ->
             val userId = profile.profile.userId
@@ -131,9 +131,9 @@ object ProfileMatchAggregationUtils {
      * @return New profile with combined best attributes
      */
     fun mergeProfiles(
-        profile1: UserProfileWithDistance,
-        profile2: UserProfileWithDistance
-    ): UserProfileWithDistance {
+        profile1: UserProfileExtended,
+        profile2: UserProfileExtended
+    ): UserProfileExtended {
         // Use profile with more attributes as base
         val (base, other) = if (profile1.profile.attributes.size >= profile2.profile.attributes.size) {
             profile1 to profile2
@@ -173,10 +173,10 @@ object ProfileMatchAggregationUtils {
      * @return Profiles with boosted scores
      */
     fun applyScoreBoost(
-        profiles: List<UserProfileWithDistance>,
+        profiles: List<UserProfileExtended>,
         boostFactor: Double,
-        predicate: (UserProfileWithDistance) -> Boolean
-    ): List<UserProfileWithDistance> {
+        predicate: (UserProfileExtended) -> Boolean
+    ): List<UserProfileExtended> {
         return profiles.map { profile ->
             if (predicate(profile)) {
                 val currentScore = profile.matchRelevancyScore ?: 0.0
@@ -195,8 +195,8 @@ object ProfileMatchAggregationUtils {
      * @return Profiles with normalized scores
      */
     fun normalizeScores(
-        profiles: List<UserProfileWithDistance>
-    ): List<UserProfileWithDistance> {
+        profiles: List<UserProfileExtended>
+    ): List<UserProfileExtended> {
         if (profiles.isEmpty()) return profiles
 
         val scores = profiles.mapNotNull { it.matchRelevancyScore }

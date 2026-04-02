@@ -3,7 +3,7 @@ package app.bartering.features.profile.util
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.db.UserPresenceTable
-import app.bartering.features.profile.model.UserProfileWithDistance
+import app.bartering.features.profile.model.UserProfileExtended
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
@@ -115,10 +115,10 @@ object UserActivityFilter {
      * @return Filtered list of profiles
      */
     fun filterByActivity(
-        profiles: List<UserProfileWithDistance>,
+        profiles: List<UserProfileExtended>,
         includeDormant: Boolean = false,
         includeInactive: Boolean = true
-    ): List<UserProfileWithDistance> {
+    ): List<UserProfileExtended> {
         val filtered = profiles.filter { profile ->
             shouldShowInSearch(
                 userId = profile.profile.userId,
@@ -142,9 +142,9 @@ object UserActivityFilter {
      * @param profiles List of profiles to sort
      * @return Sorted list with active users first
      */
-    fun sortByActivity(profiles: List<UserProfileWithDistance>): List<UserProfileWithDistance> {
+    fun sortByActivity(profiles: List<UserProfileExtended>): List<UserProfileExtended> {
         return profiles.sortedWith(
-            compareBy<UserProfileWithDistance> { profile ->
+            compareBy<UserProfileExtended> { profile ->
                 // Sort by activity status (lower number = more active)
                 when (getActivityStatus(profile.profile.userId)) {
                     ActivityStatus.ACTIVE -> 0
@@ -170,8 +170,8 @@ object UserActivityFilter {
      * @return Profiles with adjusted relevancy scores
      */
     fun applyActivityPenalty(
-        profiles: List<UserProfileWithDistance>
-    ): List<UserProfileWithDistance> {
+        profiles: List<UserProfileExtended>
+    ): List<UserProfileExtended> {
         return profiles.map { profile ->
             val penalty = when (getActivityStatus(profile.profile.userId)) {
                 ActivityStatus.ACTIVE -> 0.0

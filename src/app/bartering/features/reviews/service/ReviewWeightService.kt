@@ -12,8 +12,7 @@ class ReviewWeightService {
     /**
      * Calculates the weight of a review based on various factors.
      */
-    suspend fun calculateReviewWeight(
-        review: ReviewSubmission,
+    fun calculateReviewWeight(
         reviewerAccountType: AccountType,
         transactionValue: BigDecimal?,
         reviewerReputation: ReviewerReputation?,
@@ -24,6 +23,10 @@ class ReviewWeightService {
 
         // Account type weighting
         when (reviewerAccountType) {
+            AccountType.INDIVIDUAL_VERIFIED -> {
+                weight *= WeightModifier.VERIFIED_INDIVIDUAL.multiplier
+                modifiers.add(WeightModifier.VERIFIED_INDIVIDUAL.value)
+            }
             AccountType.BUSINESS_VERIFIED -> {
                 weight *= WeightModifier.VERIFIED_BUSINESS.multiplier
                 modifiers.add(WeightModifier.VERIFIED_BUSINESS.value)

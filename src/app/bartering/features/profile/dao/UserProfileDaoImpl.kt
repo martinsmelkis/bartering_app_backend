@@ -10,6 +10,7 @@ import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.cache.SearchEmbeddingCache
 import app.bartering.features.profile.model.*
 import app.bartering.features.profile.util.*
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.jdbc.*
 import net.postgis.jdbc.geometry.Point
@@ -17,6 +18,7 @@ import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.categories.dao.CategoriesDaoImpl
 import app.bartering.features.profile.db.*
+import app.bartering.features.reviews.model.AccountType
 import app.bartering.model.BidirectionalMatchType
 import app.bartering.model.Quadruple
 import app.bartering.utils.HashUtils
@@ -104,6 +106,10 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.name,
                 up.location,
                 up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.self_description,
+                up.account_type,
+                up.profile_avatar_icon,
+                up.work_reference_image_urls::text as work_reference_image_urls,
                 up.preferred_language
             FROM user_profiles up
             WHERE up.user_id = ?
@@ -111,6 +117,10 @@ class UserProfileDaoImpl : UserProfileDao {
 
         var profileData: Triple<String, Pair<Double?, Double?>?, String>? = null
         var profileKeywords: Map<String, Double>? = null
+        var selfDescription: String? = null
+        var accountType = AccountType.INDIVIDUAL
+        var profileAvatarIcon: String? = null
+        var workReferenceImageUrls: List<String> = emptyList()
 
         (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(profileQuery)
             .also { statement ->
@@ -122,6 +132,14 @@ class UserProfileDaoImpl : UserProfileDao {
                     val keywordsJson = rs.getString("profile_keywords_with_weights")
 
                     profileKeywords = JsonParserUtils.parseKeywordWeights(keywordsJson)
+                    selfDescription = rs.getString("self_description")
+                    accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
+                    profileAvatarIcon = rs.getString("profile_avatar_icon")
+                    workReferenceImageUrls = try {
+                        Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
 
                     // Parse location from string
                     val (longitude, latitude) = LocationParser.parseLocation(rs)
@@ -179,6 +197,10 @@ class UserProfileDaoImpl : UserProfileDao {
             longitude = longitude,
             attributes = attributesWithHints,
             profileKeywordDataMap = profileKeywords,
+            selfDescription = selfDescription,
+            accountType = accountType,
+            profileAvatarIcon = profileAvatarIcon,
+            workReferenceImageUrls = workReferenceImageUrls,
             activePostingIds = activePostingIds,
             lastOnlineAt = lastOnlineAt,
             preferredLanguage = preferredLanguage
@@ -274,6 +296,18 @@ class UserProfileDaoImpl : UserProfileDao {
 
             // Always set profileKeywordDataMap to avoid null constraint violation
             table[profileKeywordDataMap] = extendedMap
+            request.selfDescription?.let { description ->
+                table[UserProfilesTable.selfDescription] = description.take(128)
+            }
+            request.accountType?.let { accountType ->
+                table[UserProfilesTable.accountType] = accountType
+            }
+            request.profileAvatarIcon?.let { avatarSvg ->
+                table[UserProfilesTable.profileAvatarIcon] = avatarSvg
+            }
+            request.workReferenceImageUrls?.let { imageUrls ->
+                table[UserProfilesTable.workReferenceImageUrls] = imageUrls
+            }
             request.preferredLanguage?.let { lang ->
                 table[UserProfilesTable.preferredLanguage] = lang
             }
@@ -357,7 +391,7 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double,
         radiusMeters: Double,
         excludeUserId: String?
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
 
         // Validate excludeUserId to prevent SQL injection
         if (excludeUserId != null && !SecurityUtils.isValidUUID(excludeUserId)) {
@@ -372,6 +406,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.name,
                 up.location as location,
                 up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.account_type,
                 ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters
             FROM
                 user_registration_data u
@@ -405,7 +440,7 @@ class UserProfileDaoImpl : UserProfileDao {
             queryParams.add(VarCharColumnType() to excludeUserId)
         }
 
-        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userProfiles = mutableListOf<UserProfileExtended>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         // Execute the nearby profiles query
@@ -435,14 +470,18 @@ class UserProfileDaoImpl : UserProfileDao {
                     val distanceMeters = rs.getDouble("distance_meters")
 
                     userProfiles.add(
-                        UserProfileWithDistance(
+                        UserProfileExtended(
                             profile = UserProfile(
                                 userId = foundUserId,
                                 name = rs.getString("name") ?: "",
                                 latitude = latitude,
                                 longitude = longitude,
                                 attributes = emptyList(), // We'll populate this next
-                                profileKeywordDataMap = mappedKeyWords
+                                profileKeywordDataMap = mappedKeyWords,
+                                selfDescription = null,
+                                accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
+                                profileAvatarIcon = null,
+                                workReferenceImageUrls = emptyList()
                             ),
                             distanceKm = distanceMeters / 1000,
                             matchRelevancyScore = 1.0
@@ -483,7 +522,7 @@ class UserProfileDaoImpl : UserProfileDao {
         latitude: Double?,
         longitude: Double?,
         radiusMeters: Double?
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         val hasAiConsent = UserPrivacyConsentsTable
             .select(UserPrivacyConsentsTable.aiProcessingConsent)
             .where { UserPrivacyConsentsTable.userId eq userId }
@@ -552,7 +591,7 @@ class UserProfileDaoImpl : UserProfileDao {
         latitude: Double?,
         longitude: Double?,
         radiusMeters: Double?
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         val hasAiConsent = UserPrivacyConsentsTable
             .select(UserPrivacyConsentsTable.aiProcessingConsent)
             .where { UserPrivacyConsentsTable.userId eq userId }
@@ -635,7 +674,7 @@ class UserProfileDaoImpl : UserProfileDao {
         score1MatchTypeLabel: String,
         score2MatchTypeLabel: String,
         mutualMatchBoost: Double = 0.0
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
             log.warn("Invalid userId format: {}", currentUserId)
@@ -676,6 +715,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     other_user_profile.name,
                     other_user_profile.location as location,
                     other_user_profile.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                    other_user_profile.account_type,
                     $score1Expr as $score1Name,
                     $score2Expr as $score2Name,
                     (1 - (other_user_semantic_profile.embedding_profile <=> (SELECT embedding_profile FROM current_user_profile))) as profile_similarity
@@ -708,6 +748,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 name,
                 location,
                 profile_keywords_with_weights,
+                account_type,
                 GREATEST($score1Name, $score2Name) as best_match_score,
                 $score1Name,
                 $score2Name,
@@ -743,7 +784,7 @@ class UserProfileDaoImpl : UserProfileDao {
             queryParams.add(DoubleColumnType() to radiusMeters)
         }
 
-        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userProfiles = mutableListOf<UserProfileExtended>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         // Execute query
@@ -781,14 +822,15 @@ class UserProfileDaoImpl : UserProfileDao {
                 val finalScore = (bestMatchScore * 0.65 + profileSimilarity * 0.35) + boost
 
                 userProfiles.add(
-                    UserProfileWithDistance(
+                    UserProfileExtended(
                         profile = UserProfile(
                             userId = foundUserId,
                             name = rs.getString("name") ?: "",
                             latitude = userLatitude,
                             longitude = userLongitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mappedKeyWords
+                            profileKeywordDataMap = mappedKeyWords,
+                            accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                         ),
                         distanceKm = rs.getDouble("distance_meters") / 1000,
                         matchRelevancyScore = finalScore
@@ -822,7 +864,7 @@ class UserProfileDaoImpl : UserProfileDao {
         latitude: Double?,
         longitude: Double?,
         radiusMeters: Double?
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(currentUserId)) {
             log.warn("Invalid userId format: {}", currentUserId)
@@ -847,6 +889,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.name,
                 up.location,
                 up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.account_type,
                 (1 - (p.embedding::vector <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile))) as posting_similarity
                 ${if (latitude != null && longitude != null) {
                     ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
@@ -889,7 +932,7 @@ class UserProfileDaoImpl : UserProfileDao {
             queryParams.add(DoubleColumnType() to radiusMeters)
         }
 
-        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userProfiles = mutableListOf<UserProfileExtended>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(postingMatchQuery).also { statement ->
@@ -915,14 +958,15 @@ class UserProfileDaoImpl : UserProfileDao {
                 val (longitude, latitude) = LocationParser.parseLocation(rs)
 
                 userProfiles.add(
-                    UserProfileWithDistance(
+                    UserProfileExtended(
                         profile = UserProfile(
                             userId = foundUserId,
                             name = rs.getString("name") ?: "",
                             latitude = latitude,
                             longitude = longitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mappedKeyWords
+                            profileKeywordDataMap = mappedKeyWords,
+                            accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                         ),
                         distanceKm = rs.getDouble("distance_meters") / 1000,
                         matchRelevancyScore = postingSimilarity
@@ -952,10 +996,10 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?,
         limit: Int
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         fun parseProfilesFromResultSet(
             rs: java.sql.ResultSet,
-            userProfiles: MutableList<UserProfileWithDistance>,
+            userProfiles: MutableList<UserProfileExtended>,
             userAttributes: MutableMap<String, MutableList<UserAttributeDto>>
         ) {
             while (rs.next()) {
@@ -968,14 +1012,15 @@ class UserProfileDaoImpl : UserProfileDao {
                 val distanceKm = if (rs.wasNull()) 0.0 else distanceMeters / 1000
 
                 userProfiles.add(
-                    UserProfileWithDistance(
+                    UserProfileExtended(
                         profile = UserProfile(
                             userId = foundUserId,
                             name = rs.getString("name") ?: "",
                             latitude = userLatitude,
                             longitude = userLongitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mappedKeyWords
+                            profileKeywordDataMap = mappedKeyWords,
+                            accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                         ),
                         distanceKm = distanceKm,
                         matchRelevancyScore = kotlin.random.Random.nextDouble(0.35, 0.85)
@@ -999,7 +1044,7 @@ class UserProfileDaoImpl : UserProfileDao {
             }
             .count()
 
-        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userProfiles = mutableListOf<UserProfileExtended>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         if (plaintextAttributeCount > 0) {
@@ -1015,6 +1060,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         up.name,
                         up.location,
                         up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                        up.account_type,
                         COUNT(DISTINCT ma.attribute_id) as match_count,
                         ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
                     FROM user_registration_data u
@@ -1027,7 +1073,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     )
                     WHERE u.id != ?
                     ${if (latitude != null && longitude != null && radiusMeters != null) "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)" else ""}
-                    GROUP BY u.id, up.name, up.location, up.profile_keywords_with_weights
+                    GROUP BY u.id, up.name, up.location, up.profile_keywords_with_weights, up.account_type
                 )
                 SELECT user_id, name, location, profile_keywords_with_weights, distance_meters
                 FROM candidate_scores
@@ -1073,6 +1119,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     up.name,
                     up.location,
                     up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                    up.account_type,
                     ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
                 FROM user_registration_data u
                 INNER JOIN user_profiles up ON u.id = up.user_id
@@ -1282,7 +1329,7 @@ class UserProfileDaoImpl : UserProfileDao {
         customWeight: Int,
         seeking: Boolean?,
         offering: Boolean?
-    ): List<UserProfileWithDistance> = dbQuery {
+    ): List<UserProfileExtended> = dbQuery {
         // Validate input
         if (!SecurityUtils.isValidLength(searchText, 1, 1000)) {
             log.warn("Invalid search text length: {}", searchText.length)
@@ -1344,7 +1391,7 @@ class UserProfileDaoImpl : UserProfileDao {
         val hasLowKeywordScores = allKeywordResults.any { it.second < 0.5 }
         val useSemanticEnhancement = allKeywordResults.size < 10 || hasLowKeywordScores
 
-        val userProfiles = mutableListOf<UserProfileWithDistance>()
+        val userProfiles = mutableListOf<UserProfileExtended>()
         val userAttributes = mutableMapOf<String, MutableList<UserAttributeDto>>()
 
         // Stage 2: Semantic similarity search on user profiles
@@ -1365,7 +1412,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
                 semanticResults.forEach { (profile, distance, score) ->
                     userProfiles.add(
-                        UserProfileWithDistance(
+                        UserProfileExtended(
                             profile = profile,
                             distanceKm = distance,
                             matchRelevancyScore = score
@@ -1390,7 +1437,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     // Only add if not already in results
                     if (!userProfiles.any { it.profile.userId == profile.userId }) {
                         userProfiles.add(
-                            UserProfileWithDistance(
+                            UserProfileExtended(
                                 profile = profile,
                                 distanceKm = distance,
                                 matchRelevancyScore = score
@@ -1752,6 +1799,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     up.name,
                     up.location as location,
                     up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                    up.account_type,
                     ${if (offering == false) "0.0" else 
                         """COALESCE(
                         CASE 
@@ -1801,6 +1849,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 name,
                 location,
                 profile_keywords_with_weights,
+                account_type,
                 haves_similarity,
                 needs_similarity,
                 profile_similarity,
@@ -1869,7 +1918,8 @@ class UserProfileDaoImpl : UserProfileDao {
                             latitude = latitude,
                             longitude = longitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mappedKeyWords
+                            profileKeywordDataMap = mappedKeyWords,
+                            accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                         )
 
                         results.add(Triple(
@@ -1908,6 +1958,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.name,
                 up.location,
                 up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.account_type,
                 (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) as posting_similarity
                 ${
             if (latitude != null && longitude != null) {
@@ -1984,7 +2035,8 @@ class UserProfileDaoImpl : UserProfileDao {
                             latitude = latitude,
                             longitude = longitude,
                             attributes = emptyList(),
-                            profileKeywordDataMap = mappedKeyWords
+                            profileKeywordDataMap = mappedKeyWords,
+                            accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                         )
 
                         results.add(Triple(
@@ -2004,7 +2056,7 @@ class UserProfileDaoImpl : UserProfileDao {
      */
     private suspend fun addKeywordOnlyResults(
         allKeywordResults: List<Pair<String, Double>>,
-        userProfiles: MutableList<UserProfileWithDistance>,
+        userProfiles: MutableList<UserProfileExtended>,
         userAttributes: MutableMap<String, MutableList<UserAttributeDto>>,
         latitude: Double?,
         longitude: Double?
@@ -2021,7 +2073,8 @@ class UserProfileDaoImpl : UserProfileDao {
                 u.id as user_id,
                 up.name,
                 up.location as location,
-                up.profile_keywords_with_weights::text as profile_keywords_with_weights
+                up.profile_keywords_with_weights::text as profile_keywords_with_weights,
+                up.account_type
                 ${
             if (latitude != null && longitude != null) {
                 ", ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters"
@@ -2062,14 +2115,18 @@ class UserProfileDaoImpl : UserProfileDao {
 
                     val keywordScore = allKeywordResults.first { foundUserId == it.first }.second
                     userProfiles.add(
-                        UserProfileWithDistance(
+                        UserProfileExtended(
                             profile = UserProfile(
                                 userId = foundUserId,
                                 name = rs.getString("name"),
                                 latitude = latitude,
                                 longitude = longitude,
                                 attributes = emptyList(),
-                                profileKeywordDataMap = mappedKeyWords
+                                profileKeywordDataMap = mappedKeyWords,
+                                selfDescription = null,
+                                accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
+                                profileAvatarIcon = null,
+                                workReferenceImageUrls = emptyList()
                             ),
                             distanceKm = if (distanceMeters != 0.0) distanceMeters / 1000 else 0.0,
                             matchRelevancyScore = keywordScore
@@ -2184,9 +2241,9 @@ class UserProfileDaoImpl : UserProfileDao {
             result
         }
 
-    private suspend fun fetchAttributesForProfiles(userProfiles: List<UserProfileWithDistance>,
+    private suspend fun fetchAttributesForProfiles(userProfiles: List<UserProfileExtended>,
                                                    userAttributes: MutableMap<String, MutableList<UserAttributeDto>>)
-            : List<UserProfileWithDistance> {
+            : List<UserProfileExtended> {
         // Fetch attributes for all found users
         val userIds = userProfiles.map { it.profile.userId }
         if (userIds.isNotEmpty()) {
@@ -2237,7 +2294,6 @@ class UserProfileDaoImpl : UserProfileDao {
     }
 
     override suspend fun getAllUsers(
-        federationEnabled: Boolean,
         updatedSince: java.time.Instant?,
         page: Int,
         pageSize: Int
@@ -2253,7 +2309,6 @@ class UserProfileDaoImpl : UserProfileDao {
                 )
                 .selectAll()
                 .where {
-                    (UserProfilesTable.federationEnabled eq federationEnabled) and
                     (UserPrivacyConsentsTable.federationConsent eq true)
                 }
 
@@ -2310,6 +2365,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         longitude = longitude,
                         attributes = attributes,
                         profileKeywordDataMap = row[UserProfilesTable.profileKeywordDataMap],
+                        accountType = row[UserProfilesTable.accountType],
                         activePostingIds = emptyList(), // Not needed for federation sync
                         lastOnlineAt = lastOnlineAt,
                         preferredLanguage = row[UserProfilesTable.preferredLanguage]

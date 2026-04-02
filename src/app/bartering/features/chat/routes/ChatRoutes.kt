@@ -2,6 +2,7 @@ package app.bartering.features.chat.routes
 
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
@@ -115,7 +116,8 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
     }
 
     routing {
-        webSocket("/chat") { // The WebSocket endpoint
+        rateLimit(RateLimitName("chat_messages")) {
+            webSocket("/chat") { // The WebSocket endpoint
             val currentConnection = ChatConnection(this)
             log.info("New client connected! Connection ID: {}", currentConnection.id)
             val usersDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
@@ -601,6 +603,7 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                 }
                 log.info("Connection ID {} terminated", currentConnection.id)
                 // No need to explicitly close session here if it's already closed by client or an error
+            }
             }
         }
     }

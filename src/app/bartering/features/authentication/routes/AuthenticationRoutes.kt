@@ -4,6 +4,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import kotlinx.serialization.json.Json
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.model.DeleteUserRequest
@@ -126,6 +127,8 @@ fun Route.deleteUserRoute() {
  */
 fun Application.authenticationRoutes() {
     routing {
-        deleteUserRoute()
+        rateLimit(RateLimitName("authentication")) {
+            deleteUserRoute()
+        }
     }
 }

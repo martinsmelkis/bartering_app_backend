@@ -1,5 +1,6 @@
 package app.bartering.features.notifications.service.impl
 
+import app.bartering.features.notifications.model.AttachmentDisposition
 import app.bartering.features.notifications.model.EmailNotification
 import app.bartering.features.notifications.model.NotificationResult
 import app.bartering.features.notifications.service.EmailService
@@ -577,6 +578,16 @@ class MailjetEmailService(
             textPart = email.textBody ?: stripHtmlTags(email.htmlBody ?: ""),
             htmlPart = email.htmlBody,
             replyTo = email.replyTo?.let { MailjetEmail(email = it) },
+            attachments = email.attachments
+                .filter { it.disposition == AttachmentDisposition.ATTACHMENT }
+                .takeIf { it.isNotEmpty() }
+                ?.map { attachment ->
+                    MailjetAttachment(
+                        contentType = attachment.contentType,
+                        filename = attachment.filename,
+                        base64Content = attachment.content
+                    )
+                },
             customId = email.metadata["customId"],
             eventPayload = email.metadata["eventPayload"],
             customCampaign = email.tags.firstOrNull()

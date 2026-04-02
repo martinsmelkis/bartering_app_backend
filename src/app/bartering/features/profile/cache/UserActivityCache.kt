@@ -328,7 +328,7 @@ object UserActivityCache {
             if (!syncScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
                 syncScheduler.shutdownNow()
             }
-        } catch (e: InterruptedException) {
+        } catch (_: InterruptedException) {
             syncScheduler.shutdownNow()
         }
         

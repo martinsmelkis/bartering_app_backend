@@ -180,14 +180,6 @@ fun Route.submitReviewRoute() {
             val reviewerReputation = reputationDao.getReputation(request.reviewerId)
             
             val weight = weightService.calculateReviewWeight(
-                review = ReviewSubmission(
-                    barterTransactionId = request.transactionId,
-                    reviewerId = request.reviewerId,
-                    targetUserId = request.targetUserId,
-                    rating = request.rating,
-                    reviewText = request.reviewText,
-                    transactionStatus = transactionStatus
-                ),
                 reviewerAccountType = AccountType.INDIVIDUAL,
                 transactionValue = transaction?.estimatedValue,
                 reviewerReputation = reviewerReputation?.let {

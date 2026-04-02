@@ -178,16 +178,6 @@ CREATE INDEX IF NOT EXISTS idx_federation_audit_log_outcome
 -- USER PROFILE FEDERATION SUPPORT
 -- ============================================================================
 
--- Add federation_enabled flag to user_profiles
--- This allows users to opt-in/out of federation (default: opted in)
-ALTER TABLE user_profiles
-ADD COLUMN IF NOT EXISTS federation_enabled BOOLEAN DEFAULT TRUE;
-
--- Add index for efficient federation queries (partial index for better performance)
-CREATE INDEX IF NOT EXISTS idx_user_profiles_federation_enabled 
-ON user_profiles(federation_enabled) 
-WHERE federation_enabled = TRUE;
-
 -- Add updated_at column for tracking profile changes (enables incremental sync)
 ALTER TABLE user_profiles
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
@@ -252,7 +242,7 @@ COMMENT ON COLUMN federated_servers.data_retention_days IS 'How many days to cac
 COMMENT ON COLUMN federated_users.federated_user_id IS 'Full federated address like user@server.com (globally unique)';
 COMMENT ON COLUMN federated_users.expires_at IS 'When cached profile data expires based on origin servers data_retention_days';
 COMMENT ON COLUMN federation_audit_log.event_type IS 'Type of federation event: HANDSHAKE, USER_SYNC, MESSAGE_RELAY, POSTING_SEARCH, etc.';
-COMMENT ON COLUMN user_profiles.federation_enabled IS 'Whether this user has opted into federation (cross-server discovery)';
+COMMENT ON COLUMN user_privacy_consents.federation_consent IS 'Whether this user has opted into federation (cross-server discovery)';
 COMMENT ON COLUMN user_profiles.updated_at IS 'Timestamp of last profile update, used for incremental federation sync';
 
 -- ============================================================================

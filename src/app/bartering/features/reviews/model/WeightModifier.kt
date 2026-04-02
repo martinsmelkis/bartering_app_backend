@@ -5,6 +5,12 @@ package app.bartering.features.reviews.model
  * Used to give more credibility to certain types of reviews.
  */
 enum class WeightModifier(val value: String, val multiplier: Double) {
+
+    /**
+     * Review from a verified individual account.
+     */
+    VERIFIED_INDIVIDUAL("verified_individual", 1.1),
+
     /**
      * Review from a verified business account.
      */

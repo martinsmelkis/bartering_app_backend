@@ -13,7 +13,7 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.encodeToString
+import io.ktor.server.plugins.ratelimit.*
 import kotlinx.serialization.json.Json
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
@@ -372,20 +372,26 @@ fun Route.cancelMigrationRoute() {
 
 fun Application.migrationRoutes() {
     routing {
-        // Email recovery
-        initiateEmailRecoveryRoute()
-        verifyRecoveryCodeRoute()
+        // Email recovery (sending recovery emails)
+        rateLimit(RateLimitName("email_send")) {
+            initiateEmailRecoveryRoute()
+        }
+
+        // Email recovery verification attempts
+        rateLimit(RateLimitName("password_reset")) {
+            verifyRecoveryCodeRoute()
+        }
 
         // Device-to-device
-        initiateDeviceMigrationRoute()
-        registerMigrationTargetRoute()
-        sendMigrationPayloadRoute()
-        getMigrationPayloadRoute()
-
-        // Common
-        completeMigrationRoute()
-        getMigrationStatusRoute()
-        cancelMigrationRoute()
+        rateLimit(RateLimitName("authentication")) {
+            initiateDeviceMigrationRoute()
+            registerMigrationTargetRoute()
+            sendMigrationPayloadRoute()
+            getMigrationPayloadRoute()
+            completeMigrationRoute()
+            getMigrationStatusRoute()
+            cancelMigrationRoute()
+        }
     }
 }
 

@@ -11,6 +11,11 @@ enum class AccountType(val value: String) {
     INDIVIDUAL("individual"),
 
     /**
+     * Individual account with verified identity.
+     */
+    INDIVIDUAL_VERIFIED("individual_verified"),
+
+    /**
      * Business account without verification.
      */
     BUSINESS_UNVERIFIED("business_unverified"),

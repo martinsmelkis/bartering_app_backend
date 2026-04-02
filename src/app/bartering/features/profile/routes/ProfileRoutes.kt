@@ -13,11 +13,14 @@ import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.profile.model.UserProfile
 import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.profile.model.UserConsentUpdateRequest
+import app.bartering.features.profile.model.UserProfileExtended
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.reviews.service.LocationPatternDetectionService
+import app.bartering.features.reviews.dao.ReputationDao
 import app.bartering.features.federation.model.*
 import app.bartering.features.profile.model.UserAttributeDto
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
+import app.bartering.features.profile.service.GdprDataExportService
 import io.ktor.client.call.body
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
@@ -97,6 +100,37 @@ fun Route.getProfileInfoRoute() {
 
 }
 
+fun Route.getExtendedProfileInfoRoute() {
+
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val reputationDao: ReputationDao by inject(ReputationDao::class.java)
+
+    // Route to get the current user's profile wrapped in UserProfileWithDistance
+    post("/api/v1/profile-info-extended") {
+        val userId = call.receive<String>()
+
+        val profile = userProfileDao.getProfile(userId)
+        if (profile != null) {
+            val reputation = reputationDao.getReputation(userId)
+            val badges = reputationDao.getUserBadges(userId)
+
+            call.respond(
+                UserProfileExtended(
+                    profile = profile,
+                    distanceKm = 0.0,
+                    matchRelevancyScore = null,
+                    averageRating = reputation?.averageRating,
+                    totalReviews = reputation?.totalReviews,
+                    badges = badges.ifEmpty { null }
+                )
+            )
+        } else {
+            call.respond(HttpStatusCode.NotFound, "Profile not found")
+        }
+    }
+
+}
+
 fun Route.createProfileRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
 
@@ -149,12 +183,16 @@ fun Route.updateProfileRoute() {
             val userName = userProfileDao.updateProfile(
                 request.userId,
                 UserProfileUpdateRequest(
-                    request.name,
-                    newLatitude,
-                    newLongitude,
-                    request.attributes,
-                    request.profileKeywordDataMap,
-                    request.preferredLanguage
+                    name = request.name,
+                    latitude = newLatitude,
+                    longitude = newLongitude,
+                    attributes = request.attributes,
+                    profileKeywordDataMap = request.profileKeywordDataMap,
+                    selfDescription = request.selfDescription,
+                    accountType = request.accountType,
+                    profileAvatarIcon = request.profileAvatarIcon,
+                    workReferenceImageUrls = request.workReferenceImageUrls,
+                    preferredLanguage = request.preferredLanguage
                 )
             )
 
@@ -411,8 +449,8 @@ private suspend fun searchFederatedProfiles(
     federationService: app.bartering.features.federation.service.FederationService,
     federationDao: app.bartering.features.federation.dao.FederationDao,
     federatedUserDao: app.bartering.features.federation.dao.FederatedUserDao
-): List<app.bartering.features.profile.model.UserProfileWithDistance> {
-    val results = mutableListOf<app.bartering.features.profile.model.UserProfileWithDistance>()
+): List<app.bartering.features.profile.model.UserProfileExtended> {
+    val results = mutableListOf<app.bartering.features.profile.model.UserProfileExtended>()
     
     try {
         // Get trusted (FULL or PARTIAL trust) federated servers
@@ -474,7 +512,7 @@ private suspend fun searchFederatedProfiles(
                     )
                     
                     results.add(
-                        app.bartering.features.profile.model.UserProfileWithDistance(
+                        app.bartering.features.profile.model.UserProfileExtended(
                             profile = profile,
                             distanceKm = -1.0, // Unknown distance for federated
                             matchRelevancyScore = 0.5, // Default score
@@ -617,7 +655,7 @@ fun Route.complementaryProfilesRoute() {
         val lat = call.request.queryParameters["lat"]?.toDoubleOrNull()
         val lon = call.request.queryParameters["lon"]?.toDoubleOrNull()
         val radius = call.request.queryParameters["radius"]?.toDoubleOrNull()
-        
+
         // Validate that both lat and lon are provided together
         if ((lat != null && lon == null) || (lat == null && lon != null)) {
             call.respond(
@@ -639,11 +677,39 @@ fun Route.complementaryProfilesRoute() {
         }
 
         val profiles = userProfileDao.getHelpfulProfiles(userId, lat, lon, radius)
-        
-        log.debug("Returning {} complementary profiles for user {} (location filter: {})", 
+
+        log.debug("Returning {} complementary profiles for user {} (location filter: {})",
             profiles.size, userId, if (lat != null) "enabled" else "disabled")
-        
+
         call.respond(HttpStatusCode.OK, profiles)
     }
+}
 
+fun Route.requestGdprDataExportRoute() {
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val exportService: GdprDataExportService by inject(GdprDataExportService::class.java)
+
+    post("/api/v1/profile/export-data") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) {
+            return@post
+        }
+
+        val result = try {
+            exportService.exportAndSendToUser(authenticatedUserId)
+        } catch (e: Exception) {
+            log.error("Failed to process GDPR data export for user {}", authenticatedUserId, e)
+            app.bartering.features.profile.service.ExportResult(
+                success = false,
+                message = "Failed to process data export request"
+            )
+        }
+
+        val responseCode = if (result.success) HttpStatusCode.Accepted else HttpStatusCode.BadRequest
+        call.respond(responseCode,
+            app.bartering.features.profile.service.ExportResult(
+                success = true,
+                message = result.message
+            ))
+    }
 }

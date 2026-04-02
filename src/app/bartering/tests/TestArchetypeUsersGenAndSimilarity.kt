@@ -524,7 +524,7 @@ object TestArchetypeUsersGenAndSimilarity {
     }
 
     private fun analyzeSimilarityResults(
-        profiles: List<app.bartering.features.profile.model.UserProfileWithDistance>,
+        profiles: List<app.bartering.features.profile.model.UserProfileExtended>,
         userToArchetypeMap: Map<String, String>,
         currentArchetype: String,
         attributeMap: Map<String, String?>

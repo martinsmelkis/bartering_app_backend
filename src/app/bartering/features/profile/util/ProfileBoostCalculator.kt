@@ -1,7 +1,7 @@
 package app.bartering.features.profile.util
 
 import app.bartering.features.profile.cache.UserActivityCache
-import app.bartering.features.profile.model.UserProfileWithDistance
+import app.bartering.features.profile.model.UserProfileExtended
 import app.bartering.features.reviews.dao.ReputationDao
 import app.bartering.features.reviews.dao.ReputationDto
 import app.bartering.features.reviews.dao.ReviewDao
@@ -84,10 +84,10 @@ object ProfileBoostCalculator {
      * @return Same list with boosted scores and lastOnlineAt timestamps set
      */
     suspend fun applyBoostAndStatus(
-        profiles: List<UserProfileWithDistance>,
+        profiles: List<UserProfileExtended>,
         reputationDao: ReputationDao,
         reviewDao: ReviewDao? = null
-    ): List<UserProfileWithDistance> {
+    ): List<UserProfileExtended> {
         if (profiles.isEmpty()) return profiles
 
         val currentTime = System.currentTimeMillis()

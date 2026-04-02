@@ -4,7 +4,7 @@ import app.bartering.features.reviews.model.ReputationBadge
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class UserProfileWithDistance(
+data class UserProfileExtended(
     val profile: UserProfile,
     val distanceKm: Double,
     val matchRelevancyScore: Double?,

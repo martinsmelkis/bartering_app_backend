@@ -23,6 +23,7 @@ import app.bartering.features.federation.routes.federationRoutes
 import app.bartering.features.federation.routes.federationAdminRoutes
 import app.bartering.features.wallet.routes.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import org.koin.java.KoinJavaComponent.inject
 
 fun Application.routes() {
@@ -43,16 +44,25 @@ fun Application.routes() {
         federationRoutes()
         federationAdminRoutes()
         relationshipsRoutes()
-        postingsRoutes()
-        postingImageUploadRoutes()
+
+        // Posting writes
+        rateLimit(RateLimitName("posting_creation")) {
+            postingsRoutes()
+        }
+
+        // Multipart/media uploads
+        rateLimit(RateLimitName("file_upload")) {
+            postingImageUploadRoutes()
+        }
+
         imageServeRoutes() // Serves local images
-        
+
         // User Presence/Online Status
         getUserOnlineStatusRoute()
         getDailyActivityStatsRoute()
         batchUserOnlineStatusRoute()
         getPresenceCacheStatsRoute()
-        
+
         // Reviews and Reputation System
         createTransactionRoute()
         updateTransactionStatusRoute()

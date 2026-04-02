@@ -11,10 +11,8 @@ import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.model.UserPosting
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.localization.Localization
-import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
-import org.jetbrains.exposed.v1.jdbc.transactions.experimental.newSuspendedTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -620,7 +618,7 @@ class MatchNotificationService(
         longitude: Double,
         radiusKm: Double,
         excludeUserId: String
-    ): List<app.bartering.features.profile.model.UserProfileWithDistance> {
+    ): List<app.bartering.features.profile.model.UserProfileExtended> {
         return withContext(Dispatchers.IO) {
             suspendTransaction {
                 val radiusMeters = radiusKm * 1000.0
@@ -648,7 +646,7 @@ class MatchNotificationService(
                     LIMIT 50
                 """.trimIndent()
                 
-                val results = mutableListOf<app.bartering.features.profile.model.UserProfileWithDistance>()
+                val results = mutableListOf<app.bartering.features.profile.model.UserProfileExtended>()
                 
                 (org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager.current().connection.connection as java.sql.Connection)
                     .prepareStatement(query).also { statement ->
@@ -680,7 +678,7 @@ class MatchNotificationService(
                             )
                             
                             results.add(
-                                app.bartering.features.profile.model.UserProfileWithDistance(
+                                app.bartering.features.profile.model.UserProfileExtended(
                                     profile = profile,
                                     distanceKm = distanceKm,
                                     matchRelevancyScore = null

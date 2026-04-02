@@ -6,6 +6,7 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,8 +57,9 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
              *
              * Returns: fileId for download reference
              */
-            post("/upload") {
-                try {
+            rateLimit(RateLimitName("file_upload")) {
+                post("/upload") {
+                    try {
                     // Get authenticated user ID from session
                     // For now, we'll require senderId in form data
                     var senderId = ""
@@ -171,13 +173,14 @@ fun Application.fileTransferRoutes(connectionManager: ConnectionManager) {
                         )
                     )
 
-                } catch (e: Exception) {
-                    log.error("Error uploading encrypted file", e)
-                    e.printStackTrace()
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        FileErrorResponse(error = "Upload failed: ${e.message}")
-                    )
+                    } catch (e: Exception) {
+                        log.error("Error uploading encrypted file", e)
+                        e.printStackTrace()
+                        call.respond(
+                            HttpStatusCode.InternalServerError,
+                            FileErrorResponse(error = "Upload failed: ${e.message}")
+                        )
+                    }
                 }
             }
 
