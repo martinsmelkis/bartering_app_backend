@@ -92,6 +92,18 @@ class UserProfileDaoImpl : UserProfileDao {
             ?: false
     }
 
+    suspend fun isComplianceAdmin(userId: String): Boolean = dbQuery {
+        if (!SecurityUtils.isValidUUID(userId)) return@dbQuery false
+
+        val accountTypeValue = UserProfilesTable
+            .select(UserProfilesTable.accountType)
+            .where { UserProfilesTable.userId eq userId }
+            .firstOrNull()
+            ?.get(UserProfilesTable.accountType)
+
+        accountTypeValue == AccountType.ADMIN
+    }
+
     override suspend fun getProfile(userId: String): UserProfile? = dbQuery {
         // Validate userId to prevent SQL injection
         if (!SecurityUtils.isValidUUID(userId)) {

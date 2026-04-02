@@ -655,8 +655,8 @@ class UserPostingDaoImpl : UserPostingDao {
 
             val rowsUpdated = TransactionManager.current().connection.prepareStatement(embeddingQuery, false)
                 .also { statement ->
-                    statement.set(1, combinedText ?: "", VarCharColumnType())
-                    statement.set(2, postingId ?: "", VarCharColumnType())
+                    statement.set(1, combinedText, VarCharColumnType())
+                    statement.set(2, postingId, VarCharColumnType())
                     statement.executeUpdate()
                 }
 

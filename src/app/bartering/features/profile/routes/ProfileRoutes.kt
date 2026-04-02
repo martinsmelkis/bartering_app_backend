@@ -174,6 +174,14 @@ fun Route.updateProfileRoute() {
                 )
             }
 
+            // accountType is restricted and cannot be changed via profile-update
+            if (request.accountType != null) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    "accountType cannot be modified via this endpoint."
+                )
+            }
+
             // Get current profile to check if location is changing
             val currentProfile = userProfileDao.getProfile(request.userId)
             val oldLatitude = currentProfile?.latitude
@@ -192,7 +200,6 @@ fun Route.updateProfileRoute() {
                     attributes = request.attributes,
                     profileKeywordDataMap = request.profileKeywordDataMap,
                     selfDescription = request.selfDescription,
-                    accountType = request.accountType,
                     profileAvatarIcon = request.profileAvatarIcon,
                     workReferenceImageUrls = request.workReferenceImageUrls,
                     preferredLanguage = request.preferredLanguage

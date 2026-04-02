@@ -26,6 +26,11 @@ enum class AccountType(val value: String) {
     BUSINESS_VERIFIED("business_verified"),
 
     /**
+     * Administrative account allowed to access internal compliance tooling.
+     */
+    ADMIN("admin"),
+
+    /**
      * Account suspended due to violations or suspicious activity.
      */
     SUSPENDED("suspended");

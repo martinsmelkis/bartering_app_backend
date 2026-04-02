@@ -6,6 +6,7 @@ import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.compliance.service.ComplianceAuditService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.features.compliance.service.LegalHoldView
+import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.utils.HashUtils
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
@@ -65,6 +66,7 @@ private suspend fun requireComplianceAdmin(
     routeName: String,
     call: io.ktor.server.application.ApplicationCall,
     authDao: AuthenticationDaoImpl,
+    userProfileDao: UserProfileDaoImpl,
     complianceAuditService: ComplianceAuditService,
     allowlistRequired: Boolean = true
 ): String? {
@@ -90,9 +92,29 @@ private suspend fun requireComplianceAdmin(
             outcome = "denied",
             requestId = call.request.headers["X-Request-ID"],
             ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
-                ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) }
+                ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+            details = mapOf("reason" to "network_restricted")
         )
         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Compliance admin endpoints are restricted to local/admin network"))
+        return null
+    }
+
+    val isAllowedAdmin = userProfileDao.isComplianceAdmin(authenticatedUserId)
+    if (!isAllowedAdmin) {
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = authenticatedUserId,
+            eventType = "COMPLIANCE_ADMIN_ACCESS_DENIED",
+            entityType = "compliance_admin",
+            entityId = routeName,
+            purpose = "gdpr_accountability",
+            outcome = "denied",
+            requestId = call.request.headers["X-Request-ID"],
+            ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+            details = mapOf("reason" to "account_type_not_admin")
+        )
+        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "User is not authorized for compliance admin endpoints"))
         return null
     }
 
@@ -111,11 +133,18 @@ private fun LegalHoldView.toResponse() = LegalHoldResponse(
 
 fun Route.complianceAdminRoutes() {
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
     val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
 
     post("/api/v1/admin/compliance/legal-holds/apply") {
-        val adminId = requireComplianceAdmin("legal_holds_apply", call, authDao, complianceAuditService) ?: return@post
+        val adminId = requireComplianceAdmin(
+            "legal_holds_apply",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
         val request = call.receive<ApplyLegalHoldRequest>()
 
         if (request.userId.isBlank() || request.reason.isBlank()) {
@@ -165,7 +194,13 @@ fun Route.complianceAdminRoutes() {
     }
 
     post("/api/v1/admin/compliance/legal-holds/release") {
-        val adminId = requireComplianceAdmin("legal_holds_release", call, authDao, complianceAuditService) ?: return@post
+        val adminId = requireComplianceAdmin(
+            "legal_holds_release",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
         val request = call.receive<ReleaseLegalHoldRequest>()
 
         val released = legalHoldService.releaseHold(
@@ -195,14 +230,26 @@ fun Route.complianceAdminRoutes() {
     }
 
     get("/api/v1/admin/compliance/legal-holds") {
-        requireComplianceAdmin("legal_holds_list", call, authDao, complianceAuditService) ?: return@get
+        requireComplianceAdmin(
+            "legal_holds_list",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
         val userId = call.request.queryParameters["userId"]
         val holds = legalHoldService.listActiveHolds(userId).map { it.toResponse() }
         call.respond(HttpStatusCode.OK, holds)
     }
 
     get("/api/v1/admin/compliance/retention/status") {
-        requireComplianceAdmin("retention_status", call, authDao, complianceAuditService) ?: return@get
+        requireComplianceAdmin(
+            "retention_status",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
 
         call.respond(
             HttpStatusCode.OK,
@@ -224,7 +271,13 @@ fun Route.complianceAdminRoutes() {
     }
 
     get("/api/v1/admin/compliance/retention/recent") {
-        requireComplianceAdmin("retention_recent", call, authDao, complianceAuditService) ?: return@get
+        requireComplianceAdmin(
+            "retention_recent",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
         val sinceHours = call.request.queryParameters["sinceHours"]?.toLongOrNull() ?: 72L
         val events = complianceAuditService.listAuditEvents(
             eventType = "RETENTION_PURGE_CYCLE_COMPLETED",
@@ -235,7 +288,13 @@ fun Route.complianceAdminRoutes() {
     }
 
     get("/api/v1/admin/compliance/audit/search") {
-        requireComplianceAdmin("audit_search", call, authDao, complianceAuditService) ?: return@get
+        requireComplianceAdmin(
+            "audit_search",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
 
         val actorId = call.request.queryParameters["actorId"]
         val eventType = call.request.queryParameters["eventType"]
@@ -255,7 +314,13 @@ fun Route.complianceAdminRoutes() {
     }
 
     get("/api/v1/admin/compliance/dsar/evidence/{userId}") {
-        requireComplianceAdmin("dsar_evidence", call, authDao, complianceAuditService) ?: return@get
+        requireComplianceAdmin(
+            "dsar_evidence",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
         val userId = call.parameters["userId"] ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing userId"))
 
         val userEvents = complianceAuditService.listAuditEvents(actorId = userId, limit = 500)

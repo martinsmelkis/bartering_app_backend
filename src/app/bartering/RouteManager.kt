@@ -57,7 +57,8 @@ fun Application.routes() {
             postingImageUploadRoutes()
         }
 
-        imageServeRoutes() // Serves local images
+        // Serves local images
+        imageServeRoutes()
 
         // User Presence/Online Status
         getUserOnlineStatusRoute()
