@@ -80,11 +80,18 @@ class EncryptedFileDaoImpl : EncryptedFileDao {
         }
     }
 
-    override suspend fun deleteExpiredFiles(): Int = dbQuery {
+    override suspend fun deleteExpiredFiles(excludedUserIds: Set<String>): Int = dbQuery {
         val now = Instant.now()
         // Delete files that are expired OR already downloaded
         EncryptedFilesTable.deleteWhere {
-            (EncryptedFilesTable.expiresAt less now) or (EncryptedFilesTable.downloaded eq true)
+            val baseFilter = (EncryptedFilesTable.expiresAt less now) or (EncryptedFilesTable.downloaded eq true)
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and
+                    (EncryptedFilesTable.senderId notInList excludedUserIds.toList()) and
+                    (EncryptedFilesTable.recipientId notInList excludedUserIds.toList())
+            }
         }
     }
 

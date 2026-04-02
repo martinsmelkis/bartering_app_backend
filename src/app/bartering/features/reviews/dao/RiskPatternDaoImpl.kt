@@ -491,13 +491,18 @@ class RiskPatternDaoImpl : RiskPatternDao {
     
     // ========== Data Cleanup & Maintenance ==========
     
-    override suspend fun cleanupOldDeviceTracking(olderThanDays: Int): Int = dbQuery {
+    override suspend fun cleanupOldDeviceTracking(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
             val cutoffDate = java.time.Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
             DeviceTrackingTable.deleteWhere {
-                DeviceTrackingTable.timestamp less cutoffDate
+                val baseFilter = DeviceTrackingTable.timestamp less cutoffDate
+                if (excludedUserIds.isEmpty()) {
+                    baseFilter
+                } else {
+                    baseFilter and (DeviceTrackingTable.userId notInList excludedUserIds.toList())
+                }
             }
         } catch (e: Exception) {
             log.error("Error cleaning up device tracking", e)
@@ -506,13 +511,18 @@ class RiskPatternDaoImpl : RiskPatternDao {
         }
     }
     
-    override suspend fun cleanupOldIpTracking(olderThanDays: Int): Int = dbQuery {
+    override suspend fun cleanupOldIpTracking(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
             val cutoffDate = java.time.Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
             IpTrackingTable.deleteWhere {
-                IpTrackingTable.timestamp less cutoffDate
+                val baseFilter = IpTrackingTable.timestamp less cutoffDate
+                if (excludedUserIds.isEmpty()) {
+                    baseFilter
+                } else {
+                    baseFilter and (IpTrackingTable.userId notInList excludedUserIds.toList())
+                }
             }
         } catch (e: Exception) {
             log.error("Error cleaning up IP tracking", e)
@@ -521,13 +531,18 @@ class RiskPatternDaoImpl : RiskPatternDao {
         }
     }
     
-    override suspend fun cleanupOldLocationChanges(olderThanDays: Int): Int = dbQuery {
+    override suspend fun cleanupOldLocationChanges(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
             val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
             UserLocationChangesTable.deleteWhere {
-                UserLocationChangesTable.changedAt less cutoffDate
+                val baseFilter = UserLocationChangesTable.changedAt less cutoffDate
+                if (excludedUserIds.isEmpty()) {
+                    baseFilter
+                } else {
+                    baseFilter and (UserLocationChangesTable.userId notInList excludedUserIds.toList())
+                }
             }
         } catch (e: Exception) {
             log.error("Error cleaning up location changes", e)
@@ -536,7 +551,7 @@ class RiskPatternDaoImpl : RiskPatternDao {
         }
     }
     
-    override suspend fun cleanupOldRiskPatterns(olderThanDays: Int): Int = dbQuery {
+    override suspend fun cleanupOldRiskPatterns(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
             val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))

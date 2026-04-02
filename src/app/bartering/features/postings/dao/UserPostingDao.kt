@@ -85,7 +85,7 @@ interface UserPostingDao {
     /**
      * Marks expired postings as expired based on expires_at timestamp
      */
-    suspend fun markExpiredPostings(): Int
+    suspend fun markExpiredPostings(excludedUserIds: Set<String> = emptySet()): Int
     
     /**
      * Permanently deletes postings that have been expired for more than the grace period
@@ -93,5 +93,5 @@ interface UserPostingDao {
      * @param gracePeriodDays Number of days a posting must be expired before hard deletion
      * @return Number of postings permanently deleted
      */
-    suspend fun hardDeleteExpiredPostings(gracePeriodDays: Int = 30): Int
+    suspend fun hardDeleteExpiredPostings(gracePeriodDays: Int = 30, excludedUserIds: Set<String> = emptySet()): Int
 }

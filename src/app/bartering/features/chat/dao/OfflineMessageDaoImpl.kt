@@ -57,10 +57,17 @@ class OfflineMessageDaoImpl : OfflineMessageDao {
         }
     }
 
-    override suspend fun deleteDeliveredMessages(olderThanDays: Int): Int = dbQuery {
+    override suspend fun deleteDeliveredMessages(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         val cutoffDate = Instant.now().minus(olderThanDays.toLong(), ChronoUnit.DAYS)
         OfflineMessagesTable.deleteWhere {
-            (OfflineMessagesTable.delivered eq true) and (OfflineMessagesTable.timestamp less cutoffDate)
+            val baseFilter = (OfflineMessagesTable.delivered eq true) and (OfflineMessagesTable.timestamp less cutoffDate)
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and
+                    (OfflineMessagesTable.senderId notInList excludedUserIds.toList()) and
+                    (OfflineMessagesTable.recipientId notInList excludedUserIds.toList())
+            }
         }
     }
 

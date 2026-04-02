@@ -46,7 +46,7 @@ interface ReadReceiptDao {
      * @param olderThan Delete receipts older than this instant
      * @return Number of deleted receipts
      */
-    suspend fun deleteOldReceipts(olderThan: java.time.Instant): Int
+    suspend fun deleteOldReceipts(olderThan: java.time.Instant, excludedUserIds: Set<String> = emptySet()): Int
 }
 
 /**
@@ -151,11 +151,18 @@ class ReadReceiptDaoImpl : ReadReceiptDao {
         }
     }
     
-    override suspend fun deleteOldReceipts(olderThan: java.time.Instant): Int {
+    override suspend fun deleteOldReceipts(olderThan: java.time.Instant, excludedUserIds: Set<String>): Int {
         return try {
             transaction {
                 ReadReceiptsTable.deleteWhere {
-                    createdAt less olderThan
+                    val baseFilter = createdAt less olderThan
+                    if (excludedUserIds.isEmpty()) {
+                        baseFilter
+                    } else {
+                        baseFilter and
+                            (ReadReceiptsTable.senderId notInList excludedUserIds.toList()) and
+                            (ReadReceiptsTable.recipientId notInList excludedUserIds.toList())
+                    }
                 }
             }
         } catch (e: Exception) {

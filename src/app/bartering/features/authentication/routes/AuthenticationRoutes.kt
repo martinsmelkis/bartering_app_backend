@@ -10,6 +10,9 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.model.DeleteUserRequest
 import app.bartering.features.authentication.model.DeleteUserResponse
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.LegalHoldService
+import app.bartering.utils.HashUtils
 import org.koin.java.KoinJavaComponent.inject
 
 /**
@@ -29,6 +32,8 @@ import org.koin.java.KoinJavaComponent.inject
  */
 fun Route.deleteUserRoute() {
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
+    val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
 
     delete("/api/v1/authentication/user/{userId}") {
         // --- Authentication using signature verification ---
@@ -89,10 +94,70 @@ fun Route.deleteUserRoute() {
                 return@delete
             }
 
+            kotlinx.coroutines.runBlocking {
+                complianceAuditService.logEvent(
+                    actorType = "user",
+                    actorId = authenticatedUserId,
+                    eventType = "ACCOUNT_DELETION_REQUESTED",
+                    entityType = "user_account",
+                    entityId = userIdToDelete,
+                    purpose = "gdpr_right_to_erasure",
+                    outcome = "success",
+                    requestId = call.request.headers["X-Request-ID"],
+                    ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                        ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                )
+            }
+
+            val hasDeletionHold = legalHoldService.hasActiveHold(userIdToDelete, "deletion")
+            if (hasDeletionHold) {
+                kotlinx.coroutines.runBlocking {
+                    complianceAuditService.logEvent(
+                        actorType = "user",
+                        actorId = authenticatedUserId,
+                        eventType = "ACCOUNT_DELETION_BLOCKED_BY_LEGAL_HOLD",
+                        entityType = "user_account",
+                        entityId = userIdToDelete,
+                        purpose = "legal_hold_enforcement",
+                        outcome = "denied",
+                        requestId = call.request.headers["X-Request-ID"],
+                        ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                            ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                    )
+                }
+
+                call.respond(
+                    HttpStatusCode.Conflict,
+                    DeleteUserResponse(
+                        success = false,
+                        message = "Account deletion is temporarily blocked due to an active legal hold"
+                    )
+                )
+                return@delete
+            }
+
             // Perform the deletion
             val deleted = authDao.deleteUserAndAllData(userIdToDelete)
 
             if (deleted) {
+                kotlinx.coroutines.runBlocking {
+                    complianceAuditService.logEvent(
+                        actorType = "user",
+                        actorId = authenticatedUserId,
+                        eventType = "ACCOUNT_DELETION_COMPLETED",
+                        entityType = "user_account",
+                        entityId = userIdToDelete,
+                        purpose = "gdpr_right_to_erasure",
+                        outcome = "success",
+                        requestId = call.request.headers["X-Request-ID"],
+                        ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                            ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                    )
+                }
+
                 call.respond(
                     HttpStatusCode.OK,
                     DeleteUserResponse(
@@ -101,6 +166,23 @@ fun Route.deleteUserRoute() {
                     )
                 )
             } else {
+                kotlinx.coroutines.runBlocking {
+                    complianceAuditService.logEvent(
+                        actorType = "user",
+                        actorId = authenticatedUserId,
+                        eventType = "ACCOUNT_DELETION_COMPLETED",
+                        entityType = "user_account",
+                        entityId = userIdToDelete,
+                        purpose = "gdpr_right_to_erasure",
+                        outcome = "error",
+                        requestId = call.request.headers["X-Request-ID"],
+                        ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                            ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                        details = mapOf("reason" to "user_not_found_or_already_deleted")
+                    )
+                }
+
                 call.respond(
                     HttpStatusCode.NotFound,
                     DeleteUserResponse(
@@ -110,6 +192,23 @@ fun Route.deleteUserRoute() {
                 )
             }
         } catch (e: Exception) {
+            kotlinx.coroutines.runBlocking {
+                complianceAuditService.logEvent(
+                    actorType = "user",
+                    actorId = authenticatedUserId,
+                    eventType = "ACCOUNT_DELETION_COMPLETED",
+                    entityType = "user_account",
+                    entityId = userIdToDelete,
+                    purpose = "gdpr_right_to_erasure",
+                    outcome = "error",
+                    requestId = call.request.headers["X-Request-ID"],
+                    ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+                        ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
+                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                    details = mapOf("error" to (e.message ?: "unknown_error"))
+                )
+            }
+
             e.printStackTrace()
             call.respond(
                 HttpStatusCode.InternalServerError,

@@ -37,7 +37,7 @@ interface EncryptedFileDao {
      * Delete expired or downloaded files (cleanup)
      * @return number of files deleted
      */
-    suspend fun deleteExpiredFiles(): Int
+    suspend fun deleteExpiredFiles(excludedUserIds: Set<String> = emptySet()): Int
 
     /**
      * Delete a specific file

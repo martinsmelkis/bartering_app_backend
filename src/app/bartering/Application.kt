@@ -39,13 +39,8 @@ import app.bartering.features.categories.di.categoriesModule
 import app.bartering.features.chat.di.chatModule
 import app.bartering.features.healthcheck.di.healthCheckModule
 import app.bartering.features.migration.di.migrationModule
-import app.bartering.features.postings.dao.UserPostingDao
 import app.bartering.features.postings.di.postingsModule
-import app.bartering.features.postings.tasks.PostingExpirationTask
-import app.bartering.features.postings.tasks.PostingHardDeletionTask
 import app.bartering.features.profile.di.profilesModule
-import app.bartering.features.reviews.dao.RiskPatternDao
-import app.bartering.features.reviews.tasks.ReviewRiskTrackingCleanupTask
 import app.bartering.features.relationships.di.relationshipsModule
 import app.bartering.features.notifications.di.notificationsModule
 import app.bartering.features.reviews.di.reviewsModule
@@ -56,13 +51,12 @@ import app.bartering.features.notifications.service.EmailService
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
-import app.bartering.features.migration.dao.MigrationDao
-import app.bartering.features.migration.tasks.MigrationCleanupTask
 import app.bartering.features.federation.di.federationModule
 import app.bartering.features.wallet.di.walletModule
 import app.bartering.features.wallet.service.UserActivityRewardService
 import app.bartering.features.wallet.tasks.UserActivityRewardTask
-import app.bartering.tests.TestRandom100UsersGenAndSimilarity
+import app.bartering.features.compliance.di.complianceModule
+import app.bartering.features.compliance.service.RetentionOrchestrator
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.koin.core.qualifier.named
 import org.koin.java.KoinJavaComponent.inject
@@ -166,7 +160,8 @@ fun Application.module(testing: Boolean = false) {
             reviewsModule,
             migrationModule,
             federationModule,
-            walletModule
+            walletModule,
+            complianceModule
         )
     }
 
@@ -207,26 +202,10 @@ fun Application.module(testing: Boolean = false) {
         //TestArchetypeUsersGenAndSimilarity.execute()  // Archetype-based user generation and matching test
     }
 
-    val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
-    val expirationTask = PostingExpirationTask(postingDao)
-    expirationTask.start(appBackgroundScope)
-    
-    // Start posting hard deletion task (GDPR data minimization - deletes postings expired for 30+ days)
-    val hardDeletionTask = PostingHardDeletionTask(postingDao, gracePeriodDays = 30, intervalHours = 24)
-    hardDeletionTask.start(appBackgroundScope)
-    log.info("✅ Posting hard deletion task started (grace period: 30 days)")
-
-    // Start migration cleanup task
-    val migrationDao: MigrationDao by inject(MigrationDao::class.java)
-    val migrationCleanupTask = MigrationCleanupTask(migrationDao)
-    migrationCleanupTask.start(intervalMinutes = 60)
-    log.info("✅ Migration cleanup task started")
-    
-    // Start risk tracking data cleanup task
-    val riskPatternDao: RiskPatternDao by inject(RiskPatternDao::class.java)
-    val riskCleanupTask = ReviewRiskTrackingCleanupTask(riskPatternDao)
-    riskCleanupTask.start(appBackgroundScope)
-    log.info("✅ Risk tracking cleanup task started")
+    // Unified retention orchestrator (cross-domain cleanup + compliance audit events)
+    val retentionOrchestrator: RetentionOrchestrator by inject(RetentionOrchestrator::class.java)
+    retentionOrchestrator.start(appBackgroundScope)
+    log.info("✅ Retention orchestrator started")
     
     // Start digest notification jobs
     DigestNotificationJobManager.startJobs()

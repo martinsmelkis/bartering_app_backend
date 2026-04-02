@@ -24,5 +24,5 @@ interface OfflineMessageDao {
     /**
      * Delete old delivered messages (cleanup)
      */
-    suspend fun deleteDeliveredMessages(olderThanDays: Int = 7): Int
+    suspend fun deleteDeliveredMessages(olderThanDays: Int = 7, excludedUserIds: Set<String> = emptySet()): Int
 }

@@ -1,7 +1,6 @@
 package app.bartering.features.migration.di
 
 import app.bartering.features.migration.dao.MigrationDao
-import app.bartering.features.migration.tasks.MigrationCleanupTask
 import org.koin.dsl.module
 
 /**
@@ -9,5 +8,4 @@ import org.koin.dsl.module
  */
 val migrationModule = module {
     single { MigrationDao() }
-    single { MigrationCleanupTask(get()) }
 }

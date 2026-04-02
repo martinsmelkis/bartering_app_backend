@@ -29,6 +29,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -161,10 +162,20 @@ class GdprDataExportService(
 
         return if (sendResult.success) {
             log.info("GDPR data export sent successfully to user {}", userId)
-            ExportResult(success = true, message = "Data export sent to your configured email address.")
+            ExportResult(
+                success = true,
+                message = "Data export sent to your configured email address.",
+                artifactSha256 = sha256Hex(zipBytes),
+                artifactSizeBytes = zipBytes.size.toLong()
+            )
         } else {
             log.warn("Failed to send GDPR data export email for user {}: {}", userId, sendResult.errorMessage)
-            ExportResult(success = false, message = sendResult.errorMessage ?: "Failed to send data export email.")
+            ExportResult(
+                success = false,
+                message = sendResult.errorMessage ?: "Failed to send data export email.",
+                artifactSha256 = null,
+                artifactSizeBytes = zipBytes.size.toLong()
+            )
         }
     }
 
@@ -178,6 +189,11 @@ class GdprDataExportService(
             }
         }
         return output.toByteArray()
+    }
+
+    private fun sha256Hex(data: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(data)
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     private fun reviewsToJson(reviews: List<ReviewDto>): JsonObject = buildJsonObject {
@@ -272,7 +288,9 @@ class GdprDataExportService(
 @Serializable
 data class ExportResult(
     val success: Boolean,
-    val message: String
+    val message: String,
+    val artifactSha256: String? = null,
+    val artifactSizeBytes: Long? = null
 )
 
 @Serializable

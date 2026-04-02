@@ -26,5 +26,5 @@ interface ChatAnalyticsDao {
     /**
      * Deletes old response time data (cleanup)
      */
-    suspend fun deleteOldResponseTimes(olderThanDays: Int = 90): Int
+    suspend fun deleteOldResponseTimes(olderThanDays: Int = 90, excludedUserIds: Set<String> = emptySet()): Int
 }

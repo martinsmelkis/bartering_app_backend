@@ -1,7 +1,6 @@
 package app.bartering.features.reviews.dao
 
 import app.bartering.features.reviews.model.*
-import java.time.Instant
 
 /**
  * Data Access Object for risk pattern tracking and analysis.
@@ -167,7 +166,7 @@ interface RiskPatternDao {
      * @param olderThanDays Delete records older than this many days
      * @return Number of records deleted
      */
-    suspend fun cleanupOldDeviceTracking(olderThanDays: Int): Int
+    suspend fun cleanupOldDeviceTracking(olderThanDays: Int, excludedUserIds: Set<String> = emptySet()): Int
     
     /**
      * Deletes IP tracking records older than the specified number of days.
@@ -175,7 +174,7 @@ interface RiskPatternDao {
      * @param olderThanDays Delete records older than this many days
      * @return Number of records deleted
      */
-    suspend fun cleanupOldIpTracking(olderThanDays: Int): Int
+    suspend fun cleanupOldIpTracking(olderThanDays: Int, excludedUserIds: Set<String> = emptySet()): Int
     
     /**
      * Deletes location change records older than the specified number of days.
@@ -183,7 +182,7 @@ interface RiskPatternDao {
      * @param olderThanDays Delete records older than this many days
      * @return Number of records deleted
      */
-    suspend fun cleanupOldLocationChanges(olderThanDays: Int): Int
+    suspend fun cleanupOldLocationChanges(olderThanDays: Int, excludedUserIds: Set<String> = emptySet()): Int
     
     /**
      * Deletes risk pattern records older than the specified number of days.
@@ -192,5 +191,5 @@ interface RiskPatternDao {
      * @param olderThanDays Delete records older than this many days
      * @return Number of records deleted
      */
-    suspend fun cleanupOldRiskPatterns(olderThanDays: Int): Int
+    suspend fun cleanupOldRiskPatterns(olderThanDays: Int, excludedUserIds: Set<String> = emptySet()): Int
 }

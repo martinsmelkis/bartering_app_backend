@@ -56,11 +56,18 @@ class ChatAnalyticsDaoImpl : ChatAnalyticsDao {
         }
     }
 
-    override suspend fun deleteOldResponseTimes(olderThanDays: Int): Int = dbQuery {
+    override suspend fun deleteOldResponseTimes(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         val cutoffDate = Instant.now().minus(Duration.ofDays(olderThanDays.toLong()))
 
         ChatResponseTimesTable.deleteWhere {
-            ChatResponseTimesTable.createdAt less cutoffDate
+            val baseFilter = ChatResponseTimesTable.createdAt less cutoffDate
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and
+                    (ChatResponseTimesTable.userId notInList excludedUserIds.toList()) and
+                    (ChatResponseTimesTable.conversationPartnerId notInList excludedUserIds.toList())
+            }
         }
     }
 }

@@ -57,12 +57,12 @@ class ReviewEligibilityService {
             return ReviewEligibility(false, "Account too new to review (must be 7+ days old)")
         }
 
-        // Check review velocity (max 5 reviews per day)
+        // Check review velocity (max 3 reviews per day)
         val recentReviewCount = getReviewsInLastDays(reviewerId, 1)
-        if (recentReviewCount >= 5) {
+        if (recentReviewCount >= 3) {
             return ReviewEligibility(
                 false,
-                "Too many reviews in short period (max 5 per day)",
+                "Too many reviews in short period (max 3 per day)",
                 requiresVerification = true
             )
         }

@@ -675,17 +675,22 @@ class UserPostingDaoImpl : UserPostingDao {
         }
     }
 
-    override suspend fun markExpiredPostings(): Int = dbQuery {
+    override suspend fun markExpiredPostings(excludedUserIds: Set<String>): Int = dbQuery {
         UserPostingsTable.update({
-            (UserPostingsTable.expiresAt.isNotNull()) and
+            val baseFilter = (UserPostingsTable.expiresAt.isNotNull()) and
                     (UserPostingsTable.expiresAt lessEq Instant.now()) and
                     (UserPostingsTable.status eq "active")
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and (UserPostingsTable.userId notInList excludedUserIds.toList())
+            }
         }) {
             it[status] = PostingStatus.EXPIRED.name.lowercase()
         }
     }
     
-    override suspend fun hardDeleteExpiredPostings(gracePeriodDays: Int): Int {
+    override suspend fun hardDeleteExpiredPostings(gracePeriodDays: Int, excludedUserIds: Set<String>): Int {
         val cutoffDate = Instant.now().minusSeconds(gracePeriodDays.toLong() * 24 * 60 * 60)
         
         // First, fetch all postings that should be deleted (with their image URLs)
@@ -693,9 +698,15 @@ class UserPostingDaoImpl : UserPostingDao {
             UserPostingsTable
                 .selectAll()
                 .where {
-                    ((UserPostingsTable.status eq PostingStatus.EXPIRED.name.lowercase()) or
+                    val baseFilter = ((UserPostingsTable.status eq PostingStatus.EXPIRED.name.lowercase()) or
                      (UserPostingsTable.status eq PostingStatus.DELETED.name.lowercase())) and
                     (UserPostingsTable.updatedAt less cutoffDate)
+
+                    if (excludedUserIds.isEmpty()) {
+                        baseFilter
+                    } else {
+                        baseFilter and (UserPostingsTable.userId notInList excludedUserIds.toList())
+                    }
                 }
                 .map { row ->
                     row[UserPostingsTable.id] to row[UserPostingsTable.imageUrls]

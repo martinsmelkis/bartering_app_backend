@@ -389,7 +389,7 @@ class MigrationDao {
         deleted
     }
 
-    suspend fun cleanupExpiredSessions(): Int = dbQuery {
+    suspend fun cleanupExpiredSessions(excludedUserIds: Set<String> = emptySet()): Int = dbQuery {
         val now = Instant.now()
 
         // Mark expired
@@ -403,14 +403,25 @@ class MigrationDao {
         // Delete old completed/expired/cancelled (30 days retention)
         val thirtyDaysAgo = now.minusSeconds(30 * 24 * 60 * 60)
         val deleted = MigrationSessionsTable.deleteWhere {
-            (MigrationSessionsTable.createdAt less thirtyDaysAgo) and
-            (MigrationSessionsTable.status inList listOf("completed", "expired", "cancelled", "failed"))
+            val baseFilter = (MigrationSessionsTable.createdAt less thirtyDaysAgo) and
+                (MigrationSessionsTable.status inList listOf("completed", "expired", "cancelled", "failed"))
+
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and (MigrationSessionsTable.userId notInList excludedUserIds.toList())
+            }
         }
 
         // Clean up old audit logs (90 days)
         val ninetyDaysAgo = now.minusSeconds(90 * 24 * 60 * 60)
         MigrationAuditLogTable.deleteWhere {
-            MigrationAuditLogTable.createdAt less ninetyDaysAgo
+            val baseFilter = MigrationAuditLogTable.createdAt less ninetyDaysAgo
+            if (excludedUserIds.isEmpty()) {
+                baseFilter
+            } else {
+                baseFilter and (MigrationAuditLogTable.userId notInList excludedUserIds.toList())
+            }
         }
 
         expired + deleted
