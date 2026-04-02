@@ -15,7 +15,7 @@ data class UserProfile(
     val attributes: List<UserAttributeDto>,
     val profileKeywordDataMap: Map<String, Double>?,
     val selfDescription: String? = null,
-    val accountType: AccountType = AccountType.INDIVIDUAL,
+    val accountType: AccountType? = null,
     // Inline SVG text content for avatar icon
     val profileAvatarIcon: String? = null,
     val workReferenceImageUrls: List<String> = emptyList(),

@@ -26,6 +26,7 @@ object ComplianceAuditLogTable : Table("compliance_audit_log") {
     val deviceIdHash = varchar("device_id_hash", 128).nullable()
 
     val detailsJson = text("details_json").nullable()
+    val dsrRequestId = long("dsr_request_id").nullable()
     val createdAt = timestamp("created_at").default(Instant.now())
 
     override val primaryKey = PrimaryKey(id)

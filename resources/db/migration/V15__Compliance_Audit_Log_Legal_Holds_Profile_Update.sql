@@ -1,6 +1,46 @@
+-- Dedicated DSR/DSAR request tracking for GDPR case-management lifecycle
+CREATE TABLE IF NOT EXISTS compliance_data_subject_requests (
+    id BIGSERIAL PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL,
+    request_type VARCHAR(32) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'received',
+
+    requested_by VARCHAR(255),
+    handled_by VARCHAR(255),
+
+    request_source VARCHAR(32) NOT NULL DEFAULT 'user',
+    reason TEXT,
+    notes TEXT,
+    rejection_reason TEXT,
+
+    due_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_dsr_user_id
+    ON compliance_data_subject_requests(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_dsr_status
+    ON compliance_data_subject_requests(status);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_dsr_due_at
+    ON compliance_data_subject_requests(due_at);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_dsr_type_created
+    ON compliance_data_subject_requests(request_type, created_at DESC);
+
+COMMENT ON TABLE compliance_data_subject_requests IS
+    'DSR/DSAR case records for GDPR request lifecycle tracking.';
+
+
 -- Cross-domain compliance audit log for GDPR accountability evidence
 CREATE TABLE IF NOT EXISTS compliance_audit_log (
     id BIGSERIAL PRIMARY KEY,
+
+    dsr_request_id BIGINT REFERENCES compliance_data_subject_requests(id) ON DELETE SET NULL,
 
     actor_type VARCHAR(20) NOT NULL,
     actor_id VARCHAR(255),
@@ -31,6 +71,9 @@ CREATE INDEX IF NOT EXISTS idx_compliance_audit_log_entity
 
 CREATE INDEX IF NOT EXISTS idx_compliance_audit_log_created_at
     ON compliance_audit_log(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_audit_log_dsr_request_id
+    ON compliance_audit_log(dsr_request_id);
 
 COMMENT ON TABLE compliance_audit_log IS
     'Append-only compliance audit evidence log (GDPR accountability, DSAR, retention, deletion, consent changes).';

@@ -11,6 +11,7 @@ import app.bartering.features.authentication.model.DeleteUserRequest
 import app.bartering.features.authentication.model.DeleteUserResponse
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.DataSubjectRequestService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.utils.HashUtils
 import org.koin.java.KoinJavaComponent.inject
@@ -34,6 +35,7 @@ fun Route.deleteUserRoute() {
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
     val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
+    val dsrService: DataSubjectRequestService by inject(DataSubjectRequestService::class.java)
 
     delete("/api/v1/authentication/user/{userId}") {
         // --- Authentication using signature verification ---
@@ -69,6 +71,8 @@ fun Route.deleteUserRoute() {
             return@delete
         }
 
+        var dsrRequestId: Long? = null
+
         try {
             // Parse the request body for additional confirmation
             val deleteRequest = if (requestBody.isNotBlank() && requestBody != "{}") {
@@ -94,6 +98,17 @@ fun Route.deleteUserRoute() {
                 return@delete
             }
 
+            val requestId = kotlinx.coroutines.runBlocking {
+                dsrService.createRequest(
+                    userId = userIdToDelete,
+                    requestType = "deletion",
+                    requestedBy = authenticatedUserId,
+                    requestSource = "user",
+                    reason = "gdpr_right_to_erasure"
+                )
+            }
+            dsrRequestId = requestId
+
             kotlinx.coroutines.runBlocking {
                 complianceAuditService.logEvent(
                     actorType = "user",
@@ -106,12 +121,20 @@ fun Route.deleteUserRoute() {
                     requestId = call.request.headers["X-Request-ID"],
                     ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                         ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
-                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                    dsrRequestId = requestId
                 )
             }
 
             val hasDeletionHold = legalHoldService.hasActiveHold(userIdToDelete, "deletion")
             if (hasDeletionHold) {
+                dsrService.updateStatus(
+                    requestId = requestId,
+                    status = "rejected",
+                    handledBy = "system",
+                    rejectionReason = "blocked_by_legal_hold",
+                    notes = "Account deletion blocked due to active legal hold"
+                )
                 kotlinx.coroutines.runBlocking {
                     complianceAuditService.logEvent(
                         actorType = "user",
@@ -124,7 +147,8 @@ fun Route.deleteUserRoute() {
                         requestId = call.request.headers["X-Request-ID"],
                         ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                             ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
-                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                        dsrRequestId = requestId
                     )
                 }
 
@@ -137,6 +161,13 @@ fun Route.deleteUserRoute() {
                 )
                 return@delete
             }
+
+                dsrService.updateStatus(
+                    requestId = requestId,
+                    status = "in_progress",
+                    handledBy = "system",
+                    notes = "Account deletion processing started"
+                )
 
             // Perform the deletion
             val deleted = authDao.deleteUserAndAllData(userIdToDelete)
@@ -154,9 +185,16 @@ fun Route.deleteUserRoute() {
                         requestId = call.request.headers["X-Request-ID"],
                         ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                             ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
-                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                        deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                        dsrRequestId = requestId
                     )
                 }
+
+                dsrService.completeRequest(
+                    requestId = requestId,
+                    handledBy = "system",
+                    notes = "Account deletion completed successfully"
+                )
 
                 call.respond(
                     HttpStatusCode.OK,
@@ -179,9 +217,18 @@ fun Route.deleteUserRoute() {
                         ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                             ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
                         deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                        dsrRequestId = dsrRequestId,
                         details = mapOf("reason" to "user_not_found_or_already_deleted")
                     )
                 }
+
+                dsrService.updateStatus(
+                    requestId = requestId,
+                    status = "rejected",
+                    handledBy = "system",
+                    rejectionReason = "user_not_found_or_already_deleted",
+                    notes = "Deletion target was not found"
+                )
 
                 call.respond(
                     HttpStatusCode.NotFound,
@@ -192,6 +239,15 @@ fun Route.deleteUserRoute() {
                 )
             }
         } catch (e: Exception) {
+            dsrRequestId?.let { requestId ->
+                dsrService.updateStatus(
+                    requestId = requestId,
+                    status = "rejected",
+                    handledBy = "system",
+                    rejectionReason = "exception",
+                    notes = e.message ?: "unknown_error"
+                )
+            }
             kotlinx.coroutines.runBlocking {
                 complianceAuditService.logEvent(
                     actorType = "user",
@@ -205,6 +261,7 @@ fun Route.deleteUserRoute() {
                     ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                         ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
                     deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                    dsrRequestId = dsrRequestId,
                     details = mapOf("error" to (e.message ?: "unknown_error"))
                 )
             }

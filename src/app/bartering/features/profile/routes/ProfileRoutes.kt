@@ -22,6 +22,7 @@ import app.bartering.features.profile.model.UserAttributeDto
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import app.bartering.features.profile.service.GdprDataExportService
 import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.DataSubjectRequestService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.utils.HashUtils
 import io.ktor.client.call.body
@@ -722,11 +723,22 @@ fun Route.requestGdprDataExportRoute() {
     val exportService: GdprDataExportService by inject(GdprDataExportService::class.java)
     val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
     val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
+    val dsrService: DataSubjectRequestService by inject(DataSubjectRequestService::class.java)
 
     post("/api/v1/profile/export-data") {
         val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
         if (authenticatedUserId == null) {
             return@post
+        }
+
+        val dsrRequestId = kotlinx.coroutines.runBlocking {
+            dsrService.createRequest(
+                userId = authenticatedUserId,
+                requestType = "export",
+                requestedBy = authenticatedUserId,
+                requestSource = "user",
+                reason = "gdpr_data_portability"
+            )
         }
 
         kotlinx.coroutines.runBlocking {
@@ -741,13 +753,21 @@ fun Route.requestGdprDataExportRoute() {
                 requestId = call.request.headers["X-Request-ID"],
                 ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                     ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
-                deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                dsrRequestId = dsrRequestId
             )
         }
 
         val result = try {
             val hasExportHold = legalHoldService.hasActiveHold(authenticatedUserId, "export")
             if (hasExportHold) {
+                dsrService.updateStatus(
+                    requestId = dsrRequestId,
+                    status = "rejected",
+                    handledBy = "system",
+                    rejectionReason = "blocked_by_legal_hold",
+                    notes = "Data export blocked due to active legal hold"
+                )
                 complianceAuditService.logEvent(
                     actorType = "user",
                     actorId = authenticatedUserId,
@@ -759,13 +779,20 @@ fun Route.requestGdprDataExportRoute() {
                     requestId = call.request.headers["X-Request-ID"],
                     ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                         ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
-                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) }
+                    deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                    dsrRequestId = dsrRequestId
                 )
                 app.bartering.features.profile.service.ExportResult(
                     success = false,
                     message = "Data export is temporarily blocked due to an active legal hold"
                 )
             } else {
+                dsrService.updateStatus(
+                    requestId = dsrRequestId,
+                    status = "in_progress",
+                    handledBy = "system",
+                    notes = "Export generation started"
+                )
                 complianceAuditService.logEvent(
                     actorType = "system",
                     actorId = authenticatedUserId,
@@ -774,7 +801,8 @@ fun Route.requestGdprDataExportRoute() {
                     entityId = authenticatedUserId,
                     purpose = "gdpr_data_portability",
                     outcome = "success",
-                    requestId = call.request.headers["X-Request-ID"]
+                    requestId = call.request.headers["X-Request-ID"],
+                    dsrRequestId = dsrRequestId
                 )
                 exportService.exportAndSendToUser(authenticatedUserId)
             }
@@ -783,6 +811,22 @@ fun Route.requestGdprDataExportRoute() {
             app.bartering.features.profile.service.ExportResult(
                 success = false,
                 message = "Failed to process data export request"
+            )
+        }
+
+        if (result.success) {
+            dsrService.completeRequest(
+                requestId = dsrRequestId,
+                handledBy = "system",
+                notes = "Export sent successfully"
+            )
+        } else {
+            dsrService.updateStatus(
+                requestId = dsrRequestId,
+                status = "rejected",
+                handledBy = "system",
+                rejectionReason = "export_failed",
+                notes = result.message
             )
         }
 
@@ -801,6 +845,7 @@ fun Route.requestGdprDataExportRoute() {
                 ipHash = (call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
                     ?: call.request.headers["X-Real-IP"])?.let { HashUtils.sha256(it) },
                 deviceIdHash = call.request.headers["X-Device-ID"]?.let { HashUtils.sha256(it) },
+                dsrRequestId = dsrRequestId,
                 details = mapOf(
                     "message" to result.message,
                     "artifactSha256" to (result.artifactSha256 ?: "none"),

@@ -26,6 +26,7 @@ class ComplianceAuditService {
         requestId: String? = null,
         ipHash: String? = null,
         deviceIdHash: String? = null,
+        dsrRequestId: Long? = null,
         details: Map<String, String>? = null,
         createdAt: Instant = Instant.now()
     ) {
@@ -42,6 +43,7 @@ class ComplianceAuditService {
                     it[ComplianceAuditLogTable.requestId] = requestId
                     it[ComplianceAuditLogTable.ipHash] = ipHash
                     it[ComplianceAuditLogTable.deviceIdHash] = deviceIdHash
+                    it[ComplianceAuditLogTable.dsrRequestId] = dsrRequestId
                     it[ComplianceAuditLogTable.detailsJson] = details?.let { d -> Json.encodeToString(d) }
                     it[ComplianceAuditLogTable.createdAt] = createdAt
                 }
@@ -55,6 +57,7 @@ class ComplianceAuditService {
     suspend fun listAuditEvents(
         actorId: String? = null,
         eventType: String? = null,
+        dsrRequestId: Long? = null,
         from: Instant? = null,
         to: Instant? = null,
         limit: Int = 200
@@ -69,6 +72,7 @@ class ComplianceAuditService {
             .asSequence()
             .filter { actorId == null || it[ComplianceAuditLogTable.actorId] == actorId }
             .filter { eventType == null || it[ComplianceAuditLogTable.eventType] == eventType }
+            .filter { dsrRequestId == null || it[ComplianceAuditLogTable.dsrRequestId] == dsrRequestId }
             .filter { from == null || it[ComplianceAuditLogTable.createdAt] >= from }
             .filter { to == null || it[ComplianceAuditLogTable.createdAt] <= to }
             .take(limit)
@@ -83,6 +87,7 @@ class ComplianceAuditService {
                     purpose = it[ComplianceAuditLogTable.purpose],
                     outcome = it[ComplianceAuditLogTable.outcome],
                     requestId = it[ComplianceAuditLogTable.requestId],
+                    dsrRequestId = it[ComplianceAuditLogTable.dsrRequestId],
                     createdAt = it[ComplianceAuditLogTable.createdAt],
                     details = it[ComplianceAuditLogTable.detailsJson]
                         ?.let { json -> Json.parseToJsonElement(json).jsonObject }
@@ -110,6 +115,7 @@ data class ComplianceAuditEventView(
     val purpose: String?,
     val outcome: String,
     val requestId: String?,
+    val dsrRequestId: Long?,
     val createdAt: Instant,
     val details: JsonObject?
 )

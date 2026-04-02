@@ -7,6 +7,7 @@ import app.bartering.features.chat.dao.OfflineMessageDaoImpl
 import app.bartering.features.chat.dao.ReadReceiptDao
 import app.bartering.features.chat.dao.ReadReceiptDaoImpl
 import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.DataSubjectRequestService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.features.compliance.service.RetentionOrchestrator
 import app.bartering.features.encryptedfiles.dao.EncryptedFileDao
@@ -23,6 +24,7 @@ val complianceModule = module {
 
     single { ComplianceAuditService() }
     single { LegalHoldService() }
+    single { DataSubjectRequestService() }
 
     single {
         RetentionOrchestrator(

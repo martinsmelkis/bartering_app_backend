@@ -27,6 +27,10 @@ object RetentionConfig {
     val backupPolicyEnforcement: Boolean =
         (System.getenv("RETENTION_BACKUP_POLICY_ENFORCEMENT") ?: "true").toBoolean()
 
+    // DSAR = Data Subject Access Request (e.g., export/delete request under GDPR).
+    // SLA = Service Level Agreement (maximum completion window in days).
+    val dsarSlaDays: Int = envInt("GDPR_DSAR_SLA_DAYS", 30)
+
     // Orchestrator cadence
     val retentionOrchestratorIntervalHours: Long =
         System.getenv("RETENTION_ORCHESTRATOR_INTERVAL_HOURS")?.toLongOrNull() ?: 24L

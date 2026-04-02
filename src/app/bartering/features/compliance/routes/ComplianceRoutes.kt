@@ -4,6 +4,7 @@ import app.bartering.config.RetentionConfig
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.DsarSlaEvaluator
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.features.compliance.service.LegalHoldView
 import app.bartering.features.profile.dao.UserProfileDaoImpl
@@ -49,6 +50,27 @@ data class DsarevidenceResponse(
 data class RetentionStatusResponse(
     val orchestratorIntervalHours: Long,
     val retentionDays: Map<String, Int>
+)
+
+// DSAR metrics summarize GDPR request handling timelines (export/deletion requests).
+// SLA fields indicate whether completion stayed within configured DSAR deadline.
+@Serializable
+data class ComplianceEvidenceSummaryResponse(
+    val generatedAt: String,
+    val dsarSlaDays: Int,
+    val dsarTotalRequests: Int,
+    val dsarCompletedWithinSla: Int,
+    val dsarBreached: Int,
+    val dsarOpen: Int,
+    val dsarBreachedActorIds: List<String>,
+    val legalHoldAppliedEvents: Int,
+    val legalHoldReleasedEvents: Int,
+    val dataExportRequestedEvents: Int,
+    val dataExportCompletedEvents: Int,
+    val accountDeletionRequestedEvents: Int,
+    val accountDeletionCompletedEvents: Int,
+    val retentionTaskCompletedEvents: Int,
+    val retentionCycleCompletedEvents: Int
 )
 
 @Serializable
@@ -341,6 +363,56 @@ fun Route.complianceAdminRoutes() {
                 consentEvents = consentEvents,
                 legalHoldEvents = legalHoldEvents,
                 latestEvents = userEvents.take(20).map { "${it.createdAt} ${it.eventType} ${it.outcome}" }
+            )
+        )
+    }
+
+    get("/api/v1/admin/compliance/evidence/summary") {
+        requireComplianceAdmin(
+            "evidence_summary",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val sinceDays = (call.request.queryParameters["sinceDays"]?.toLongOrNull() ?: 30L).coerceIn(1L, 365L)
+        val now = Instant.now()
+        val from = now.minus(sinceDays, ChronoUnit.DAYS)
+
+        val allEvents = complianceAuditService.listAuditEvents(from = from, limit = 5000)
+        val requestEvents = allEvents.filter {
+            it.eventType == "DATA_EXPORT_REQUESTED" || it.eventType == "ACCOUNT_DELETION_REQUESTED"
+        }
+        val completionEvents = allEvents.filter {
+            it.eventType == "DATA_EXPORT_COMPLETED" || it.eventType == "ACCOUNT_DELETION_COMPLETED"
+        }
+
+        val dsarEvaluation = DsarSlaEvaluator.evaluate(
+            requests = requestEvents,
+            completions = completionEvents,
+            slaDays = RetentionConfig.dsarSlaDays,
+            now = now
+        )
+
+        call.respond(
+            HttpStatusCode.OK,
+            ComplianceEvidenceSummaryResponse(
+                generatedAt = now.toString(),
+                dsarSlaDays = RetentionConfig.dsarSlaDays,
+                dsarTotalRequests = dsarEvaluation.totalRequests,
+                dsarCompletedWithinSla = dsarEvaluation.completedWithinSla,
+                dsarBreached = dsarEvaluation.breached,
+                dsarOpen = dsarEvaluation.open,
+                dsarBreachedActorIds = dsarEvaluation.breachedActorIds,
+                legalHoldAppliedEvents = allEvents.count { it.eventType == "LEGAL_HOLD_APPLIED" },
+                legalHoldReleasedEvents = allEvents.count { it.eventType == "LEGAL_HOLD_RELEASED" },
+                dataExportRequestedEvents = allEvents.count { it.eventType == "DATA_EXPORT_REQUESTED" },
+                dataExportCompletedEvents = allEvents.count { it.eventType == "DATA_EXPORT_COMPLETED" },
+                accountDeletionRequestedEvents = allEvents.count { it.eventType == "ACCOUNT_DELETION_REQUESTED" },
+                accountDeletionCompletedEvents = allEvents.count { it.eventType == "ACCOUNT_DELETION_COMPLETED" },
+                retentionTaskCompletedEvents = allEvents.count { it.eventType == "RETENTION_PURGE_TASK_COMPLETED" },
+                retentionCycleCompletedEvents = allEvents.count { it.eventType == "RETENTION_PURGE_CYCLE_COMPLETED" }
             )
         )
     }
