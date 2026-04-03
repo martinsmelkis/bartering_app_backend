@@ -6,6 +6,9 @@ WORKDIR /home/gradle/src
 # Copy Gradle configuration files first for better caching
 COPY --chown=gradle:gradle gradle ./gradle
 COPY --chown=gradle:gradle gradlew gradlew.bat build.gradle settings.gradle.kts gradle.properties ./
+# Multi-project support: ensure included subproject directory exists during configuration
+RUN mkdir -p dashboards/admin_compliance
+COPY --chown=gradle:gradle dashboards/admin_compliance/build.gradle.kts dashboards/admin_compliance/build.gradle.kts
 
 # Download dependencies (this layer will be cached unless build files change)
 RUN gradle dependencies --no-daemon

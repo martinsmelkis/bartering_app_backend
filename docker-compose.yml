@@ -79,6 +79,31 @@ services:
     #           count: all # Use all available GPUs
     #           capabilities: [gpu]
 
+  barter_dashboard_admin_compliance:
+    build:
+      context: .
+      dockerfile: dashboards/admin_compliance/Dockerfile
+    container_name: barter_dashboard_admin_compliance
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      barter_app_server:
+        condition: service_started
+    environment:
+      - DASHBOARD_BACKEND_BASE_URL=http://barter_app_server:8081
+      - DASHBOARD_ADMIN_CREDENTIALS=${DASHBOARD_ADMIN_CREDENTIALS:-}
+      - DASHBOARD_SECURE_COOKIES=${DASHBOARD_SECURE_COOKIES:-false}
+      - DASHBOARD_ADMIN_USER_ID=${DASHBOARD_ADMIN_USER_ID:-}
+      - DASHBOARD_ADMIN_PRIVATE_KEY_HEX=${DASHBOARD_ADMIN_PRIVATE_KEY_HEX:-}
+      - DASHBOARD_SESSION_ENCRYPTION_KEY_B64=${DASHBOARD_SESSION_ENCRYPTION_KEY_B64:-}
+      - DASHBOARD_SESSION_SIGNING_KEY_B64=${DASHBOARD_SESSION_SIGNING_KEY_B64:-}
+      - DASHBOARD_SESSION_TTL_SECONDS=${DASHBOARD_SESSION_TTL_SECONDS:-3600}
+    ports:
+      - "8084:8094"
+    networks:
+      - barter-net
+
   barter_app_server:
     build: .
     ports:
@@ -102,6 +127,8 @@ services:
       - FEDERATION_INIT_TOKEN=a3f9b2c8d1e5f7a0b4c6d9e8f2a1b5c7d3e8f9a0b1c2d4e5f6a7b8c9d0e1f2
       - FEDERATION_ADMIN_IP_INIT_ALLOWLIST=127.0.0.1,::1,192.168.1.0/24,10.0.0.0/8
       - ANALYTICS_HASH_SALT=dev-barter-app-analytics-salt
+      - COMPLIANCE_ADMIN_TRUSTED_PROXY_SOURCE_CIDRS=127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
+      - COMPLIANCE_ADMIN_TRUSTED_CLIENT_CIDRS=127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
     depends_on:
       postgres:
         condition: service_healthy

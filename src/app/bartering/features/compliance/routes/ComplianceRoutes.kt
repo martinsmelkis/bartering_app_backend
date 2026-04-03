@@ -3,10 +3,8 @@ package app.bartering.features.compliance.routes
 import app.bartering.config.RetentionConfig
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
-import app.bartering.features.compliance.service.ComplianceAuditService
-import app.bartering.features.compliance.service.DsarSlaEvaluator
-import app.bartering.features.compliance.service.LegalHoldService
-import app.bartering.features.compliance.service.LegalHoldView
+import app.bartering.features.compliance.model.*
+import app.bartering.features.compliance.service.*
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.utils.HashUtils
 import io.ktor.http.HttpStatusCode
@@ -17,72 +15,10 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
-import kotlinx.serialization.Serializable
 import org.koin.java.KoinJavaComponent.inject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-
-@Serializable
-data class ApplyLegalHoldRequest(
-    val userId: String,
-    val reason: String,
-    val scope: String = "all",
-    val expiresAt: String? = null
-)
-
-@Serializable
-data class ReleaseLegalHoldRequest(
-    val holdId: Long,
-    val reason: String? = null
-)
-
-@Serializable
-data class DsarevidenceResponse(
-    val userId: String,
-    val exportEvents: Int,
-    val deletionEvents: Int,
-    val consentEvents: Int,
-    val legalHoldEvents: Int,
-    val latestEvents: List<String>
-)
-
-@Serializable
-data class RetentionStatusResponse(
-    val orchestratorIntervalHours: Long,
-    val retentionDays: Map<String, Int>
-)
-
-// DSAR metrics summarize GDPR request handling timelines (export/deletion requests).
-// SLA fields indicate whether completion stayed within configured DSAR deadline.
-@Serializable
-data class ComplianceEvidenceSummaryResponse(
-    val generatedAt: String,
-    val dsarSlaDays: Int,
-    val dsarTotalRequests: Int,
-    val dsarCompletedWithinSla: Int,
-    val dsarBreached: Int,
-    val dsarOpen: Int,
-    val dsarBreachedActorIds: List<String>,
-    val legalHoldAppliedEvents: Int,
-    val legalHoldReleasedEvents: Int,
-    val dataExportRequestedEvents: Int,
-    val dataExportCompletedEvents: Int,
-    val accountDeletionRequestedEvents: Int,
-    val accountDeletionCompletedEvents: Int,
-    val retentionTaskCompletedEvents: Int,
-    val retentionCycleCompletedEvents: Int
-)
-
-@Serializable
-data class LegalHoldResponse(
-    val id: Long,
-    val userId: String,
-    val reason: String,
-    val scope: String,
-    val imposedBy: String,
-    val imposedAt: String,
-    val expiresAt: String?
-)
+import java.util.Locale
 
 private suspend fun requireComplianceAdmin(
     routeName: String,
@@ -98,10 +34,39 @@ private suspend fun requireComplianceAdmin(
     }
 
     val remoteAddress = call.request.local.remoteAddress
-    val localNetworkAllowed = remoteAddress.contains("127.0.0.1") ||
-        call.request.headers["X-Forwarded-For"]?.contains("127.0.0.1") == true ||
-        call.request.headers["X-Real-IP"]?.contains("127.0.0.1") == true ||
-        remoteAddress.contains("0:0:0:0:0:0:0:1")
+
+    val trustedProxySourceCidrs = getenvCsvOrDefault(
+        "COMPLIANCE_ADMIN_TRUSTED_PROXY_SOURCE_CIDRS",
+        listOf("127.0.0.1", "::1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8")
+    )
+
+    val trustedAdminClientCidrs = getenvCsvOrDefault(
+        "COMPLIANCE_ADMIN_TRUSTED_CLIENT_CIDRS",
+        listOf("127.0.0.1", "::1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8")
+    )
+
+    val isTrustedProxySource = trustedProxySourceCidrs.any { cidrOrIp -> isIpInCidrOrExact(remoteAddress, cidrOrIp) }
+
+    val forwardedFor = if (isTrustedProxySource) {
+        call.request.headers["X-Forwarded-For"]?.substringBefore(",")?.trim()
+    } else {
+        null
+    }
+
+    val realIp = if (isTrustedProxySource) {
+        call.request.headers["X-Real-IP"]?.trim()
+    } else {
+        null
+    }
+
+    val clientIp = when {
+        !forwardedFor.isNullOrBlank() -> forwardedFor
+        !realIp.isNullOrBlank() -> realIp
+        else -> remoteAddress
+    }
+
+    val localNetworkAllowed = isPrivateOrLoopbackIp(clientIp) ||
+        trustedAdminClientCidrs.any { cidrOrIp -> isIpInCidrOrExact(clientIp, cidrOrIp) }
 
     if (allowlistRequired && !localNetworkAllowed) {
         complianceAuditService.logEvent(
@@ -141,6 +106,54 @@ private suspend fun requireComplianceAdmin(
     }
 
     return authenticatedUserId
+}
+
+private fun getenvCsvOrDefault(name: String, default: List<String>): List<String> {
+    return System.getenv(name)
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotBlank() }
+        ?.takeIf { it.isNotEmpty() }
+        ?: default
+}
+
+private fun isPrivateOrLoopbackIp(ip: String): Boolean {
+    val normalized = ip.lowercase(Locale.ROOT)
+    return normalized == "127.0.0.1" ||
+        normalized == "::1" ||
+        normalized.startsWith("10.") ||
+        normalized.startsWith("192.168.") ||
+        normalized.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
+}
+
+private fun ipv4ToLong(ip: String): Long? {
+    val parts = ip.split(".")
+    if (parts.size != 4) return null
+
+    var result = 0L
+    for (part in parts) {
+        val value = part.toIntOrNull() ?: return null
+        if (value !in 0..255) return null
+        result = (result shl 8) or value.toLong()
+    }
+    return result
+}
+
+private fun isIpInCidrOrExact(ip: String, cidrOrIp: String): Boolean {
+    if (cidrOrIp == ip) return true
+
+    val cidrParts = cidrOrIp.split("/")
+    if (cidrParts.size != 2) return false
+
+    val networkIp = cidrParts[0]
+    val prefix = cidrParts[1].toIntOrNull() ?: return false
+    if (prefix !in 0..32) return false
+
+    val ipLong = ipv4ToLong(ip) ?: return false
+    val networkLong = ipv4ToLong(networkIp) ?: return false
+
+    val mask = if (prefix == 0) 0L else (-1L shl (32 - prefix)) and 0xFFFFFFFFL
+    return (ipLong and mask) == (networkLong and mask)
 }
 
 private fun LegalHoldView.toResponse() = LegalHoldResponse(
@@ -355,8 +368,7 @@ fun Route.complianceAdminRoutes() {
         ).count { it.details?.get("userId")?.toString()?.contains(userId) == true }
 
         call.respond(
-            HttpStatusCode.OK,
-            DsarevidenceResponse(
+            HttpStatusCode.OK, DsarEvidenceResponse(
                 userId = userId,
                 exportEvents = exportEvents,
                 deletionEvents = deletionEvents,

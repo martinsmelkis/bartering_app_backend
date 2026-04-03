@@ -22,7 +22,6 @@ out/
 
 # Docker files
 docker-compose*.yml
-Dockerfile
 .dockerignore
 
 # Documentation

@@ -24,4 +24,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "BarterAppBackend"
+include(":dashboards:admin_compliance")
  
