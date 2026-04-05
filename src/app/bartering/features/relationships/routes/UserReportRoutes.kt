@@ -6,10 +6,14 @@ import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import app.bartering.features.profile.dao.UserProfileDaoImpl
 import app.bartering.features.relationships.dao.UserRelationshipsDaoImpl
 import app.bartering.features.relationships.dao.UserReportsDaoImpl
 import app.bartering.features.relationships.model.*
 import org.koin.java.KoinJavaComponent.inject
+import kotlinx.serialization.Serializable
+import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.utils.SecurityUtils
 
 /**
  * Create a user report
@@ -199,24 +203,51 @@ fun Route.checkHasReportedRoute() {
     }
 }
 
+private suspend fun requireAdminUser(
+    call: io.ktor.server.application.ApplicationCall,
+    authDao: AuthenticationDaoImpl,
+    userProfileDao: UserProfileDaoImpl
+): String? {
+    val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+    if (authenticatedUserId == null) {
+        return null
+    }
+
+    val isAdmin = userProfileDao.isComplianceAdmin(authenticatedUserId)
+    if (!isAdmin) {
+        call.respond(
+            HttpStatusCode.Forbidden,
+            mapOf("error" to "User is not authorized for moderation endpoints")
+        )
+        return null
+    }
+
+    return authenticatedUserId
+}
+
 /**
- * Get report statistics for a user (public endpoint for moderation)
+ * Get report statistics for a user (admin moderation endpoint)
  */
 fun Route.getUserReportStatsRoute() {
     val reportsDao: UserReportsDaoImpl by inject(UserReportsDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
 
     get("/api/v1/reports/stats/{userId}") {
-        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
-        if (authenticatedUserId == null) {
-            return@get
-        }
+        requireAdminUser(call, authDao, userProfileDao) ?: return@get
 
         val userId = call.parameters["userId"]
         if (userId.isNullOrBlank()) {
             return@get call.respond(
                 HttpStatusCode.BadRequest,
                 mapOf("error" to "Missing userId parameter")
+            )
+        }
+
+        if (!SecurityUtils.isValidUUID(userId)) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid userId parameter")
             )
         }
 
@@ -229,6 +260,54 @@ fun Route.getUserReportStatsRoute() {
             call.respond(
                 HttpStatusCode.InternalServerError,
                 mapOf("error" to "Failed to retrieve report statistics")
+            )
+        }
+    }
+}
+
+@Serializable
+data class ModerationReportedUsersResponse(
+    val userIds: List<String>
+)
+
+/**
+ * Get distinct reported user IDs for moderation dashboard (admin moderation endpoint)
+ */
+fun Route.getModerationReportedUsersRoute() {
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    get("/api/v1/reports/moderation/users") {
+        requireAdminUser(call, authDao, userProfileDao) ?: return@get
+
+        try {
+            val userIds = dbQuery {
+                val results = mutableListOf<String>()
+                val sql = """
+                    SELECT reported_user_id
+                    FROM user_reports
+                    GROUP BY reported_user_id
+                    ORDER BY MAX(reported_at) DESC
+                    LIMIT 200
+                """.trimIndent()
+
+                org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager.current().exec(sql) { rs ->
+                    while (rs.next()) {
+                        val userId = rs.getString("reported_user_id")
+                        if (!userId.isNullOrBlank()) {
+                            results.add(userId)
+                        }
+                    }
+                }
+                results
+            }
+
+            call.respond(HttpStatusCode.OK, ModerationReportedUsersResponse(userIds = userIds))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "Failed to retrieve moderation users")
             )
         }
     }

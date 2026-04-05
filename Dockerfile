@@ -7,8 +7,9 @@ WORKDIR /home/gradle/src
 COPY --chown=gradle:gradle gradle ./gradle
 COPY --chown=gradle:gradle gradlew gradlew.bat build.gradle settings.gradle.kts gradle.properties ./
 # Multi-project support: ensure included subproject directory exists during configuration
-RUN mkdir -p dashboards/admin_compliance
+RUN mkdir -p dashboards/admin_compliance dashboards/user_moderation
 COPY --chown=gradle:gradle dashboards/admin_compliance/build.gradle.kts dashboards/admin_compliance/build.gradle.kts
+COPY --chown=gradle:gradle dashboards/user_moderation/build.gradle.kts dashboards/user_moderation/build.gradle.kts
 
 # Download dependencies (this layer will be cached unless build files change)
 RUN gradle dependencies --no-daemon

@@ -28,5 +28,6 @@ fun Application.relationshipsRoutes() {
         getUserReportsRoute()
         checkHasReportedRoute()
         getUserReportStatsRoute()
+        getModerationReportedUsersRoute()
     }
 }

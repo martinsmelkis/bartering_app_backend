@@ -104,6 +104,31 @@ services:
     networks:
       - barter-net
 
+  barter_dashboard_user_moderation:
+    build:
+      context: .
+      dockerfile: dashboards/user_moderation/Dockerfile
+    container_name: barter_dashboard_user_moderation
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      barter_app_server:
+        condition: service_started
+    environment:
+      - DASHBOARD_BACKEND_BASE_URL=http://barter_app_server:8081
+      - DASHBOARD_ADMIN_CREDENTIALS=${DASHBOARD_ADMIN_CREDENTIALS:-}
+      - DASHBOARD_SECURE_COOKIES=${DASHBOARD_SECURE_COOKIES:-false}
+      - DASHBOARD_ADMIN_USER_ID=${DASHBOARD_ADMIN_USER_ID:-}
+      - DASHBOARD_ADMIN_PRIVATE_KEY_HEX=${DASHBOARD_ADMIN_PRIVATE_KEY_HEX:-}
+      - DASHBOARD_SESSION_ENCRYPTION_KEY_B64=${DASHBOARD_SESSION_ENCRYPTION_KEY_B64:-}
+      - DASHBOARD_SESSION_SIGNING_KEY_B64=${DASHBOARD_SESSION_SIGNING_KEY_B64:-}
+      - DASHBOARD_SESSION_TTL_SECONDS=${DASHBOARD_SESSION_TTL_SECONDS:-3600}
+    ports:
+      - "8085:8095"
+    networks:
+      - barter-net
+
   barter_app_server:
     build: .
     ports:

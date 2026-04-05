@@ -11,22 +11,22 @@ RUN mkdir -p dashboards/admin_compliance dashboards/user_moderation
 COPY --chown=gradle:gradle dashboards/admin_compliance/build.gradle.kts dashboards/admin_compliance/build.gradle.kts
 COPY --chown=gradle:gradle dashboards/user_moderation/build.gradle.kts dashboards/user_moderation/build.gradle.kts
 
-# Resolve dependencies for admin compliance dashboard module
-RUN gradle :dashboards:admin_compliance:dependencies --no-daemon
+# Resolve dependencies for user moderation dashboard module
+RUN gradle :dashboards:user_moderation:dependencies --no-daemon
 
 # Copy project sources needed by dashboard module
 COPY --chown=gradle:gradle dashboards dashboards
 
 # Build dashboard distribution using standard application plugin tasks
-RUN gradle :dashboards:admin_compliance:installDist --no-daemon
+RUN gradle :dashboards:user_moderation:installDist --no-daemon
 
 # Runtime stage
 FROM amazoncorretto:21
 
 ENV JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8"
 WORKDIR /app
-EXPOSE 8084
+EXPOSE 8085
 
-COPY --from=build /home/gradle/src/dashboards/admin_compliance/build/install/admin_compliance /app/admin_compliance
+COPY --from=build /home/gradle/src/dashboards/user_moderation/build/install/user_moderation /app/user_moderation
 
-ENTRYPOINT ["/app/admin_compliance/bin/admin_compliance"]
+ENTRYPOINT ["/app/user_moderation/bin/user_moderation"]
