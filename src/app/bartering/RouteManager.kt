@@ -48,10 +48,8 @@ fun Application.routes() {
         federationAdminRoutes()
         relationshipsRoutes()
 
-        // Posting writes
-        rateLimit(RateLimitName("posting_creation")) {
-            postingsRoutes()
-        }
+        // Posting routes (specific endpoint limits are applied inside route definitions)
+        postingsRoutes()
 
         // Multipart/media uploads
         rateLimit(RateLimitName("file_upload")) {

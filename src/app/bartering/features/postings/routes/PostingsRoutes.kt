@@ -5,6 +5,7 @@ import io.ktor.http.content.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.utils.io.toByteArray
 import kotlinx.serialization.json.Json
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
@@ -40,8 +41,9 @@ fun Route.postingsRoutes() {
     route("/api/v1/postings") {
 
         // Create a new posting (with multipart support for images)
-        post {
-            try {
+        rateLimit(RateLimitName("posting_creation")) {
+            post {
+                try {
                 val contentType = call.request.contentType()
 
                 // Handle multipart/form-data (with images)
@@ -263,17 +265,18 @@ fun Route.postingsRoutes() {
                     }
                 }
 
-            } catch (e: Exception) {
-                log.error("Error creating posting", e)
-                e.printStackTrace()
-                call.respond(
-                    HttpStatusCode.InternalServerError,
-                    mapOf(
-                        "error" to "An error occurred while creating posting",
-                        "message" to (e.message ?: "Unknown error"),
-                        "type" to e.javaClass.simpleName
+                } catch (e: Exception) {
+                    log.error("Error creating posting", e)
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf(
+                            "error" to "An error occurred while creating posting",
+                            "message" to (e.message ?: "Unknown error"),
+                            "type" to e.javaClass.simpleName
+                        )
                     )
-                )
+                }
             }
         }
 
