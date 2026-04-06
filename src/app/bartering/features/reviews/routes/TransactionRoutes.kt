@@ -11,6 +11,7 @@ import app.bartering.features.reviews.model.*
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
+import java.time.Duration
 import java.time.Instant
 
 private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes.TransactionRoutes")
@@ -148,6 +149,28 @@ fun Route.updateTransactionStatusRoute() {
                         "attemptedStatus" to newStatus.value
                     )
                 )
+            }
+
+            // Prevent marking transaction as DONE within first hour after creation
+            if (newStatus == TransactionStatus.DONE) {
+                val earliestDoneAt = transaction.initiatedAt.plusSeconds(60 * 60)
+                val now = Instant.now()
+                if (now.isBefore(earliestDoneAt)) {
+                    val remaining = Duration.between(now, earliestDoneAt)
+                    val totalSeconds = remaining.seconds.coerceAtLeast(0)
+                    val minutes = totalSeconds / 60
+                    val seconds = totalSeconds % 60
+                    val remainingTimeText = String.format("%02d:%02d", minutes, seconds)
+
+                    return@put call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf(
+                            "error" to "Transaction can be marked as done only after 1 hour. Remaining time: $remainingTimeText",
+                            "remainingTime" to remainingTimeText,
+                            "canBeDoneAt" to earliestDoneAt.toEpochMilli()
+                        )
+                    )
+                }
             }
 
             // Prevent updating completedAt if already set (preserve original completion time)
