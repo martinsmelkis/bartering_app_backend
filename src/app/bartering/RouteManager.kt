@@ -22,6 +22,7 @@ import app.bartering.features.reviews.routes.*
 import app.bartering.features.federation.routes.federationRoutes
 import app.bartering.features.federation.routes.federationAdminRoutes
 import app.bartering.features.wallet.routes.*
+import app.bartering.features.purchases.routes.*
 import app.bartering.features.compliance.routes.complianceRoutes
 import io.ktor.server.routing.*
 import io.ktor.server.plugins.ratelimit.*
@@ -82,5 +83,12 @@ fun Application.routes() {
         getWalletRoute()
         getWalletTransactionsRoute()
         transferCoinsRoute()
+
+        // Purchases (premium + coin packs + boosts)
+        getPremiumStatusRoute()
+        getPurchaseHistoryRoute()
+        purchasePremiumLifetimeRoute()
+        purchaseCoinPackRoute()
+        purchaseVisibilityBoostRoute()
     }
 }

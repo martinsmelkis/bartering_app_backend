@@ -6,6 +6,7 @@ import io.ktor.server.routing.*
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.chat.dao.ChatAnalyticsDao
+import app.bartering.features.purchases.service.PurchasesService
 import app.bartering.features.reviews.dao.*
 import app.bartering.features.reviews.model.*
 import app.bartering.features.reviews.service.ReputationCalculationService
@@ -20,6 +21,7 @@ fun Route.getReputationRoute() {
     val reviewDao: ReviewDao by inject(ReviewDao::class.java)
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     val chatAnalyticsDao: ChatAnalyticsDao by inject(ChatAnalyticsDao::class.java)
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     val reputationService: ReputationCalculationService by inject(ReputationCalculationService::class.java)
 
@@ -104,7 +106,15 @@ fun Route.getReputationRoute() {
             ))
 
             // Check and update badge eligibility for all badges
-            updateUserBadges(userId, reputation, reputationService, reputationDao, transactionDao, reviewDao, chatAnalyticsDao)
+            updateUserBadges(
+                userId,
+                reputation,
+                reputationService,
+                reputationDao,
+                transactionDao,
+                chatAnalyticsDao,
+                purchasesService
+            )
 
             // Get updated badges after eligibility check
             val updatedBadges = reputationDao.getUserBadges(userId)
@@ -188,8 +198,8 @@ private suspend fun updateUserBadges(
     reputationService: ReputationCalculationService,
     reputationDao: ReputationDao,
     transactionDao: BarterTransactionDao,
-    reviewDao: ReviewDao,
-    chatAnalyticsDao: ChatAnalyticsDao
+    chatAnalyticsDao: ChatAnalyticsDao,
+    purchasesService: PurchasesService
 ) {
     // Get current badges
     val currentBadges = reputationDao.getUserBadges(userId).toSet()
@@ -201,11 +211,14 @@ private suspend fun updateUserBadges(
                 userId = userId,
                 badge = badge,
                 reputation = reputation,
-                hasIdentityVerified = { uid ->
+                hasIdentityVerified = { _ ->
                     badge == ReputationBadge.IDENTITY_VERIFIED && currentBadges.contains(badge)
                 },
-                hasBusinessVerified = { uid ->
+                hasBusinessVerified = { _ ->
                     badge == ReputationBadge.VERIFIED_BUSINESS && currentBadges.contains(badge)
+                },
+                hasPremiumUser = { uid ->
+                    purchasesService.getPremiumStatus(uid).isPremium
                 },
                 getAverageResponseTime = { uid ->
                     // Get average response time from chat analytics (last 30 days)

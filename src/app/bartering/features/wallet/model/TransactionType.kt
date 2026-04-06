@@ -7,6 +7,8 @@ enum class TransactionType(val value: String) {
     EARN("earn"),
     TIP("tip"),
     BONUS("bonus"),
+    PURCHASE_COIN_PACK("purchase_coin_pack"),
+    PURCHASE_BOOST("purchase_boost"),
     SPEND("spend"),
     ADJUSTMENT("adjustment"),
     REVERSAL("reversal"),

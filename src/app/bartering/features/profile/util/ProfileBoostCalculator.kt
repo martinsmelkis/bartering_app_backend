@@ -35,6 +35,7 @@ object ProfileBoostCalculator {
 
     // Badge boosts (stackable, but capped)
     private const val TOP_RATED_BADGE_BOOST = 0.06
+    private const val PREMIUM_USER_BADGE_BOOST = 0.06
     private const val VETERAN_TRADER_BADGE_BOOST = 0.05
     private const val QUICK_RESPONDER_BADGE_BOOST = 0.04
     private const val DISPUTE_FREE_BADGE_BOOST = 0.04
@@ -68,7 +69,7 @@ object ProfileBoostCalculator {
      * - 0.02 boost for EMERGING
      * 
      * BADGES (stackable):
-     * - 0.06 boost for TOP_RATED
+     * - 0.06 boost for TOP_RATED, PREMIUM_USER
      * - 0.05 boost for VETERAN_TRADER, VERIFIED_BUSINESS
      * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED
      * - 0.03 boost for FAST_TRADER, COMMUNITY_CONNECTOR
@@ -238,6 +239,7 @@ object ProfileBoostCalculator {
             badges.forEach { badge ->
                 val badgeBoost = when (badge) {
                     ReputationBadge.TOP_RATED -> TOP_RATED_BADGE_BOOST
+                    ReputationBadge.PREMIUM_USER -> PREMIUM_USER_BADGE_BOOST
                     ReputationBadge.VETERAN_TRADER -> VETERAN_TRADER_BADGE_BOOST
                     ReputationBadge.VERIFIED_BUSINESS -> VERIFIED_BUSINESS_BADGE_BOOST
                     ReputationBadge.QUICK_RESPONDER -> QUICK_RESPONDER_BADGE_BOOST

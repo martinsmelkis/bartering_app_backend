@@ -53,6 +53,7 @@ import app.bartering.middleware.installActivityTracking
 import app.bartering.config.configureRateLimiting
 import app.bartering.features.federation.di.federationModule
 import app.bartering.features.wallet.di.walletModule
+import app.bartering.features.purchases.di.purchasesModule
 import app.bartering.features.wallet.service.UserActivityRewardService
 import app.bartering.features.wallet.tasks.UserActivityRewardTask
 import app.bartering.features.compliance.di.complianceModule
@@ -161,6 +162,7 @@ fun Application.module(testing: Boolean = false) {
             migrationModule,
             federationModule,
             walletModule,
+            purchasesModule,
             complianceModule
         )
     }

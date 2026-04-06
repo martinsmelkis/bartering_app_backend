@@ -16,6 +16,11 @@ enum class ReputationBadge(val value: String, val description: String) {
     VETERAN_TRADER("veteran_trader", "Veteran Trader - 100+ trades"),
 
     /**
+     * User has an active premium account.
+     */
+    PREMIUM_USER("premium_user", "Premium User"),
+
+    /**
      * User maintains 4.8+ average rating with 50+ reviews.
      */
     TOP_RATED("top_rated", "Top Rated Seller"),

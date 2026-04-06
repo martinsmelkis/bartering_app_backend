@@ -21,6 +21,10 @@ import app.bartering.features.federation.model.*
 import app.bartering.features.profile.model.UserAttributeDto
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import app.bartering.features.profile.service.GdprDataExportService
+import app.bartering.features.purchases.service.PurchasesService
+import app.bartering.features.postings.service.FirebaseStorageService
+import app.bartering.features.postings.service.ImageStorageService
+import app.bartering.features.postings.service.LocalFileStorageService
 import app.bartering.features.compliance.service.ComplianceAuditService
 import app.bartering.features.compliance.service.DataSubjectRequestService
 import app.bartering.features.compliance.service.LegalHoldService
@@ -33,10 +37,105 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
+import java.net.URI
+import java.util.Base64
 import kotlin.getValue
 
 private val log = LoggerFactory.getLogger("ProfileRoutes")
 private val analyticsRecordingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+private const val MAX_PROFILE_WORK_REFERENCE_IMAGES = 6
+private const val MAX_PROFILE_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+private const val MAX_PROFILE_AVATAR_ICON_LENGTH = 20_000
+private const val MAX_PROFILE_SELF_DESCRIPTION_LENGTH = 128
+
+private fun buildProfileImageStorage(): ImageStorageService {
+    val storageType = System.getenv("IMAGE_STORAGE_TYPE") ?: "local"
+    return when (storageType.lowercase()) {
+        "firebase" -> FirebaseStorageService()
+        else -> LocalFileStorageService()
+    }
+}
+
+private fun isAllowedWorkReferenceImageUrl(value: String): Boolean {
+    return try {
+        val uri = URI(value)
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme != "http" && scheme != "https") {
+            return false
+        }
+        !uri.host.isNullOrBlank()
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private suspend fun persistProfileWorkReferenceImages(
+    imageStorage: ImageStorageService,
+    userId: String,
+    incomingUrlsOrDataUris: List<String>?
+): List<String>? {
+    if (incomingUrlsOrDataUris == null) return null
+
+    val trimmed = incomingUrlsOrDataUris.map { it.trim() }.filter { it.isNotBlank() }
+    if (trimmed.size > MAX_PROFILE_WORK_REFERENCE_IMAGES) {
+        throw IllegalArgumentException("Too many work reference images. Max: $MAX_PROFILE_WORK_REFERENCE_IMAGES")
+    }
+
+    val persistedUrls = mutableListOf<String>()
+
+    trimmed.forEachIndexed { index, value ->
+        if (!value.startsWith("data:image/", ignoreCase = true)) {
+            if (!isAllowedWorkReferenceImageUrl(value)) {
+                throw IllegalArgumentException("Only http/https image URLs are allowed")
+            }
+            persistedUrls.add(value)
+            return@forEachIndexed
+        }
+
+        val commaIndex = value.indexOf(',')
+        if (commaIndex <= 0) {
+            throw IllegalArgumentException("Invalid image data URI format")
+        }
+
+        val meta = value.take(commaIndex)
+        val base64Payload = value.substring(commaIndex + 1)
+
+        val mimeType = meta.substringAfter("data:").substringBefore(';').ifBlank { "image/jpeg" }
+            .trim()
+            .lowercase()
+        if (mimeType !in setOf("image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif")) {
+            throw IllegalArgumentException("Unsupported image MIME type: $mimeType")
+        }
+
+        if (!meta.contains(";base64", ignoreCase = true)) {
+            throw IllegalArgumentException("Image data URI must be base64-encoded")
+        }
+
+        val imageBytes = try {
+            Base64.getDecoder().decode(base64Payload)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid base64 image payload")
+        }
+
+        if (imageBytes.size > MAX_PROFILE_IMAGE_SIZE_BYTES) {
+            throw IllegalArgumentException("Profile image too large. Max 10MB")
+        }
+
+        val extension = mimeType.substringAfter('/', "jpeg").removePrefix("x-")
+        val fileName = "work_ref_${System.currentTimeMillis()}_$index.$extension"
+
+        val uploadedUrl = imageStorage.uploadImage(
+            imageData = imageBytes,
+            userId = userId,
+            fileName = fileName,
+            contentType = mimeType
+        )
+        persistedUrls.add(uploadedUrl)
+    }
+
+    return persistedUrls
+}
 
 fun Route.getProfilesNearbyRoute() {
 
@@ -151,8 +250,10 @@ fun Route.updateProfileRoute() {
 
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
     val locationService: LocationPatternDetectionService by inject(LocationPatternDetectionService::class.java)
     val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
+    val imageStorage = buildProfileImageStorage()
 
     // Route to update the current user's profile
     post("/api/v1/profile-update") {
@@ -192,20 +293,71 @@ fun Route.updateProfileRoute() {
             val newLatitude = request.latitude
             val newLongitude = request.longitude
 
-            val userName = userProfileDao.updateProfile(
-                request.userId,
-                UserProfileUpdateRequest(
-                    name = request.name,
-                    latitude = newLatitude,
-                    longitude = newLongitude,
-                    attributes = request.attributes,
-                    profileKeywordDataMap = request.profileKeywordDataMap,
-                    selfDescription = request.selfDescription,
-                    profileAvatarIcon = request.profileAvatarIcon,
-                    workReferenceImageUrls = request.workReferenceImageUrls,
-                    preferredLanguage = request.preferredLanguage
+            val isPremiumUser = purchasesService.getPremiumStatus(request.userId).isPremium
+
+            if (isPremiumUser) {
+                if (request.selfDescription != null && request.selfDescription.length > MAX_PROFILE_SELF_DESCRIPTION_LENGTH) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        "selfDescription too long. Max $MAX_PROFILE_SELF_DESCRIPTION_LENGTH characters."
+                    )
+                }
+
+                if (request.profileAvatarIcon != null) {
+                    val avatarIcon = request.profileAvatarIcon.trim()
+                    if (avatarIcon.length > MAX_PROFILE_AVATAR_ICON_LENGTH) {
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            "profileAvatarIcon too large."
+                        )
+                    }
+
+                    val isSvg = avatarIcon.startsWith("<svg", ignoreCase = true)
+                            && avatarIcon.contains("</svg>", ignoreCase = true)
+                    if (!isSvg || avatarIcon.contains("<script", ignoreCase = true)) {
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            "profileAvatarIcon must be safe inline SVG content."
+                        )
+                    }
+                }
+            }
+
+            val oldWorkReferenceImageUrls = currentProfile?.workReferenceImageUrls ?: emptyList()
+            val resolvedWorkReferenceImageUrls = if (isPremiumUser) {
+                persistProfileWorkReferenceImages(
+                    imageStorage = imageStorage,
+                    userId = request.userId,
+                    incomingUrlsOrDataUris = request.workReferenceImageUrls
                 )
-            )
+            } else {
+                null
+            }
+
+            val newlyUploadedWorkReferenceUrls = (resolvedWorkReferenceImageUrls ?: emptyList())
+                .filterNot { oldWorkReferenceImageUrls.contains(it) }
+
+            val userName = try {
+                userProfileDao.updateProfile(
+                    request.userId,
+                    UserProfileUpdateRequest(
+                        name = request.name,
+                        latitude = newLatitude,
+                        longitude = newLongitude,
+                        attributes = request.attributes,
+                        profileKeywordDataMap = request.profileKeywordDataMap,
+                        selfDescription = if (isPremiumUser) request.selfDescription else null,
+                        profileAvatarIcon = if (isPremiumUser) request.profileAvatarIcon else null,
+                        workReferenceImageUrls = resolvedWorkReferenceImageUrls,
+                        preferredLanguage = request.preferredLanguage
+                    )
+                )
+            } catch (e: Exception) {
+                if (newlyUploadedWorkReferenceUrls.isNotEmpty()) {
+                    imageStorage.deleteImages(newlyUploadedWorkReferenceUrls)
+                }
+                throw e
+            }
 
             // Track location change only when user has granted location consent
             val hasLocationConsent = userProfileDao.hasLocationConsent(request.userId)
@@ -482,8 +634,8 @@ private suspend fun searchFederatedProfiles(
     federationService: app.bartering.features.federation.service.FederationService,
     federationDao: app.bartering.features.federation.dao.FederationDao,
     federatedUserDao: app.bartering.features.federation.dao.FederatedUserDao
-): List<app.bartering.features.profile.model.UserProfileExtended> {
-    val results = mutableListOf<app.bartering.features.profile.model.UserProfileExtended>()
+): List<UserProfileExtended> {
+    val results = mutableListOf<UserProfileExtended>()
     
     try {
         // Get trusted (FULL or PARTIAL trust) federated servers
@@ -540,12 +692,15 @@ private suspend fun searchFederatedProfiles(
                             )
                         } ?: emptyList(),
                         profileKeywordDataMap = null,
+                        selfDescription = remoteProfile.bio,
+                        profileAvatarIcon = null,
+                        workReferenceImageUrls = emptyList(),
                         activePostingIds = emptyList(),
                         lastOnlineAt = remoteProfile.lastOnline?.toEpochMilli()
                     )
                     
                     results.add(
-                        app.bartering.features.profile.model.UserProfileExtended(
+                        UserProfileExtended(
                             profile = profile,
                             distanceKm = -1.0, // Unknown distance for federated
                             matchRelevancyScore = 0.5, // Default score

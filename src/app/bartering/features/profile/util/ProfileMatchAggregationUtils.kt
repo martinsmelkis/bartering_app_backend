@@ -51,20 +51,31 @@ object ProfileMatchAggregationUtils {
                         matchRelevancyScore = weightedScore
                     )
                 } else {
-                    // User already in results - combine scores and keep best profile
+                    // User already in results - combine scores and merge profile data
                     val existingScore = existing.matchRelevancyScore?.let {
                         if (it.isNaN() || it.isInfinite()) 0.0 else it
                     } ?: 0.0
                     val combinedScore = existingScore + weightedScore
 
-                    // Prefer profile with more attributes (more complete data)
-                    val betterProfile = if (profile.profile.attributes.size > existing.profile.attributes.size) {
+                    val preferredBase = if (profile.profile.attributes.size > existing.profile.attributes.size) {
                         profile
                     } else {
                         existing
                     }
+                    val secondary = if (preferredBase === profile) existing else profile
 
-                    combinedMap[userId] = betterProfile.copy(
+                    val mergedProfile = preferredBase.profile.copy(
+                        selfDescription = preferredBase.profile.selfDescription ?: secondary.profile.selfDescription,
+                        profileAvatarIcon = preferredBase.profile.profileAvatarIcon ?: secondary.profile.profileAvatarIcon,
+                        workReferenceImageUrls = if (preferredBase.profile.workReferenceImageUrls.isNotEmpty()) {
+                            preferredBase.profile.workReferenceImageUrls
+                        } else {
+                            secondary.profile.workReferenceImageUrls
+                        }
+                    )
+
+                    combinedMap[userId] = preferredBase.copy(
+                        profile = mergedProfile,
                         matchRelevancyScore = combinedScore
                     )
                 }
