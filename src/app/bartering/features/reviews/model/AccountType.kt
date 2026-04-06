@@ -31,6 +31,11 @@ enum class AccountType(val value: String) {
     ADMIN("admin"),
 
     /**
+     * Moderator account allowed to access internal User moderation dashboard.
+     */
+    MODERATOR("moderator"),
+
+    /**
      * Account suspended due to violations or suspicious activity.
      */
     SUSPENDED("suspended");

@@ -23,8 +23,8 @@ object ProfileBoostCalculator {
     private const val TWENTY_FOUR_HOURS_MILLIS = 24 * 60 * 60 * 1000L  // 24 hours in milliseconds
 
     // Reputation boosts (based on average rating)
-    private const val EXCELLENT_RATING_BOOST = 0.08  // 4.8+ average rating
-    private const val GREAT_RATING_BOOST = 0.05      // 4.5+ average rating
+    private const val EXCELLENT_RATING_BOOST = 0.06  // 4.8+ average rating
+    private const val GREAT_RATING_BOOST = 0.04      // 4.5+ average rating
     private const val GOOD_RATING_BOOST = 0.02       // 4.0+ average rating
 
     // Trust level boosts
@@ -43,6 +43,7 @@ object ProfileBoostCalculator {
     private const val COMMUNITY_CONNECTOR_BADGE_BOOST = 0.03
     private const val VERIFIED_BUSINESS_BADGE_BOOST = 0.05
     private const val IDENTITY_VERIFIED_BADGE_BOOST = 0.04
+    private const val TOP_1000_BADGE_BOOST = 0.04
 
     // Trade activity boost
     private const val HIGH_TRADE_DIVERSITY_BOOST = 0.03  // Diversity score > 0.7
@@ -71,7 +72,7 @@ object ProfileBoostCalculator {
      * BADGES (stackable):
      * - 0.06 boost for TOP_RATED, PREMIUM_USER
      * - 0.05 boost for VETERAN_TRADER, VERIFIED_BUSINESS
-     * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED
+     * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED, TOP_1000
      * - 0.03 boost for FAST_TRADER, COMMUNITY_CONNECTOR
      * 
      * TRADE DIVERSITY:
@@ -139,6 +140,7 @@ object ProfileBoostCalculator {
 
         // Apply comprehensive boost based on multiple factors
         return profiles.map { profileWithDistance ->
+
             val userId = profileWithDistance.profile.userId
             val lastOnlineAt = UserActivityCache.getLastSeen(userId)
 
@@ -245,6 +247,7 @@ object ProfileBoostCalculator {
                     ReputationBadge.QUICK_RESPONDER -> QUICK_RESPONDER_BADGE_BOOST
                     ReputationBadge.DISPUTE_FREE -> DISPUTE_FREE_BADGE_BOOST
                     ReputationBadge.IDENTITY_VERIFIED -> IDENTITY_VERIFIED_BADGE_BOOST
+                    ReputationBadge.TOP_1000 -> TOP_1000_BADGE_BOOST
                     ReputationBadge.FAST_TRADER -> FAST_TRADER_BADGE_BOOST
                     ReputationBadge.COMMUNITY_CONNECTOR -> COMMUNITY_CONNECTOR_BADGE_BOOST
                 }

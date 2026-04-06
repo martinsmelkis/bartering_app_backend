@@ -378,6 +378,24 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
         logDeviceActivityInternal(userId, deviceId, activityType, ipAddress)
     }
 
+    override suspend fun isAmongFirstRegisteredUsers(userId: String, limit: Int): Boolean = dbQuery {
+        if (limit <= 0) return@dbQuery false
+
+        val userCreatedAt = UserRegistrationDataTable
+            .select(UserRegistrationDataTable.createdAt)
+            .where { UserRegistrationDataTable.id eq userId }
+            .firstOrNull()
+            ?.get(UserRegistrationDataTable.createdAt)
+            ?: return@dbQuery false
+
+        val usersRegisteredEarlier = UserRegistrationDataTable
+            .select(UserRegistrationDataTable.id)
+            .where { UserRegistrationDataTable.createdAt less userCreatedAt }
+            .count()
+
+        usersRegisteredEarlier < limit
+    }
+
     // ============================================================================
     // PRIVATE HELPERS
     // ============================================================================

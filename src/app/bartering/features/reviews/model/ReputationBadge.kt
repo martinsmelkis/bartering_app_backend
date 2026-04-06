@@ -48,7 +48,12 @@ enum class ReputationBadge(val value: String, val description: String) {
     /**
      * User completes trades faster than average.
      */
-    FAST_TRADER("fast_trader", "Fast & Reliable");
+    FAST_TRADER("fast_trader", "Fast & Reliable"),
+
+    /**
+     * User was among the first 1000 registered users.
+     */
+    TOP_1000("top_1000", "Early Adopter - First 1000 Users");
 
     companion object {
         fun fromString(value: String): ReputationBadge? {

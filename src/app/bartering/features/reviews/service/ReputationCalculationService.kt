@@ -81,6 +81,7 @@ class ReputationCalculationService(
         hasIdentityVerified: suspend (String) -> Boolean,
         hasBusinessVerified: suspend (String) -> Boolean,
         hasPremiumUser: suspend (String) -> Boolean,
+        isAmongFirstRegisteredUsers: suspend (String) -> Boolean,
         getAverageResponseTime: suspend (String) -> Long?, // in hours
         hasDisputedTransactions: suspend (String) -> Boolean,
         getAverageTradeCompletionTime: suspend (String) -> Long? // in hours
@@ -96,6 +97,7 @@ class ReputationCalculationService(
             ReputationBadge.COMMUNITY_CONNECTOR -> reputation.tradeDiversityScore >= 0.8
             ReputationBadge.VERIFIED_BUSINESS -> hasBusinessVerified(userId)
             ReputationBadge.PREMIUM_USER -> hasPremiumUser(userId)
+            ReputationBadge.TOP_1000 -> isAmongFirstRegisteredUsers(userId)
             ReputationBadge.DISPUTE_FREE -> !hasDisputedTransactions(userId) && reputation.totalReviews >= 10
             ReputationBadge.FAST_TRADER -> {
                 val avgCompletionTime = getAverageTradeCompletionTime(userId)

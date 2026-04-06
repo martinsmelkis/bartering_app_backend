@@ -87,4 +87,9 @@ interface AuthenticationDao {
         activityType: String,
         ipAddress: String? = null
     )
+
+    /**
+     * Checks whether the user is among the first [limit] registered users by created_at.
+     */
+    suspend fun isAmongFirstRegisteredUsers(userId: String, limit: Int = 1000): Boolean
 }

@@ -319,7 +319,6 @@ private suspend fun updateUserAttributesFromMap(
                 continue
             }
 
-            println("@@@@@@@@@@@ Validated attribute exists: ${attribute.attributeNameKey}")
             validAttributes.add(Pair(attribute.attributeNameKey, validatedRelevancy))
 
         } catch (e: Exception) {

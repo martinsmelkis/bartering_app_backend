@@ -31,7 +31,8 @@ class ReviewWeightService {
                 weight *= WeightModifier.VERIFIED_BUSINESS.multiplier
                 modifiers.add(WeightModifier.VERIFIED_BUSINESS.value)
             }
-            AccountType.BUSINESS_UNVERIFIED, AccountType.INDIVIDUAL, AccountType.ADMIN -> {
+            AccountType.BUSINESS_UNVERIFIED, AccountType.INDIVIDUAL,
+            AccountType.ADMIN, AccountType.MODERATOR -> {
                 // Standard weight
             }
             AccountType.SUSPENDED -> {

@@ -113,7 +113,8 @@ fun Route.getReputationRoute() {
                 reputationDao,
                 transactionDao,
                 chatAnalyticsDao,
-                purchasesService
+                purchasesService,
+                authDao
             )
 
             // Get updated badges after eligibility check
@@ -199,7 +200,8 @@ private suspend fun updateUserBadges(
     reputationDao: ReputationDao,
     transactionDao: BarterTransactionDao,
     chatAnalyticsDao: ChatAnalyticsDao,
-    purchasesService: PurchasesService
+    purchasesService: PurchasesService,
+    authDao: AuthenticationDaoImpl
 ) {
     // Get current badges
     val currentBadges = reputationDao.getUserBadges(userId).toSet()
@@ -219,6 +221,9 @@ private suspend fun updateUserBadges(
                 },
                 hasPremiumUser = { uid ->
                     purchasesService.getPremiumStatus(uid).isPremium
+                },
+                isAmongFirstRegisteredUsers = { uid ->
+                    authDao.isAmongFirstRegisteredUsers(uid, limit = 1000)
                 },
                 getAverageResponseTime = { uid ->
                     // Get average response time from chat analytics (last 30 days)
