@@ -24,6 +24,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 
 private val log = LoggerFactory.getLogger("PostingsRoutes")
+private const val ACTIVE_POSTING_LIMIT = 20L
+private const val ACTIVE_POSTING_LIMIT_ERROR =
+    "Maximum active postings limit reached (20). Please delete or expire an existing posting before creating a new one."
 
 fun Route.postingsRoutes() {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
@@ -108,6 +111,19 @@ fun Route.postingsRoutes() {
                         call.respond(
                             HttpStatusCode.BadRequest,
                             mapOf("error" to "Missing required fields: userId, title, description, isOffer")
+                        )
+                        return@post
+                    }
+
+                    val activePostingCount = postingDao.getActivePostingCount(userId)
+                    if (activePostingCount >= ACTIVE_POSTING_LIMIT) {
+                        call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf(
+                                "error" to ACTIVE_POSTING_LIMIT_ERROR,
+                                "activePostingCount" to activePostingCount,
+                                "activePostingLimit" to ACTIVE_POSTING_LIMIT
+                            )
                         )
                         return@post
                     }
@@ -217,6 +233,20 @@ fun Route.postingsRoutes() {
                     }
 
                     val request = Json.decodeFromString<UserPostingRequest>(requestBody)
+
+                    val activePostingCount = postingDao.getActivePostingCount(authenticatedUserId)
+                    if (activePostingCount >= ACTIVE_POSTING_LIMIT) {
+                        call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf(
+                                "error" to ACTIVE_POSTING_LIMIT_ERROR,
+                                "activePostingCount" to activePostingCount,
+                                "activePostingLimit" to ACTIVE_POSTING_LIMIT
+                            )
+                        )
+                        return@post
+                    }
+
                     val postingId = postingDao.createPosting(authenticatedUserId, request)
 
                     if (postingId != null) {

@@ -157,6 +157,18 @@ class UserPostingDaoImpl : UserPostingDao {
             .map { (_, rows) -> toUserPosting(rows.first(), rows) }
     }
 
+    override suspend fun getActivePostingCount(userId: String): Long = dbQuery {
+        UserPostingsTable
+            .select(UserPostingsTable.id)
+            .where { UserPostingsTable.userId eq userId }
+            .andWhere { UserPostingsTable.status eq PostingStatus.ACTIVE.name.lowercase() }
+            .andWhere {
+                (UserPostingsTable.expiresAt.isNull()) or
+                    (UserPostingsTable.expiresAt greater Instant.now())
+            }
+            .count()
+    }
+
     override suspend fun getAllPostings(includeExpired: Boolean): List<UserPosting> = dbQuery {
         val join = UserPostingsTable
             .join(

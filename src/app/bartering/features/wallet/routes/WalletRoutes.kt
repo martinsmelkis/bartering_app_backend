@@ -2,11 +2,14 @@ package app.bartering.features.wallet.routes
 
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import app.bartering.features.wallet.model.ClaimAwardRequest
+import app.bartering.features.wallet.model.ClaimAwardResponse
 import app.bartering.features.wallet.model.TransferCoinsRequest
 import app.bartering.features.wallet.model.TransactionType
 import app.bartering.features.wallet.model.WalletOperationResponse
 import app.bartering.features.wallet.model.WalletResponse
 import app.bartering.features.wallet.model.WalletTransactionResponse
+import app.bartering.features.wallet.service.UserAwardsService
 import app.bartering.features.wallet.service.WalletService
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
@@ -139,6 +142,51 @@ fun Route.transferCoinsRoute() {
             )
         } catch (e: Exception) {
             log.error("Failed to transfer coins for user {}", authenticatedUserId, e)
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request: ${e.message}"))
+        }
+    }
+}
+
+fun Route.claimWalletAwardRoute() {
+    val awardsService: UserAwardsService by inject(UserAwardsService::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/wallet/awards/claim") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val request = Json.decodeFromString<ClaimAwardRequest>(requestBody)
+
+            val result = awardsService.claimAward(
+                requesterUserId = authenticatedUserId,
+                targetUserId = request.userId,
+                awardType = request.awardType,
+                externalRef = request.externalRef,
+                metadataJson = request.metadataJson
+            )
+
+            val status = when {
+                !result.success -> HttpStatusCode.BadRequest
+                result.awarded -> HttpStatusCode.OK
+                else -> HttpStatusCode.OK
+            }
+
+            call.respond(
+                status,
+                ClaimAwardResponse(
+                    success = result.success,
+                    awarded = result.awarded,
+                    awardType = result.awardType,
+                    amount = result.amount,
+                    externalRef = result.externalRef,
+                    message = result.message
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Failed to claim wallet award for user {}", authenticatedUserId, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request: ${e.message}"))
         }
     }

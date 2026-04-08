@@ -81,6 +81,7 @@ fun Application.routes() {
         getWalletRoute()
         getWalletTransactionsRoute()
         transferCoinsRoute()
+        claimWalletAwardRoute()
 
         // Purchases (premium + coin packs + boosts)
         getPremiumStatusRoute()

@@ -10,6 +10,7 @@ import app.bartering.features.wallet.model.TransactionType
 import app.bartering.features.wallet.model.Wallet
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -116,6 +117,26 @@ class WalletDaoImpl : WalletDao {
             .limit(limit)
             .offset(offset)
             .map(::rowToLedgerTransaction)
+    }
+
+    override suspend fun existsTransactionByExternalRef(externalRef: String): Boolean = dbQuery {
+        LedgerTransactionsTable
+            .selectAll()
+            .where { LedgerTransactionsTable.externalRef eq externalRef }
+            .limit(1)
+            .any()
+    }
+
+    override suspend fun hasReceivedBonusWithExternalRefPrefix(userId: String, externalRefPrefix: String): Boolean = dbQuery {
+        LedgerTransactionsTable
+            .selectAll()
+            .where {
+                (LedgerTransactionsTable.toUserId eq userId) and
+                    (LedgerTransactionsTable.type eq TransactionType.BONUS.value)
+            }
+            .any { row ->
+                row[LedgerTransactionsTable.externalRef]?.startsWith(externalRefPrefix) == true
+            }
     }
 
     private fun rowToWallet(row: ResultRow): Wallet {

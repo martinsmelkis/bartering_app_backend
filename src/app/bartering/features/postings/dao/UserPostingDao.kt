@@ -36,6 +36,11 @@ interface UserPostingDao {
     suspend fun getUserPostings(userId: String, includeExpired: Boolean = false): List<UserPosting>
 
     /**
+     * Gets active (non-expired) posting count for a user.
+     */
+    suspend fun getActivePostingCount(userId: String): Long
+
+    /**
      * Gets all postings (across all users)
      */
     suspend fun getAllPostings(includeExpired: Boolean = false): List<UserPosting>

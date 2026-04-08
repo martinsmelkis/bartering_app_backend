@@ -16,4 +16,8 @@ interface WalletDao {
     suspend fun createLedgerEntries(entries: List<LedgerEntry>): Boolean
 
     suspend fun getTransactionsForUser(userId: String, limit: Int = 50, offset: Long = 0): List<LedgerTransaction>
+
+    suspend fun existsTransactionByExternalRef(externalRef: String): Boolean
+
+    suspend fun hasReceivedBonusWithExternalRefPrefix(userId: String, externalRefPrefix: String): Boolean
 }
