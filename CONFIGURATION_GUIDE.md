@@ -1,228 +1,299 @@
 # Configuration Guide
 
-This guide explains the configurable options for the Barter App Backend.
+This document lists runtime configuration for the current backend codebase.
 
-## Environment Variables
+## Scope
 
-### AI/Ollama Configuration
+This guide covers:
+- Main backend service (`barter_app_server`)
+- Optional dashboard services (`barter_dashboard_admin_compliance`, `barter_dashboard_user_moderation`)
+- Local Docker and production-style deployment overrides
 
-#### `OLLAMA_HOST`
+## Configuration Sources and Precedence
 
-The base URL for the Ollama service used for AI embeddings.
+Configuration is resolved in this order:
+1. Environment variables (`System.getenv(...)`)
+2. `resources/application.conf` (dev defaults)
+3. `resources/application.prod.conf` (prod defaults/fallbacks where present)
 
-- **Default (Docker with bridge network)**: `http://ollama:11434`
-- **For host networking (AlmaLinux/DNS issues)**: `http://localhost:11434`
-- **Example**:
-  ```bash
-  export OLLAMA_HOST=http://localhost:11434
-  ```
+## Main Backend Environment Variables
 
-#### `OLLAMA_EMBED_MODEL`
+### Required in most real deployments
 
-The embedding model to use for generating semantic embeddings.
+#### `MAILJET_API_KEY`
+Mailjet public API key for email sending.
 
-- **Default**: `mxbai-embed-large`
-- **Other options**: `nomic-embed-text`, `all-minilm`, etc.
-- **Example**:
-  ```bash
-  export OLLAMA_EMBED_MODEL=nomic-embed-text
-  ```
+#### `MAILJET_API_SECRET`
+Mailjet private API key for email sending.
 
-### Database Configuration
+> `EMAIL_PROVIDER` currently supports `mailjet` in runtime module wiring.
+
+### Core runtime / behavior
+
+#### `ENVIRONMENT`
+- **Used for**: CORS behavior
+- **Value**: `development` enables permissive CORS; other values keep CORS disabled (same-domain production assumption)
+
+#### `LOG_LEVEL`
+- Common values: `DEBUG`, `INFO`, `WARN`, `ERROR`
+
+### Database
 
 #### `POSTGRES_USER`
-
-PostgreSQL username.
-
-- **Default**: `postgres`
+Database username.
 
 #### `POSTGRES_PASSWORD`
-
-PostgreSQL password.
-
-- **Default**: `Test1234` (change in production!)
+Database password.
 
 #### `POSTGRES_DB`
+**Important:** in current backend code this is treated as JDBC URL (not plain DB name) when provided to the app process.
 
-PostgreSQL database name.
+- Example valid value:
+  - `jdbc:postgresql://postgres:5432/mainDatabase`
 
-- **Default**: `mainDatabase`
+If you do not set `POSTGRES_DB` for the app process, backend falls back to `database.MainDatabaseUrl` in `application.conf` / `application.prod.conf`.
 
-### LOGBACK ###
+### AI / Ollama
 
-#### LOG_LEVEL
+#### `OLLAMA_HOST`
+Base URL for Ollama service.
+- Docker bridge example: `http://ollama:11434`
+- Host-network example: `http://localhost:11434`
 
-DEBUG, INFO, WARN, ERROR
+#### `OLLAMA_EMBED_MODEL`
+Embedding model name.
+- Default in config: `mxbai-embed-large`
 
-### FCM ###
+#### `OLLAMA_TRANSLATION_MODEL`
+Translation model name used by translation service.
+- Recommended explicit value: `llama3.2:3b`
 
-- FIREBASE_CREDENTIALS_PATH=/app
-- FIREBASE_CREDENTIALS_FILE=firebase-credentials.json
-- PUSH_PROVIDER=firebase
+### Image storage
 
-## Configuration Files
+#### `IMAGE_STORAGE_TYPE`
+- `local` (default)
+- `firebase`
 
-### Development
+#### `IMAGE_UPLOAD_DIR`
+Filesystem path for local storage.
+- Default: `uploads/images`
 
-Configuration is loaded from `resources/application.conf` with defaults suitable for Docker
-development.
+#### `IMAGE_BASE_URL`
+Base URL for serving local images.
+- Default: `/api/v1/images`
 
-### Production
+If `IMAGE_STORAGE_TYPE=firebase`, also configure:
 
-Configuration is loaded from `resources/application.prod.conf` which uses environment variables:
+#### `FIREBASE_SERVICE_ACCOUNT_KEY`
+Path to Firebase service account JSON used by image storage.
 
-```hocon
-ai {
-  ollama {
-    host = ${?OLLAMA_HOST}
-    host = "http://localhost:11434"  # Fallback default
-    embedModel = ${?OLLAMA_EMBED_MODEL}
-    embedModel = "mxbai-embed-large"  # Fallback default
-  }
-}
-```
+#### `FIREBASE_STORAGE_BUCKET`
+Firebase storage bucket name.
 
-## Docker Compose Setup
+### Push notifications (FCM)
 
-### Development (docker-compose.yml)
+#### `PUSH_PROVIDER`
+- Current supported value: `firebase`
 
-```yaml
-environment:
-  - OLLAMA_HOST=http://ollama:11434
-  - OLLAMA_EMBED_MODEL=mxbai-embed-large
-```
+#### `FIREBASE_CREDENTIALS_PATH`
+Directory where FCM credentials JSON is mounted.
 
-### Production (docker-compose.prod.yml or deploy/docker-compose.yml)
+#### `FIREBASE_CREDENTIALS_FILE`
+FCM credentials filename.
 
-For AlmaLinux servers with DNS blocking:
+### Email service (Mailjet)
 
-```yaml
-environment:
-  OLLAMA_HOST: http://localhost:11434
-  OLLAMA_EMBED_MODEL: mxbai-embed-large
-```
+#### `EMAIL_PROVIDER`
+- Current supported value: `mailjet`
+- Default in DI module: `mailjet`
 
-## Using .env File
+#### `MAILJET_FROM_EMAIL`
+Default sender address.
+- Default: `info@bartering.app`
 
-Create a `.env` file in your project root (copy from `.env.example`):
+#### `MAILJET_SANDBOX`
+- `true` / `false`
+- Default: `false`
+
+#### Optional Mailjet compatibility variables
+- `MJ_APIKEY_PUBLIC` (fallback for API key)
+- `MJ_APIKEY_PRIVATE` (fallback for API secret)
+
+### Inactive user cleanup
+
+#### `INACTIVE_USER_AUTO_DELETE`
+Enable/disable auto-delete for inactive users.
+- Default: `false`
+
+#### `INACTIVE_USER_AUTO_DELETE_THRESHOLD`
+Days before inactive user auto-delete.
+- Default: `180`
+
+### Compliance / retention
+
+#### `RETENTION_CHAT_MESSAGES_DAYS`
+Default: `7`
+
+#### `RETENTION_CHAT_ANALYTICS_DAYS`
+Default: `90`
+
+#### `RETENTION_CHAT_READ_RECEIPTS_DAYS`
+Default: `30`
+
+#### `RETENTION_RISK_DEVICE_TRACKING_DAYS`
+Default: `90`
+
+#### `RETENTION_RISK_IP_TRACKING_DAYS`
+Default: `90`
+
+#### `RETENTION_RISK_LOCATION_CHANGES_DAYS`
+Default: `90`
+
+#### `RETENTION_RISK_PATTERNS_DAYS`
+Default: `180`
+
+#### `RETENTION_POSTING_HARD_DELETE_GRACE_DAYS`
+Default: `30`
+
+#### `RETENTION_BACKUP_DAYS`
+Default: `30`
+
+#### `RETENTION_BACKUP_POLICY_ENFORCEMENT`
+Default: `true`
+
+#### `RETENTION_ORCHESTRATOR_INTERVAL_HOURS`
+Default: `24`
+
+#### `GDPR_DSAR_SLA_DAYS`
+Default: `30`
+
+### Federation admin bootstrap hardening
+
+#### `FEDERATION_INIT_TOKEN`
+Required for federation initialization endpoint auth.
+
+#### `FEDERATION_ADMIN_IP_INIT_ALLOWLIST`
+Comma-separated allowlist for federation admin/bootstrap access.
+
+### Analytics
+
+#### `ANALYTICS_HASH_SALT`
+Salt used for analytics hashing.
+- Set explicitly in production.
+
+## Dashboard Service Configuration
+
+Both dashboard services use the same env variable set:
+
+### Required for usable login/session security
+
+#### `DASHBOARD_ADMIN_CREDENTIALS`
+Semicolon-separated list of credentials in format:
+- `username:sha256:<hex_hash>`
+
+#### `DASHBOARD_SESSION_ENCRYPTION_KEY_B64`
+Base64 key for cookie encryption.
+- Expected decoded size: 16 bytes
+
+#### `DASHBOARD_SESSION_SIGNING_KEY_B64`
+Base64 key for cookie signing.
+- Expected decoded size: 32 bytes
+
+### Required for backend API calls
+
+#### `DASHBOARD_BACKEND_BASE_URL`
+Backend base URL, e.g. `http://barter_app_server:8081`.
+
+#### `DASHBOARD_ADMIN_USER_ID`
+Admin user ID used when signing internal API requests.
+
+#### `DASHBOARD_ADMIN_PRIVATE_KEY_HEX`
+Admin private key (hex) used for signed internal API requests.
+
+### Optional
+
+#### `DASHBOARD_SECURE_COOKIES`
+- `true` in HTTPS production
+- `false` for local HTTP dev
+
+#### `DASHBOARD_SESSION_TTL_SECONDS`
+- Default: `3600`
+
+## Docker Notes (Current Repository)
+
+### Local dev compose
+`docker-compose.yml` defines defaults for:
+- Postgres container
+- Ollama container/model pull
+- Backend + dashboard services
+
+### Federation/dev variant
+`docker-compose.federation.yml` mirrors local setup for secondary/federation-oriented local runs.
+
+### Security reminder
+Do not commit secrets into compose files or repository env files.
+Use local untracked `.env`/secret management instead.
+
+## Example `.env` (safe template)
 
 ```bash
-# AI Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_EMBED_MODEL=mxbai-embed-large
-
-# Database
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=YourSecurePasswordHere
-POSTGRES_DB=mainDatabase
-```
-
-Then run:
-
-```bash
-docker-compose --env-file .env up
-```
-
-## Network Modes
-
-### Bridge Network (Default for Development)
-
-Services communicate via service names:
-
-- `OLLAMA_HOST=http://ollama:11434`
-
-### Host Network (AlmaLinux/Production)
-
-Services communicate via localhost:
-
-- `OLLAMA_HOST=http://localhost:11434`
-- Add `network_mode: host` to docker-compose.yml
-
-## Testing Configuration
-
-To verify your Ollama configuration is working:
-
-```bash
-# Check if Ollama is accessible
-curl http://localhost:11434/api/tags
-
-# Test embedding generation
-curl http://localhost:11434/api/embeddings -d '{
-  "model": "mxbai-embed-large",
-  "prompt": "test"
-}'
-```
-
-## Troubleshooting
-
-### DNS Issues on AlmaLinux
-
-If you see DNS resolution errors:
-
-1. Use `network_mode: host` in docker-compose
-2. Set `OLLAMA_HOST=http://localhost:11434`
-3. Ensure all services use localhost instead of service names
-
-### Embedding Model Not Found
-
-If you see "model not found" errors:
-
-1. Pull the model manually:
-   ```bash
-   docker exec -it ollama_server ollama pull mxbai-embed-large
-   ```
-2. Or change `OLLAMA_EMBED_MODEL` to an already downloaded model
-
-### Connection Refused
-
-If services can't connect to Ollama:
-
-1. Verify Ollama is running: `docker ps | grep ollama`
-2. Check logs: `docker logs ollama_server`
-3. Verify the host is correct for your network mode
-
-## Example .env
-
-# Database Configuration
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_secure_password_here
-POSTGRES_DB=mainDatabase
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-
-# Environment
+# Runtime mode
 ENVIRONMENT=development
+LOG_LEVEL=DEBUG
 
-# Inactive User Management
-# Enable auto-deletion of users inactive for specified threshold
+# Database (JDBC URL when passed as POSTGRES_DB)
+POSTGRES_DB=jdbc:postgresql://postgres:5432/mainDatabase
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=change_me
+
+# AI
+OLLAMA_HOST=http://ollama:11434
+OLLAMA_EMBED_MODEL=mxbai-embed-large
+OLLAMA_TRANSLATION_MODEL=llama3.2:3b
+
+# Notifications
+EMAIL_PROVIDER=mailjet
+MAILJET_API_KEY=your_mailjet_public_key
+MAILJET_API_SECRET=your_mailjet_private_key
+MAILJET_FROM_EMAIL=info@bartering.app
+PUSH_PROVIDER=firebase
+FIREBASE_CREDENTIALS_PATH=/app
+FIREBASE_CREDENTIALS_FILE=firebase-credentials.json
+
+# Image storage (local)
+IMAGE_STORAGE_TYPE=local
+IMAGE_UPLOAD_DIR=/uploads/images
+IMAGE_BASE_URL=/api/v1/images
+
+# Inactive user cleanup
 INACTIVE_USER_AUTO_DELETE=false
-
-# Days of inactivity before auto-deletion (default: 180)
 INACTIVE_USER_AUTO_DELETE_THRESHOLD=180
 
-# Days before sending reactivation email (default: 60)
-INACTIVE_USER_REACTIVATION_EMAIL_DAYS=60
+# Compliance retention
+RETENTION_ORCHESTRATOR_INTERVAL_HOURS=24
+RETENTION_BACKUP_POLICY_ENFORCEMENT=true
+GDPR_DSAR_SLA_DAYS=30
 
-# Days before sending deletion warning (default: 120)
-INACTIVE_USER_WARNING_EMAIL_DAYS=120
+# Federation bootstrap
+FEDERATION_INIT_TOKEN=replace_with_long_random_secret
+FEDERATION_ADMIN_IP_INIT_ALLOWLIST=127.0.0.1,::1,192.168.1.0/24
 
-# Firebase Configuration
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-credentials.json
+# Optional dashboards
+# DASHBOARD_BACKEND_BASE_URL=http://barter_app_server:8081
+# DASHBOARD_ADMIN_CREDENTIALS=admin:sha256:<hash>
+# DASHBOARD_ADMIN_USER_ID=<admin-user-id>
+# DASHBOARD_ADMIN_PRIVATE_KEY_HEX=<private-key-hex>
+# DASHBOARD_SESSION_ENCRYPTION_KEY_B64=<base64-16-byte-key>
+# DASHBOARD_SESSION_SIGNING_KEY_B64=<base64-32-byte-key>
+# DASHBOARD_SECURE_COOKIES=false
+# DASHBOARD_SESSION_TTL_SECONDS=3600
+```
 
-# Email Provider Configuration
-EMAIL_PROVIDER=aws_ses  # Options: sendgrid, aws_ses, smtp
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_SES_FROM_EMAIL=noreply@yourdomain.com
+## Quick Validation Checklist
 
-# Push Notification Provider
-PUSH_PROVIDER=firebase  # Options: firebase, onesignal, aws_sns
-
-# AI Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_EMBED_MODEL=mxbai-embed-large
-
-# Server Configuration
-SERVER_PORT=8081
-SERVER_HOST=0.0.0.0
+- Backend starts and connects to DB (no Flyway/Hikari errors)
+- Ollama `/api/tags` reachable from backend network context
+- Mailjet key/secret present when email features are enabled
+- Firebase credentials file exists when push is enabled
+- If dashboards are enabled, session keys and hashed admin credentials are configured
+- Federation init token and allowlist are set before exposing admin/bootstrap endpoints

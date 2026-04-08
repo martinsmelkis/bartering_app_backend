@@ -7,7 +7,7 @@ and intelligent match notifications.
 
 Use together with [bartering_app](https://github.com/martinsmelkis/bartering_app).
 
-## 🎯 Use Cases
+## 🎯 Capabilities
 
 ### Primary Use Cases
 
@@ -16,111 +16,142 @@ Use together with [bartering_app](https://github.com/martinsmelkis/bartering_app
 - Users can offer skills they possess (e.g., guitar lessons, web design, language tutoring)
 - Search for skills they want to learn from nearby community members
 - AI-powered matching connects Users based on interests, what they offer, and location
+- Coordinate via real-time encrypted chat
+- Manage trust with transactions, reviews, reputation, blocking, and reporting
 
 **2. Service & Item Bartering**
 - Post offers for services or physical items available for trade
 - Discover nearby offers through location-based search
 - Semantic matching suggests relevant trades based on user profiles
 
-**3. Attribute match and Posting Notifications**
+**3. AI-Powered Profile Generation**
+- Users complete onboarding questions about their personality and interests
+- AI embedding model analyzes responses and matches against master attribute list
+- System automatically populates user profile with relevant attributes
+- Continuous similarity scoring enables intelligent user and posting discovery
+
+**4. Geospatial Intelligence**
+- PostGIS extension for efficient location-based queries
+- User profiles store locations as `POINT` geometry types
+- Nearby user and posting discovery with configurable radius
+- Distance-based sorting and filtering
+
+**5. Real-Time Communication**
+- WebSocket-based chat with end-to-end encryption support
+- Offline message storage and delivery
+- Connection management with in-memory caching (Redis-ready for scaling)
+- Public key caching for cryptographic operations
+
+**6. Attribute match and Posting Notifications**
 - Automatic notifications when matching items are posted
 - Smart matching algorithm with keyword, price, and location filtering
-- Beautiful HTML emails and push notifications
-- Daily digest option for match summaries
+- E-mails and push notifications
 - Full user control over notification preferences
 
-**4. Community Building**
+**7. Community Building**
 - Real-time encrypted chat for coordinating exchanges
 - Relationship management (connections, blocked users)
 - Location-aware discovery to build local networks
 
-**5. Decentralized Federation** (In Development)
+**8. Decentralized Federation**
 - Server-to-server federation for connecting independent barter communities
 - Cross-server user discovery and posting search
 - Trust-based federation with cryptographic verification
 
+**9. Safety and compliance**
+
+- Signature-authenticated API access
+- GDPR data export + account deletion flows
+- Compliance admin routes (legal holds, retention evidence, audit search)
+- Retention orchestrator with configurable policies
+
 ## 🏗️ Architecture
 
-### Core Architecture Principles
+### Project style
 
 - **Feature-Based Organization**: Each feature is self-contained with its own models, DAOs, routes, and services
 - **Dependency Injection**: Koin for clean, testable dependency management
 - **SOLID Principles**: Interfaces and implementations separated for maintainability
 - **Attribute-Based Model**: Flexible system where skills, interests, and items are unified as "attributes"
 
-### Key Architectural Patterns
+### Active backend modules
 
-**1. Attribute System**
-The application centers around a flexible attribute-based model:
-- **`attributes` table**: Master dictionary of all skills, interests, and items
-- **`user_attributes` table**: Links users to attributes with type (`SEEKING`, `PROVIDING`, `SHARING`)
-- **Semantic Embeddings**: Each attribute has a 1024-dimensional vector for AI-powered matching
-- **Categorization**: Flexible many-to-many relationship between attributes and categories
+- Authentication
+- AI + attribute parsing
+- Analytics (daily activity stats)
+- Profiles + presence
+- Categories/attributes
+- Postings + image upload/serve
+- Notifications (email + push + preference routes)
+- Chat + encrypted file transfer
+- Relationships + block/report moderation signals
+- Reviews + reputation + risk analysis
+- Migration (email recovery and device transfer)
+- Wallet (coins)
+- Purchases (premium, coin packs, boosts)
+- Compliance admin
+- Federation (server-to-server + federation admin)
+- Health check
 
-**2. AI-Powered Profile Generation**
-- Users complete onboarding questions about their personality and interests
-- AI embedding model analyzes responses and matches against master attribute list
-- System automatically populates user profile with relevant attributes
-- Continuous similarity scoring enables intelligent user and posting discovery
+### Dashboards
 
-**3. Geospatial Intelligence**
-- PostGIS extension for efficient location-based queries
-- User profiles store locations as `POINT` geometry types
-- Nearby user and posting discovery with configurable radius
-- Distance-based sorting and filtering
+This repository also includes dashboard subprojects:
+- `dashboards/admin_compliance`
+- `dashboards/user_moderation`
 
-**4. Real-Time Communication**
-- WebSocket-based chat with end-to-end encryption support
-- Offline message storage and delivery
-- Connection management with in-memory caching (Redis-ready for scaling)
-- Public key caching for cryptographic operations
+## 🛠️ Tech Stack
 
-## 🛠️ Technology Stack
+- Kotlin `2.2.0`
+- Ktor `3.2.3`
+- JDK `21`
+- Koin `4.1.0`
+- PostgreSQL driver `42.7.5`
+- Exposed `1.0.0`
+- Flyway `11.16.0`
+- HikariCP `5.1.0`
+- Firebase Admin SDK `9.3.0`
+- Google Cloud Storage `2.30.1`
 
-### Core Framework & Language
-- **Kotlin 2.2.0**: Modern, type-safe JVM language
-- **Ktor 3.2.3**: Lightweight, asynchronous web framework
-- **Netty**: High-performance embedded server
-- **JDK 21** (Amazon Corretto): Java runtime
+## 🗄️ Data Model (high level)
 
-### Database & ORM
-- **PostgreSQL 42.7.5**: Primary relational database
-- **PostGIS**: Geospatial extension for location queries
-- **pgvector 0.1.4**: Vector similarity search for embeddings
-- **Exposed 0.61.0**: Type-safe SQL framework
-- **HikariCP 5.1.0**: High-performance connection pooling
-- **Flyway 11.16.0**: Database migrations
+- User auth/profile/attributes/categories
+- User postings + posting-attribute links
+- Chat/offline messages + encrypted files
+- User relationships + block/report signals
+- Reviews, transactions, reputation, risk-pattern data
+- Notification preferences/tokens
+- Wallet balances + wallet transactions
+- Purchase records + premium entitlements
+- Federation identities/servers/cache/audit
+- Compliance audit + legal hold tables
 
-### AI & Embeddings
-- **Ollama**: Local AI model integration for embeddings and semantic matching
-- **Custom embedding pipeline**: Converts text to 1024-dimensional vectors
-- **Semantic similarity**: Cosine similarity for matching users, attributes, and postings
+## 🚀 Getting Started
 
-### Dependency Injection & Testing
-- **Koin 4.1.0**: Lightweight DI framework for Kotlin
-- **JUnit 5**: Modern testing framework
-- **MockK**: Mocking library for Kotlin
-- **Ktor Test**: Framework-specific testing utilities
+### Prerequisites
 
-### Security & Cryptography
-- **BouncyCastle 1.70**: Cryptographic operations and signature verification
-- **Custom Signature Verification**: Public key cryptography for request authentication
-- **PGP**: End-to-end encryption support
+- JDK 21
+- Docker + Docker Compose
+- PostgreSQL (if running outside Docker)
+- Ollama (for embeddings)
 
-### Cloud Services
-- **Firebase Admin SDK 9.3.0**: Authentication and notifications
-- **Google Cloud Storage 2.30.1**: File and image storage
-- **Cloud-ready architecture**: Scalable storage for user-generated content
+### Run locally
 
-### Serialization & Content Negotiation
-- **Jackson 2.20.1**: JSON serialization with date/time support
-- **Kotlinx Serialization 1.8.1**: Native Kotlin serialization
-- **Gson**: Additional JSON support for specific use cases
+1. Clone repository
 
-### Build & Development
-- **Gradle 8**: Build automation with Kotlin DSL support
-- **Shadow JAR**: Fat JAR creation for deployment
-- **Docker**: Container support (configuration included)
+```bash
+git clone https://github.com/martinsmelkis/bartering_app_backend
+cd bartering_app_backend
+```
+
+1. Configure environment variables (see `CONFIGURATION_GUIDE.md`)
+
+2. Start services
+
+```bash
+docker-compose up --build
+```
+
+Main backend default endpoint: `http://0.0.0.0:8081`
 
 ## 📦 Feature Overview
 
@@ -202,126 +233,62 @@ The application centers around a flexible attribute-based model:
 ### 🚧 In Development
 
 **Server Federation**
-- Phase 1 (Complete): Database schema, crypto utilities, and foundation
-- Server-to-server handshake protocol
-- Cross-server user and posting discovery
-- Federated chat message relay
-- Trust levels and scope-based permissions
 - Audit logging for security compliance
 
-## 🗄️ Database Schema Overview
+### Compliance admin
 
-### Core Tables
-- **`user_registration_data`**: Authentication and identity
-- **`user_profiles`**: Profile data with PostGIS location
-- **`attributes`**: Master skills/interests dictionary with embeddings
-- **`user_attributes`**: User-to-attribute relationships with type
-- **`categories`**: Attribute categorization
-- **`attribute_categories_link`**: Many-to-many category relationships
+- `/api/v1/admin/compliance/legal-holds/*`
+- `/api/v1/admin/compliance/retention/*`
+- `/api/v1/admin/compliance/audit/search`
+- `/api/v1/admin/compliance/dsar/evidence/{userId}`
+- `/api/v1/admin/compliance/evidence/summary`
 
-### Marketplace Tables
-- **`user_postings`**: Offers and interests with semantic embeddings
-- **`posting_attributes_link`**: Posting-to-attribute relationships
+### Federation
 
-### Communication Tables
-- **`offline_messages`**: Encrypted message storage for offline delivery
-- **`encrypted_files`**: Secure file metadata and storage
+- Server-to-server: `/federation/v1/*`
+- Federation admin: `/api/v1/federation/admin/*`
 
-### Relationships Tables
-- **`user_relationships`**: Connection and blocking management
+### WebSocket
 
-### Wishlist Tables (V3 Migration)
-- **`wishlist_items`**: User wishlist items with search criteria
-- **`wishlist_matches`**: Match tracking between wishes and postings
-- **`wishlist_notification_settings`**: User notification preferences
+- `WS /chat`
 
-### Notification Tables (To Be Created)
-- **`user_notification_preferences`**: Email/push preferences per user
-- **`user_push_tokens`**: Device tokens for push notifications
-- **`notification_category_preferences`**: Per-category notification settings
+## ⚙️ Configuration
 
-### Federation Tables (In Development)
-- **`local_server_identity`**: Server cryptographic identity
-- **`federated_servers`**: Trusted server registry
-- **`federated_users`**: Cached remote user profiles
-- **`federated_postings`**: Cached remote postings
-- **`federation_audit_log`**: Security audit trail
+Use the dedicated configuration reference:
 
-## 🚀 Getting Started
+- `CONFIGURATION_GUIDE.md`
 
-### Prerequisites
-- JDK 21 (Amazon Corretto recommended)
-- PostgreSQL 14+ with PostGIS and pgvector extensions
-- Gradle 8+
-- Ollama (for AI embeddings)
+It documents currently active environment variables (database, Ollama, image storage, Firebase push, Mailjet, retention/compliance, federation bootstrap, dashboards).
 
-### Installation
+## 📡 API Surface (selected)
 
-1. **Clone the repository**
-```bash
-git clone https://github.com/martinsmelkis/bartering_app_backend
-cd bartering_app_backend
-```
+### Public
 
-2. **Update configuration**
-Configure environment variables in docker-compose and application settings.
+- `GET /public-api/v1/healthCheck`
+- `POST /public-api/v1/authentication/createUser`
 
-3. **Build the application**
-```bash
-docker-compose up --build
-```
+### User-authenticated (signature-verified)
 
-The server will start on `http://0.0.0.0:8081`
+- Authentication/profile management and deletion
+- AI parsing routes (`/api/v1/ai/*`)
+- Postings routes (`/api/v1/postings/*`)
+- Profile discovery/search (`/api/v1/profiles/*`, `/api/v1/similar-profiles`, `/api/v1/complementary-profiles`)
+- Presence routes (`/api/v1/users/*/online-status`, batch presence)
+- Relationships/block/report routes
+- Review/reputation/transaction routes
+- Migration routes (`/api/v1/migration/*`)
+- Wallet routes (`/api/v1/wallet*`)
+- Purchases routes (`/api/v1/purchases/*`)
+- Notifications routes (`/api/v1/notifications/*`, `/api/v1/push/*`)
 
-## 📡 API Endpoints
+## 🔒 Security Notes
 
-### Public Endpoints
-- `GET /public-api/v1/healthCheck` - Server health status
-- `POST /public-api/v1/authentication/createUser` - User registration
-
-### Authenticated Endpoints (with Signature Verification)
-- `GET /api/v1/authentication/userInfo` - Current user info
-- `DELETE /api/v1/authentication/user/{userId}` - Delete user and all associated data (requires signature match)
-- `GET /api/v1/profiles/nearby` - Discover nearby users
-- `POST /api/v1/ai/parse-onboarding` - AI profile generation
-- `POST /api/v1/postings` - Create marketplace posting
-- `GET /api/v1/postings/nearby` - Nearby postings
-- `GET /api/v1/postings/search` - Semantic posting search
-- `POST /api/v1/postings/matches` - Get personalized matches
-
-### WebSocket Endpoints
-- `WS /chat` - Real-time messaging
-
-### Federation Endpoints (In Development)
-- `GET /federation/v1/server-info` - Public server information
-- `POST /federation/v1/handshake` - Establish federation
-- `POST /federation/v1/sync-users` - User data synchronization
-
-## 🔒 Security Features
-
-- **Public Key Authentication**: Custom signature verification for requests
-- **End-to-End Encryption**: Client-side message encryption
-- **PGP/GPG Support (in development)**: For secure data exchange
-- **Rate Limiting Ready**: Architecture supports rate limiting implementation
-- **Audit Logging**: Federation feature includes comprehensive audit trails
-- **CORS Configuration**: Flexible cross-origin resource sharing
-
-## 🧪 Testing
-
-The application includes comprehensive testing infrastructure:
-
-- **Unit Tests**: MockK-based component testing
-- **Integration Tests**: Database and API endpoint testing
-- **Archetype Tests**: User generation and similarity matching tests
-- **Test Data Generation**: Automated test user creation with realistic profiles
-
-Run tests:
-```bash
-./gradlew test
-```
+- Request signature verification on protected routes
+- CORS enabled only for `ENVIRONMENT=development`
+- Compliance admin endpoints require authenticated compliance admin and network allowlist checks
+- Federation admin bootstrap protected by init token + allowlist
 
 ## 📈 Performance Optimizations
-
 - **Connection Pooling**: HikariCP for efficient database connections
 - **Vector Indexing**: HNSW indexes for fast similarity searches
 - **GIN Indexes**: Full-text search with pg_trgm
@@ -329,68 +296,40 @@ Run tests:
 - **Background Tasks**: Automatic cleanup for expired postings and messages, inactive users
 - **Lazy Loading**: Efficient data fetching patterns
 
-## 🔮 Future Enhancements
+## 🧪 Testing
 
-- [ ] Batch notification digests (daily/weekly summaries)
-- [ ] Profile attribute matching (notify when users add matching skills)
-- [ ] Price drop alerts for existing matches
-- [ ] Postings/match templates for common items
-- [ ] Complete email provider SDK implementations
+Run tests:
 
-### Infrastructure
-- [ ] Complete server federation implementation (Phases 2-6)
-- [ ] Redis integration for distributed caching and connection management
-- [ ] Message queue (RabbitMQ/Kafka) for reliable message delivery
-- [ ] Advanced analytics and recommendation engine
-- [ ] User reputation and rating system
-- [ ] Multi-language support (localization framework in place)
-- [ ] Admin dashboard for moderation
-- [ ] Advanced search filters and saved searches
+```bash
+./gradlew test
+```
 
-## 📚 Documentation
+## 📚 Documentation Map
 
-Additional documentation available in the codebase:
+### Root docs
 
-### Feature Documentation
-- `src/org/barter/features/notifications/README.md` - **Notifications infrastructure guide**
-- `DOCS/NOTIFICATIONS_IMPLEMENTATION.md` - **Notification system implementation**
-- `src/org/barter/features/postings/README.md` - Posting system details
-- `src/org/barter/features/chat/README.md` - Chat implementation guide
-- `src/org/barter/features/encryptedfiles/FILE_SHARING_GUIDE.md` - File sharing docs
-- `src/org/barter/features/relationships/RELATIONSHIPS_API.md` - Relationship management
+- `CONFIGURATION_GUIDE.md` — current runtime configuration
+- `DOCS/DEPLOYMENT_GUIDE_PRODUCTION.md` — production deployment guide
+- `DOCS/DEPLOYMENT_GUIDE_VPS_DOCKER.md` — VPS + Docker deployment
+- `DOCS/INACTIVE_USER_MANAGEMENT.md` — inactive-user lifecycle
+- `DOCS/USER_DELETION_API.md` — account deletion API/GDPR flow
 
-### API Documentation
-- `DOCS/USER_DELETION_API.md` - User account deletion and GDPR compliance
+### Feature docs
 
-### Architecture Documentation
-- `DOCS/FEDERATION_FEATURE_SUMMARY.md` - Complete federation architecture
-- `DOCS/V2__Federation.sql` - Federation database schema
+- `src/app/bartering/features/notifications/README.md`
+- `src/app/bartering/features/postings/README.md`
+- `src/app/bartering/features/chat/README.md`
+- `src/app/bartering/features/encryptedfiles/FILE_SHARING_GUIDE.md`
+- `src/app/bartering/features/relationships/RELATIONSHIPS_API.md`
+- `src/app/bartering/features/federation/README.md`
 
 ## 🤝 Contributing
 
-This project follows SOLID principles and clean architecture patterns. When contributing:
-1. Maintain feature-based organization
-2. Use dependency injection via Koin
-3. Write comprehensive tests
-4. Follow existing code style and patterns
-5. Update documentation for new features
+1. Keep feature-based structure and existing conventions
+2. Prefer DI via Koin
+3. Add/adjust tests with code changes
+4. Update docs for behavioral/config/API changes
 
 ## 📄 License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-Copyright 2026 Barter App Backend Contributors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
----
+Licensed under Apache License 2.0 — see [LICENSE](LICENSE).
