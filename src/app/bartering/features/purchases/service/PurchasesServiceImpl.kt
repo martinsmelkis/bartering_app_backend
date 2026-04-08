@@ -8,6 +8,7 @@ import app.bartering.features.purchases.model.UserPurchase
 import app.bartering.features.wallet.model.TransactionType
 import app.bartering.features.wallet.service.WalletService
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
 
@@ -15,6 +16,23 @@ class PurchasesServiceImpl(
     private val purchasesDao: PurchasesDao,
     private val walletService: WalletService
 ) : PurchasesService {
+
+    private data class VisibilityBoostDefinition(
+        val canonicalType: String,
+        val costCoins: Long,
+        val durationHours: Long
+    )
+
+    private val visibilityBoostDefinitionsByType = mapOf(
+        // Existing backend types
+        "single_24h" to VisibilityBoostDefinition("single_24h", costCoins = 50L, durationHours = 24L),
+        "single_72h" to VisibilityBoostDefinition("single_72h", costCoins = 120L, durationHours = 72L),
+        "weekend" to VisibilityBoostDefinition("weekend", costCoins = 180L, durationHours = 72L),
+
+        // Client compatibility aliases from create_posting_screen.dart
+        "posting_visibility_3_days" to VisibilityBoostDefinition("posting_visibility_3_days", costCoins = 20L, durationHours = 72L),
+        "posting_visibility_7_days" to VisibilityBoostDefinition("posting_visibility_7_days", costCoins = 50L, durationHours = 168L)
+    )
 
     private val premiumLifetimePriceMinorByCurrency = mapOf(
         "EUR" to 999L,
@@ -26,12 +44,6 @@ class PurchasesServiceImpl(
         "coins_100" to CoinPackDefinition(coinAmount = 100L, priceMinor = mapOf("EUR" to 199L, "USD" to 199L, "GBP" to 179L)),
         "coins_500" to CoinPackDefinition(coinAmount = 500L, priceMinor = mapOf("EUR" to 799L, "USD" to 799L, "GBP" to 699L)),
         "coins_1200" to CoinPackDefinition(coinAmount = 1200L, priceMinor = mapOf("EUR" to 1499L, "USD" to 1499L, "GBP" to 1299L))
-    )
-
-    private val visibilityBoostCostByType = mapOf(
-        "single_24h" to 50L,
-        "single_72h" to 120L,
-        "weekend" to 180L
     )
 
     private data class CoinPackDefinition(
@@ -75,9 +87,9 @@ class PurchasesServiceImpl(
             isLifetime = true,
             grantedByPurchaseId = purchase.id,
             grantedAt = now,
+            expiresAt = null,
             updatedAt = now
         )
-
         val entitlementUpdated = purchasesDao.upsertPremiumEntitlement(entitlement)
         if (!entitlementUpdated) return null
 
@@ -150,7 +162,8 @@ class PurchasesServiceImpl(
         metadataJson: String?
     ): UserPurchase? {
         val normalizedBoostType = boostType.trim().lowercase(Locale.ROOT)
-        val expectedCostCoins = visibilityBoostCostByType[normalizedBoostType] ?: return null
+        val boostDefinition = visibilityBoostDefinitionsByType[normalizedBoostType] ?: return null
+        val expectedCostCoins = boostDefinition.costCoins
         if (costCoins != expectedCostCoins) return null
 
         val now = Instant.now()
@@ -173,7 +186,7 @@ class PurchasesServiceImpl(
         val created = purchasesDao.createPurchase(purchase)
         if (!created) return null
 
-        val boostMetadata = "{\"type\":\"purchase_boost\",\"boostType\":\"$normalizedBoostType\",\"purchaseId\":\"$purchaseId\",\"payload\":${metadataJson ?: "null"}}"
+        val boostMetadata = "{\"type\":\"purchase_boost\",\"boostType\":\"$normalizedBoostType\",\"canonicalBoostType\":\"${boostDefinition.canonicalType}\",\"purchaseId\":\"$purchaseId\",\"payload\":${metadataJson ?: "null"}}"
         val spent = walletService.spendCoins(
             userId = userId,
             amount = expectedCostCoins,
@@ -185,6 +198,28 @@ class PurchasesServiceImpl(
             purchasesDao.updatePurchaseStatus(purchaseId, PurchaseStatus.FAILED)
             return null
         }
+
+        val boostDurationHours = boostDefinition.durationHours
+        val entitlementExpiresAt = now.plus(boostDurationHours, ChronoUnit.HOURS)
+
+        val existingEntitlement = purchasesDao.getPremiumEntitlement(userId)
+        val existingExpiresAt = existingEntitlement.expiresAt
+        val effectiveExpiresAt = if (existingExpiresAt != null && existingExpiresAt.isAfter(entitlementExpiresAt)) {
+            existingExpiresAt
+        } else {
+            entitlementExpiresAt
+        }
+
+        val updatedEntitlement = PremiumEntitlement(
+            userId = userId,
+            isPremium = existingEntitlement.isPremium,
+            isLifetime = existingEntitlement.isLifetime,
+            grantedByPurchaseId = purchaseId,
+            grantedAt = now,
+            expiresAt = if (existingEntitlement.isLifetime) null else effectiveExpiresAt,
+            updatedAt = now
+        )
+        purchasesDao.upsertPremiumEntitlement(updatedEntitlement)
 
         purchasesDao.updatePurchaseStatus(
             purchaseId,

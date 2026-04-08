@@ -412,6 +412,11 @@ fun Route.updateUserConsentRoute() {
             userProfileDao.updateProfile(
                 request.userId,
                 UserProfileUpdateRequest(
+                    name = null,
+                    latitude = null,
+                    longitude = null,
+                    attributes = null,
+                    profileKeywordDataMap = null,
                     locationConsent = request.locationConsent,
                     aiProcessingConsent = request.aiProcessingConsent,
                     analyticsCookiesConsent = request.analyticsCookiesConsent,

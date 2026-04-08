@@ -18,6 +18,7 @@ import app.bartering.features.attributes.dao.AttributesDaoImpl
 import app.bartering.features.attributes.model.UserAttributeType
 import app.bartering.features.categories.dao.CategoriesDaoImpl
 import app.bartering.features.profile.db.*
+import app.bartering.features.purchases.dao.PurchasesDao
 import app.bartering.features.reviews.model.AccountType
 import app.bartering.model.BidirectionalMatchType
 import app.bartering.model.Quadruple
@@ -45,6 +46,7 @@ class UserProfileDaoImpl : UserProfileDao {
     private val reviewDao: app.bartering.features.reviews.dao.ReviewDao by inject(
         app.bartering.features.reviews.dao.ReviewDao::class.java
     )
+    private val purchasesDao: PurchasesDao by inject(PurchasesDao::class.java)
 
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
@@ -244,17 +246,24 @@ class UserProfileDaoImpl : UserProfileDao {
         }
     }
 
-    override suspend fun updateProfile(userId: String, request: UserProfileUpdateRequest):
-            String = dbQuery {
+    override suspend fun updateProfile(userId: String, request: UserProfileUpdateRequest): String {
+        val shouldRegenerateSemanticEmbeddings = request.aiProcessingConsent == true
+
+        val finalName = dbQuery {
 
         // Check if this is a new user profile (doesn't exist yet)
         val existingProfile = UserProfilesTable
-            .select(UserProfilesTable.userId, UserProfilesTable.name)
+            .select(
+                UserProfilesTable.userId,
+                UserProfilesTable.name,
+                UserProfilesTable.profileKeywordDataMap
+            )
             .where { UserProfilesTable.userId eq userId }
             .singleOrNull()
 
         val isNewProfile = existingProfile == null
         val existingName = existingProfile?.getOrNull(UserProfilesTable.name)
+        val existingProfileKeywordDataMap = existingProfile?.getOrNull(UserProfilesTable.profileKeywordDataMap)
 
         // Generate default username if needed (new user with no name provided)
         val finalName = when {
@@ -306,8 +315,12 @@ class UserProfileDaoImpl : UserProfileDao {
                     .also { p -> p.srid = 4326 }
             }
 
-            // Always set profileKeywordDataMap to avoid null constraint violation
-            table[profileKeywordDataMap] = extendedMap
+            // Preserve existing keyword map on consent-only/profile-only updates
+            table[profileKeywordDataMap] = if (request.profileKeywordDataMap != null) {
+                extendedMap
+            } else {
+                existingProfileKeywordDataMap ?: linkedMapOf()
+            }
             request.selfDescription?.let { description ->
                 table[UserProfilesTable.selfDescription] = description.take(128)
             }
@@ -367,6 +380,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     it[updatedAt] = java.time.Instant.now()
                 }
             }
+
         }
 
         request.attributes?.forEach { attr ->
@@ -387,7 +401,16 @@ class UserProfileDaoImpl : UserProfileDao {
             updateSemanticProfile(userId, UserAttributeType.PROFILE)
         }
 
-        finalName ?: ""
+            finalName ?: ""
+        }
+
+        if (shouldRegenerateSemanticEmbeddings) {
+            updateSemanticProfile(userId, UserAttributeType.PROVIDING)
+            updateSemanticProfile(userId, UserAttributeType.SEEKING)
+            updateSemanticProfile(userId, UserAttributeType.PROFILE)
+        }
+
+        return finalName
     }
 
     /**
@@ -533,7 +556,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         log.debug("Returning {} nearby profiles (after blocked + activity filtering)", filteredResults.size)
 
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, purchasesDao, reviewDao)
     }
 
     override suspend fun getSimilarProfiles(
@@ -602,7 +625,7 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Returning {} similar profiles", results.size)
 
         // Apply online boost and set online status
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, purchasesDao, reviewDao)
     }
 
     override suspend fun getHelpfulProfiles(
@@ -671,7 +694,7 @@ class UserProfileDaoImpl : UserProfileDao {
         log.debug("Returning {} complementary profiles", results.size)
 
         // Apply online boost and set online status
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(results, reputationDao, purchasesDao, reviewDao)
     }
 
     /**
@@ -883,7 +906,7 @@ class UserProfileDaoImpl : UserProfileDao {
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
 
         // Apply online boost and set online status
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, purchasesDao, reviewDao)
     }
 
     /**
@@ -1029,7 +1052,7 @@ class UserProfileDaoImpl : UserProfileDao {
         val penalized = UserActivityFilter.applyActivityPenalty(blockedFiltered)
 
         // Apply online boost and set online status
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(penalized, reputationDao, purchasesDao, reviewDao)
     }
 
     private suspend fun getRandomizedAttributeProfiles(
@@ -1247,13 +1270,19 @@ class UserProfileDaoImpl : UserProfileDao {
             if (attributeType != UserAttributeType.PROFILE) {
 
                 val semanticProfileHashes = UserSemanticProfilesTable
-                    .select(UserSemanticProfilesTable.hashNeeds,
-                        UserSemanticProfilesTable.hashHaves)
+                    .select(
+                        UserSemanticProfilesTable.hashNeeds,
+                        UserSemanticProfilesTable.hashHaves,
+                        UserSemanticProfilesTable.embeddingNeeds,
+                        UserSemanticProfilesTable.embeddingHaves
+                    )
                     .where { UserSemanticProfilesTable.userId eq userId }
                     .firstOrNull()
 
                 val hashCol = if (attributeType == UserAttributeType.SEEKING)
                     UserSemanticProfilesTable.hashNeeds else UserSemanticProfilesTable.hashHaves
+                val embeddingCol = if (attributeType == UserAttributeType.SEEKING)
+                    UserSemanticProfilesTable.embeddingNeeds else UserSemanticProfilesTable.embeddingHaves
 
                 // 1. Fetch all of the user's attributes of a specific type (e.g., all 'PROVIDING' attributes).
                 val userAttributes = UserAttributesTable
@@ -1265,7 +1294,9 @@ class UserProfileDaoImpl : UserProfileDao {
                 }
 
                 val hash = if (resultMap.isNotEmpty()) HashUtils.sha256(resultMap) else null
-                if (hash != null && hash == (semanticProfileHashes?.get(hashCol) ?: "")) {
+                val existingHash = semanticProfileHashes?.get(hashCol)
+                val existingEmbedding = semanticProfileHashes?.get(embeddingCol)
+                if (hash != null && hash == existingHash && existingEmbedding != null) {
                     log.debug("No changes to semantic haves/needs {} for userId={}", hashCol, userId)
                     return@dbQuery
                 }
@@ -1324,12 +1355,14 @@ class UserProfileDaoImpl : UserProfileDao {
                     }
 
                     val semanticProfileHashes = UserSemanticProfilesTable
-                        .select(UserSemanticProfilesTable.hashProfile)
+                        .select(UserSemanticProfilesTable.hashProfile, UserSemanticProfilesTable.embeddingProfile)
                         .where { UserSemanticProfilesTable.userId eq userId }
                         .firstOrNull()
 
                     val hash = if (keywords.isNotEmpty()) HashUtils.sha256(keywords) else null
-                    if (hash != null && hash == (semanticProfileHashes?.get(UserSemanticProfilesTable.hashProfile) ?: "")) {
+                    val existingHash = semanticProfileHashes?.get(UserSemanticProfilesTable.hashProfile)
+                    val existingEmbedding = semanticProfileHashes?.get(UserSemanticProfilesTable.embeddingProfile)
+                    if (hash != null && hash == existingHash && existingEmbedding != null) {
                         log.debug("No changes to semantic profile {} for userId={}", UserSemanticProfilesTable.hashProfile, userId)
                         return@dbQuery
                     }
@@ -1538,7 +1571,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         log.info("Returning {} profiles (after filtering + activity penalty)", filteredResults.size)
 
-        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, reviewDao)
+        return@dbQuery ProfileBoostCalculator.applyBoostAndStatus(filteredResults, reputationDao, purchasesDao, reviewDao)
     }
 
     /**

@@ -12,6 +12,7 @@ object UserPremiumEntitlementsTable : Table("user_premium_entitlements") {
     val isLifetime = bool("is_lifetime").default(false)
     val grantedByPurchaseId = reference("granted_by_purchase_id", UserPurchasesTable.id, onDelete = ReferenceOption.SET_NULL).nullable()
     val grantedAt = timestamp("granted_at").nullable()
+    val expiresAt = timestamp("expires_at").nullable()
     val updatedAt = timestamp("updated_at").default(Instant.now())
 
     override val primaryKey = PrimaryKey(userId)

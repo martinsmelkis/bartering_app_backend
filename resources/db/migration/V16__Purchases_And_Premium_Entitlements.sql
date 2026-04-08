@@ -25,8 +25,15 @@ CREATE TABLE IF NOT EXISTS user_premium_entitlements (
     is_lifetime BOOLEAN NOT NULL DEFAULT FALSE,
     granted_by_purchase_id VARCHAR(36) REFERENCES user_purchases(id) ON DELETE SET NULL,
     granted_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ;
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_user_premium_entitlements_expires_at
+    ON user_premium_entitlements(expires_at);
+
+COMMENT ON COLUMN user_premium_entitlements.expires_at IS
+    'Optional expiration timestamp for time-limited entitlement/visibility boost. NULL means non-expiring.';
 
 COMMENT ON TABLE user_purchases IS
     'Purchase records for premium and coin/boost product purchases.';

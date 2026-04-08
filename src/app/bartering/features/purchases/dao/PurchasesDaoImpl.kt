@@ -69,6 +69,7 @@ class PurchasesDaoImpl : PurchasesDao {
                 isLifetime = false,
                 grantedByPurchaseId = null,
                 grantedAt = null,
+                expiresAt = null,
                 updatedAt = Instant.now()
             )
     }
@@ -79,6 +80,7 @@ class PurchasesDaoImpl : PurchasesDao {
             it[isLifetime] = entitlement.isLifetime
             it[grantedByPurchaseId] = entitlement.grantedByPurchaseId
             it[grantedAt] = entitlement.grantedAt
+            it[expiresAt] = entitlement.expiresAt
             it[updatedAt] = entitlement.updatedAt
         }
 
@@ -91,6 +93,7 @@ class PurchasesDaoImpl : PurchasesDao {
                 it[isLifetime] = entitlement.isLifetime
                 it[grantedByPurchaseId] = entitlement.grantedByPurchaseId
                 it[grantedAt] = entitlement.grantedAt
+                it[expiresAt] = entitlement.expiresAt
                 it[updatedAt] = entitlement.updatedAt
             }
             true
@@ -121,6 +124,7 @@ class PurchasesDaoImpl : PurchasesDao {
             isLifetime = row[UserPremiumEntitlementsTable.isLifetime],
             grantedByPurchaseId = row[UserPremiumEntitlementsTable.grantedByPurchaseId],
             grantedAt = row[UserPremiumEntitlementsTable.grantedAt],
+            expiresAt = row[UserPremiumEntitlementsTable.expiresAt],
             updatedAt = row[UserPremiumEntitlementsTable.updatedAt]
         )
     }

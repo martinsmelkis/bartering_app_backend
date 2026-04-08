@@ -2,6 +2,7 @@ package app.bartering.features.profile.util
 
 import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.model.UserProfileExtended
+import app.bartering.features.purchases.dao.PurchasesDao
 import app.bartering.features.reviews.dao.ReputationDao
 import app.bartering.features.reviews.dao.ReputationDto
 import app.bartering.features.reviews.dao.ReviewDao
@@ -48,6 +49,9 @@ object ProfileBoostCalculator {
     // Trade activity boost
     private const val HIGH_TRADE_DIVERSITY_BOOST = 0.03  // Diversity score > 0.7
 
+    // Active visibility entitlement boost (time-limited visibility purchases)
+    private const val ACTIVE_VISIBILITY_ENTITLEMENT_BOOST = 0.06
+
     // Maximum total boost to prevent over-boosting
     private const val MAX_TOTAL_BOOST = 0.25  // Cap at 0.25 total boost
 
@@ -88,6 +92,7 @@ object ProfileBoostCalculator {
     suspend fun applyBoostAndStatus(
         profiles: List<UserProfileExtended>,
         reputationDao: ReputationDao,
+        purchasesDao: PurchasesDao,
         reviewDao: ReviewDao? = null
     ): List<UserProfileExtended> {
         if (profiles.isEmpty()) return profiles
@@ -253,6 +258,19 @@ object ProfileBoostCalculator {
                 }
                 totalBoost += badgeBoost
                 log.trace("User {} has badge {}, +{}", userId, badge.value, badgeBoost)
+            }
+
+            // 3. ACTIVE VISIBILITY ENTITLEMENT BOOST
+            try {
+                val entitlement = purchasesDao.getPremiumEntitlement(userId)
+                val hasActiveVisibilityEntitlement = entitlement.expiresAt?.isAfter(java.time.Instant.now()) == true
+                if (hasActiveVisibilityEntitlement) {
+                    totalBoost += ACTIVE_VISIBILITY_ENTITLEMENT_BOOST
+                    log.trace("User {} has active visibility entitlement until {}, +{}",
+                        userId, entitlement.expiresAt, ACTIVE_VISIBILITY_ENTITLEMENT_BOOST)
+                }
+            } catch (e: Exception) {
+                log.warn("Failed to fetch entitlement for user {} during boost calculation", userId, e)
             }
 
             // Apply the cap to prevent over-boosting

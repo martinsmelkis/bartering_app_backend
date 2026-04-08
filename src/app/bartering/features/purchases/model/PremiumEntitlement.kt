@@ -8,5 +8,6 @@ data class PremiumEntitlement(
     val isLifetime: Boolean,
     val grantedByPurchaseId: String? = null,
     val grantedAt: Instant? = null,
+    val expiresAt: Instant? = null,
     val updatedAt: Instant
 )

@@ -51,6 +51,7 @@ data class PremiumStatusResponse(
     val isPremium: Boolean,
     val isLifetime: Boolean,
     val grantedAt: Long? = null,
+    val expiresAt: Long? = null,
     val updatedAt: Long
 )
 

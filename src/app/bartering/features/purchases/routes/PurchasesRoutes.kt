@@ -39,6 +39,7 @@ fun Route.getPremiumStatusRoute() {
                     isPremium = premium.isPremium,
                     isLifetime = premium.isLifetime,
                     grantedAt = premium.grantedAt?.toEpochMilli(),
+                    expiresAt = premium.expiresAt?.toEpochMilli(),
                     updatedAt = premium.updatedAt.toEpochMilli()
                 )
             )
