@@ -18,31 +18,53 @@ class UserDailyActivityStatsService(
         return HashUtils.sha256("$analyticsSalt:$userId")
     }
 
-    suspend fun recordActivity(userId: String, activityType: String): Boolean {
+    private suspend fun canTrackAnalytics(userId: String): Boolean {
         if (!SecurityUtils.isValidUUID(userId)) return false
-        if (!userProfileDao.hasAnalyticsConsent(userId)) return false
+        return userProfileDao.hasAnalyticsConsent(userId)
+    }
+
+    @Suppress("unused")
+    suspend fun recordActivity(userId: String, activityType: String): Boolean {
+        if (!canTrackAnalytics(userId)) return false
+        return recordActivityForConsentedUser(userId, activityType)
+    }
+
+    suspend fun recordActivityForConsentedUser(userId: String, @Suppress("UNUSED_PARAMETER") activityType: String): Boolean {
+        if (!SecurityUtils.isValidUUID(userId)) return false
 
         val anonId = anonymizeUserId(userId)
         val base = statsDao.incrementApiRequest(anonId)
 
-        val specific = when (activityType) {
+        /*val specific = when (activityType) {
             "searching" -> statsDao.incrementSearch(anonId)
             "browsing" -> statsDao.incrementNearbySearch(anonId)
             "editing_profile" -> statsDao.incrementProfileUpdate(anonId)
             else -> true
-        }
+        }*/
 
-        return base && specific
+        return base //&& specific
     }
 
     @Suppress("unused")
-    suspend fun recordSearchedKeyword(userId: String, keyword: String): Boolean {
-        if (!SecurityUtils.isValidUUID(userId)) return false
-        if (!userProfileDao.hasAnalyticsConsent(userId)) return false
-        if (keyword.isBlank()) return false
+    suspend fun recordSessionStart(userId: String): Boolean {
+        if (!canTrackAnalytics(userId)) return false
+        return recordSessionStartForConsentedUser(userId)
+    }
 
-        val anonId = anonymizeUserId(userId)
-        return statsDao.incrementSearchKeyword(anonId, keyword)
+    suspend fun recordSessionStartForConsentedUser(userId: String): Boolean {
+        if (!SecurityUtils.isValidUUID(userId)) return false
+        return statsDao.incrementSessionCount(anonymizeUserId(userId))
+    }
+
+    @Suppress("unused")
+    suspend fun recordActiveMinute(userId: String): Boolean {
+        if (!canTrackAnalytics(userId)) return false
+        return recordActiveMinuteForConsentedUser(userId)
+    }
+
+    suspend fun recordActiveMinuteForConsentedUser(userId: String): Boolean {
+        if (!SecurityUtils.isValidUUID(userId)) return false
+        return statsDao.incrementActiveMinutes(anonymizeUserId(userId))
     }
 
     suspend fun recordSearchedKeywordWithResponseTime(
@@ -58,9 +80,14 @@ class UserDailyActivityStatsService(
         return statsDao.recordSearchKeywordWithResponseTime(anonId, keyword, responseTimeMs)
     }
 
+    @Suppress("unused")
     suspend fun recordResponseTime(userId: String, responseTimeMs: Long): Boolean {
+        if (!canTrackAnalytics(userId)) return false
+        return recordResponseTimeForConsentedUser(userId, responseTimeMs)
+    }
+
+    suspend fun recordResponseTimeForConsentedUser(userId: String, responseTimeMs: Long): Boolean {
         if (!SecurityUtils.isValidUUID(userId)) return false
-        if (!userProfileDao.hasAnalyticsConsent(userId)) return false
 
         val anonId = anonymizeUserId(userId)
         return statsDao.recordResponseTime(anonId, responseTimeMs)
@@ -70,6 +97,12 @@ class UserDailyActivityStatsService(
         if (!SecurityUtils.isValidUUID(userId)) return false
         if (!userProfileDao.hasAnalyticsConsent(userId)) return false
         return statsDao.incrementProfileUpdate(anonymizeUserId(userId))
+    }
+
+    suspend fun recordNearbySearch(userId: String): Boolean {
+        if (!SecurityUtils.isValidUUID(userId)) return false
+        if (!userProfileDao.hasAnalyticsConsent(userId)) return false
+        return statsDao.incrementNearbySearch(anonymizeUserId(userId))
     }
 
     suspend fun recordChatMessageSent(userId: String): Boolean {
@@ -100,12 +133,6 @@ class UserDailyActivityStatsService(
         if (!SecurityUtils.isValidUUID(userId)) return false
         if (!userProfileDao.hasAnalyticsConsent(userId)) return false
         return statsDao.incrementSuccessfulActions(anonymizeUserId(userId))
-    }
-
-    suspend fun recordFailedAction(userId: String): Boolean {
-        if (!SecurityUtils.isValidUUID(userId)) return false
-        if (!userProfileDao.hasAnalyticsConsent(userId)) return false
-        return statsDao.incrementFailedActions(anonymizeUserId(userId))
     }
 
     suspend fun getUserStats(userId: String, days: Long = 30): List<UserDailyActivityStats> {

@@ -24,19 +24,16 @@ object UserDailyActivityStatsTable : Table("user_daily_activity_stats") {
     val reviewsSubmittedCount = integer("reviews_submitted_count").default(0)
 
     val successfulActionsCount = integer("successful_actions_count").default(0)
-    val failedActionsCount = integer("failed_actions_count").default(0)
 
     val analyticsConsent = bool("analytics_consent").default(false)
     val consentVersion = varchar("consent_version", 50).nullable()
 
     // searched_keywords is currently updated via raw SQL in DAO (JSONB), not mapped in Exposed model.
-    val responseTimeCount = long("response_time_count").default(0)
+    val averageResponseTime = long("average_response_time").default(0)
     val totalResponseTimeMs = long("total_response_time_ms").default(0)
-    val minResponseTimeMs = integer("min_response_time_ms").nullable()
-    val maxResponseTimeMs = integer("max_response_time_ms").nullable()
 
     val createdAt = timestamp("created_at").default(Instant.now())
     val updatedAt = timestamp("updated_at").default(Instant.now())
 
-    override val primaryKey = PrimaryKey(anonymizedUserId)
+    override val primaryKey = PrimaryKey(anonymizedUserId, activityDate)
 }

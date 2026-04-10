@@ -16,6 +16,7 @@ import app.bartering.features.postings.service.ImageStorageService
 import app.bartering.features.postings.service.LocalFileStorageService
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.service.MatchNotificationService
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -31,6 +32,7 @@ private const val ACTIVE_POSTING_LIMIT_ERROR =
 fun Route.postingsRoutes() {
     val postingDao: UserPostingDao by inject(UserPostingDao::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     // Select storage implementation based on environment variable
     val storageType = System.getenv("IMAGE_STORAGE_TYPE") ?: "local"
@@ -165,6 +167,7 @@ fun Route.postingsRoutes() {
                         val posting = postingDao.getPosting(id!!)
                         if (posting != null) {
                             log.info("Posting created successfully: {}", posting.id)
+                            userDailyActivityStatsService.recordSuccessfulAction(userId)
                             call.respond(HttpStatusCode.Created, posting)
 
                             // Run matching in background to not block response
@@ -251,6 +254,7 @@ fun Route.postingsRoutes() {
 
                     if (postingId != null) {
                         val posting = postingDao.getPosting(postingId)
+                        userDailyActivityStatsService.recordSuccessfulAction(authenticatedUserId)
                         call.respond(HttpStatusCode.Created, posting ?: mapOf("id" to postingId))
                         
                         // Run matching and create notification preference in background

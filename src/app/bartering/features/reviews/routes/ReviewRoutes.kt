@@ -265,7 +265,6 @@ fun Route.submitReviewRoute() {
                     )
                 )
             } else {
-                userDailyActivityStatsService.recordFailedAction(request.reviewerId)
                 call.respond(
                     HttpStatusCode.InternalServerError,
                     mapOf("error" to "Failed to submit review")

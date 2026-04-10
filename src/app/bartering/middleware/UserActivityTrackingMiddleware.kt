@@ -7,7 +7,12 @@ import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import app.bartering.features.profile.dao.UserProfileDaoImpl
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.getValue
+
+private const val SESSION_IDLE_THRESHOLD_MILLIS = 30 * 60 * 1000L // 30 minutes
+private val lastSeenByUser = ConcurrentHashMap<String, Long>()
+private val lastCountedMinuteByUser = ConcurrentHashMap<String, Long>()
 
 /**
  * Middleware that automatically tracks user activity for presence detection.
@@ -55,9 +60,25 @@ fun Application.installActivityTracking() {
                         val path = call.request.path()
                         val activityType = determineActivityType(path)
 
+                        val now = System.currentTimeMillis()
+
                         // Update activity in cache (extremely fast, non-blocking)
                         UserActivityCache.updateActivity(userId, activityType)
-                        userDailyActivityStatsService.recordActivity(userId, activityType)
+                        userDailyActivityStatsService.recordActivityForConsentedUser(userId, activityType)
+
+                        // Count a new session when user returns after idle threshold
+                        val previousSeenAt = lastSeenByUser.put(userId, now)
+                        val isNewSession = previousSeenAt == null || (now - previousSeenAt) >= SESSION_IDLE_THRESHOLD_MILLIS
+                        if (isNewSession) {
+                            userDailyActivityStatsService.recordSessionStartForConsentedUser(userId)
+                        }
+
+                        // Count active minutes once per clock minute per user
+                        val currentMinuteBucket = now / 60_000L
+                        val lastCountedMinute = lastCountedMinuteByUser.put(userId, currentMinuteBucket)
+                        if (lastCountedMinute == null || lastCountedMinute != currentMinuteBucket) {
+                            userDailyActivityStatsService.recordActiveMinuteForConsentedUser(userId)
+                        }
                     }
 
                 } catch (e: Exception) {
@@ -74,7 +95,9 @@ fun Application.installActivityTracking() {
             if (!userId.isNullOrBlank()) {
                 val elapsedMs = System.currentTimeMillis() - startedAt
                 try {
-                    userDailyActivityStatsService.recordResponseTime(userId, elapsedMs)
+                    if (userProfileDao.hasAnalyticsConsent(userId)) {
+                        userDailyActivityStatsService.recordResponseTimeForConsentedUser(userId, elapsedMs)
+                    }
                 } catch (_: Exception) {
                     // Never break request lifecycle due to analytics
                 }

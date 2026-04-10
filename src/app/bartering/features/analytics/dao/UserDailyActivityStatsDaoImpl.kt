@@ -19,6 +19,12 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
     override suspend fun incrementApiRequest(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
         incrementCounter(anonymizedUserId, date, "api_request_count", amount)
 
+    override suspend fun incrementActiveMinutes(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
+        incrementCounter(anonymizedUserId, date, "active_minutes", amount)
+
+    override suspend fun incrementSessionCount(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
+        incrementCounter(anonymizedUserId, date, "session_count", amount)
+
     override suspend fun incrementSearch(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
         incrementCounter(anonymizedUserId, date, "search_count", amount)
 
@@ -43,9 +49,6 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
     override suspend fun incrementSuccessfulActions(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
         incrementCounter(anonymizedUserId, date, "successful_actions_count", amount)
 
-    override suspend fun incrementFailedActions(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
-        incrementCounter(anonymizedUserId, date, "failed_actions_count", amount)
-
     override suspend fun incrementSearchKeyword(anonymizedUserId: String, keyword: String, date: LocalDate): Boolean = dbQuery {
         val normalizedKeyword = keyword.trim().lowercase().take(100)
         if (normalizedKeyword.isBlank()) return@dbQuery false
@@ -61,7 +64,7 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     updated_at
                 )
                 VALUES (?, ?, 1, jsonb_build_object(?, 1), TRUE, NOW())
-                ON CONFLICT (anonymized_user_id)
+                ON CONFLICT (anonymized_user_id, activity_date)
                 DO UPDATE SET
                     activity_date = EXCLUDED.activity_date,
                     search_count = user_daily_activity_stats.search_count + 1,
@@ -111,10 +114,8 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     search_count,
                     searched_keywords,
                     keyword_response_times,
-                    response_time_count,
+                    average_response_time,
                     total_response_time_ms,
-                    min_response_time_ms,
-                    max_response_time_ms,
                     analytics_consent,
                     updated_at
                 )
@@ -124,14 +125,12 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     1,
                     jsonb_build_object(?, 1),
                     jsonb_build_object(?, jsonb_build_object('count', 1, 'totalMs', ?, 'minMs', ?, 'maxMs', ?)),
-                    1,
-                    ?,
                     ?,
                     ?,
                     TRUE,
                     NOW()
                 )
-                ON CONFLICT (anonymized_user_id)
+                ON CONFLICT (anonymized_user_id, activity_date)
                 DO UPDATE SET
                     activity_date = EXCLUDED.activity_date,
                     search_count = user_daily_activity_stats.search_count + 1,
@@ -151,16 +150,14 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                         ),
                         true
                     ),
-                    response_time_count = user_daily_activity_stats.response_time_count + 1,
+                    average_response_time = CASE
+                        WHEN user_daily_activity_stats.average_response_time <= 0 OR user_daily_activity_stats.total_response_time_ms <= 0 THEN ?
+                        ELSE (
+                            (user_daily_activity_stats.total_response_time_ms + ?) /
+                            ((user_daily_activity_stats.total_response_time_ms / user_daily_activity_stats.average_response_time) + 1)
+                        )
+                    END,
                     total_response_time_ms = user_daily_activity_stats.total_response_time_ms + ?,
-                    min_response_time_ms = CASE
-                        WHEN user_daily_activity_stats.min_response_time_ms IS NULL THEN ?
-                        ELSE LEAST(user_daily_activity_stats.min_response_time_ms, ?)
-                    END,
-                    max_response_time_ms = CASE
-                        WHEN user_daily_activity_stats.max_response_time_ms IS NULL THEN ?
-                        ELSE GREATEST(user_daily_activity_stats.max_response_time_ms, ?)
-                    END,
                     analytics_consent = TRUE,
                     updated_at = NOW();
             """.trimIndent()
@@ -176,13 +173,11 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     statement.setInt(i++, boundedMs)
                     statement.setInt(i++, boundedMs)
                     statement.setInt(i++, boundedMs)
+                    statement.setInt(i++, boundedMs)
                     statement.setLong(i++, boundedMs.toLong())
-                    statement.setInt(i++, boundedMs)
-                    statement.setInt(i++, boundedMs)
 
                     statement.setString(i++, normalizedKeyword)
                     statement.setString(i++, normalizedKeyword)
-
                     statement.setString(i++, normalizedKeyword)
                     statement.setString(i++, normalizedKeyword)
                     statement.setString(i++, normalizedKeyword)
@@ -193,12 +188,9 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     statement.setString(i++, normalizedKeyword)
                     statement.setInt(i++, boundedMs)
                     statement.setInt(i++, boundedMs)
-
+                    statement.setInt(i++, boundedMs)
                     statement.setLong(i++, boundedMs.toLong())
-                    statement.setInt(i++, boundedMs)
-                    statement.setInt(i++, boundedMs)
-                    statement.setInt(i++, boundedMs)
-                    statement.setInt(i, boundedMs)
+                    statement.setLong(i, boundedMs.toLong())
 
                     statement.executeUpdate()
                 }
@@ -219,27 +211,23 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                 INSERT INTO user_daily_activity_stats (
                     anonymized_user_id,
                     activity_date,
-                    response_time_count,
+                    average_response_time,
                     total_response_time_ms,
-                    min_response_time_ms,
-                    max_response_time_ms,
                     analytics_consent,
                     updated_at
                 )
-                VALUES (?, ?, 1, ?, ?, ?, TRUE, NOW())
-                ON CONFLICT (anonymized_user_id)
+                VALUES (?, ?, ?, ?, TRUE, NOW())
+                ON CONFLICT (anonymized_user_id, activity_date)
                 DO UPDATE SET
                     activity_date = EXCLUDED.activity_date,
-                    response_time_count = user_daily_activity_stats.response_time_count + 1,
+                    average_response_time = CASE
+                        WHEN user_daily_activity_stats.average_response_time <= 0 OR user_daily_activity_stats.total_response_time_ms <= 0 THEN EXCLUDED.average_response_time
+                        ELSE (
+                            (user_daily_activity_stats.total_response_time_ms + EXCLUDED.total_response_time_ms) /
+                            ((user_daily_activity_stats.total_response_time_ms / user_daily_activity_stats.average_response_time) + 1)
+                        )
+                    END,
                     total_response_time_ms = user_daily_activity_stats.total_response_time_ms + EXCLUDED.total_response_time_ms,
-                    min_response_time_ms = CASE
-                        WHEN user_daily_activity_stats.min_response_time_ms IS NULL THEN EXCLUDED.min_response_time_ms
-                        ELSE LEAST(user_daily_activity_stats.min_response_time_ms, EXCLUDED.min_response_time_ms)
-                    END,
-                    max_response_time_ms = CASE
-                        WHEN user_daily_activity_stats.max_response_time_ms IS NULL THEN EXCLUDED.max_response_time_ms
-                        ELSE GREATEST(user_daily_activity_stats.max_response_time_ms, EXCLUDED.max_response_time_ms)
-                    END,
                     analytics_consent = TRUE,
                     updated_at = NOW();
             """.trimIndent()
@@ -250,8 +238,7 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     statement.setString(1, anonymizedUserId)
                     statement.setDate(2, Date.valueOf(date))
                     statement.setLong(3, boundedMs.toLong())
-                    statement.setInt(4, boundedMs)
-                    statement.setInt(5, boundedMs)
+                    statement.setLong(4, boundedMs.toLong())
                     statement.executeUpdate()
                 }
             true
@@ -288,7 +275,6 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     transactionsCreatedCount = row[UserDailyActivityStatsTable.transactionsCreatedCount],
                     reviewsSubmittedCount = row[UserDailyActivityStatsTable.reviewsSubmittedCount],
                     successfulActionsCount = row[UserDailyActivityStatsTable.successfulActionsCount],
-                    failedActionsCount = row[UserDailyActivityStatsTable.failedActionsCount],
                     analyticsConsent = row[UserDailyActivityStatsTable.analyticsConsent],
                     consentVersion = row[UserDailyActivityStatsTable.consentVersion],
                     updatedAt = row[UserDailyActivityStatsTable.updatedAt].toString()
@@ -306,6 +292,8 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
 
         val allowedColumns = setOf(
             "api_request_count",
+            "active_minutes",
+            "session_count",
             "search_count",
             "nearby_search_count",
             "profile_update_count",
@@ -313,8 +301,7 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
             "chat_messages_received_count",
             "transactions_created_count",
             "reviews_submitted_count",
-            "successful_actions_count",
-            "failed_actions_count"
+            "successful_actions_count"
         )
 
         if (counterColumn !in allowedColumns) {
@@ -332,7 +319,7 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     updated_at
                 )
                 VALUES (?, ?, ?, TRUE, NOW())
-                ON CONFLICT (anonymized_user_id)
+                ON CONFLICT (anonymized_user_id, activity_date)
                 DO UPDATE SET
                     activity_date = EXCLUDED.activity_date,
                     $counterColumn = user_daily_activity_stats.$counterColumn + EXCLUDED.$counterColumn,

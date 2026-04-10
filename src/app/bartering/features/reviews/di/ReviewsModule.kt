@@ -6,8 +6,8 @@ import org.koin.dsl.module
 
 val reviewsModule = module {
     // DAOs
-    single<BarterTransactionDao> { BarterTransactionDaoImpl() }
-    single { BarterTransactionDaoImpl() }
+    single<BarterTransactionDao> { BarterTransactionDaoImpl(get()) }
+    single { BarterTransactionDaoImpl(get()) }
     
     single<ReviewDao> { ReviewDaoImpl() }
     single { ReviewDaoImpl() }

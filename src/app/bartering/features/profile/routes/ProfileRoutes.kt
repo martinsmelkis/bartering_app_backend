@@ -142,6 +142,7 @@ fun Route.getProfilesNearbyRoute() {
 
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     get("/api/v1/profiles/nearby") {
 
@@ -181,6 +182,15 @@ fun Route.getProfilesNearbyRoute() {
         val sortedProfiles = allProfiles.sortedBy { it.distanceKm }.take(20)
 
         log.debug("Sending {} nearby profiles", sortedProfiles.size)
+
+        analyticsRecordingScope.launch {
+            try {
+                userDailyActivityStatsService.recordNearbySearch(authenticatedUserId)
+                userDailyActivityStatsService.recordSuccessfulAction(authenticatedUserId)
+            } catch (e: Exception) {
+                log.debug("Async nearby-search analytics recording failed", e)
+            }
+        }
 
         call.respond(sortedProfiles)
     }
@@ -615,6 +625,7 @@ fun Route.searchProfilesByKeywordRoute() {
                         searchText,
                         elapsedMs
                     )
+                    userDailyActivityStatsService.recordSuccessfulAction(authenticatedUserId)
                 } catch (e: Exception) {
                     log.debug("Async keyword analytics recording failed", e)
                 }
@@ -841,6 +852,7 @@ fun Route.similarProfilesRoute() {
 
 fun Route.complementaryProfilesRoute() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val userDailyActivityStatsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
 
     get("/api/v1/complementary-profiles") {
         // Get userId from query parameters
@@ -883,6 +895,15 @@ fun Route.complementaryProfilesRoute() {
 
         log.debug("Returning {} complementary profiles for user {} (location filter: {})",
             profiles.size, userId, if (lat != null) "enabled" else "disabled")
+
+        analyticsRecordingScope.launch {
+            try {
+                userDailyActivityStatsService.recordNearbySearch(userId)
+                userDailyActivityStatsService.recordSuccessfulAction(userId)
+            } catch (e: Exception) {
+                log.debug("Async complementary-search analytics recording failed", e)
+            }
+        }
 
         call.respond(HttpStatusCode.OK, profiles)
     }

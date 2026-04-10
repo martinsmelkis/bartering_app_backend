@@ -5,6 +5,8 @@ import java.time.LocalDate
 
 interface UserDailyActivityStatsDao {
     suspend fun incrementApiRequest(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementActiveMinutes(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementSessionCount(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementSearch(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementNearbySearch(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementProfileUpdate(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
@@ -13,7 +15,6 @@ interface UserDailyActivityStatsDao {
     suspend fun incrementTransactionsCreated(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementReviewsSubmitted(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementSuccessfulActions(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
-    suspend fun incrementFailedActions(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementSearchKeyword(anonymizedUserId: String, keyword: String, date: LocalDate = LocalDate.now()): Boolean
     suspend fun recordSearchKeywordWithResponseTime(
         anonymizedUserId: String,

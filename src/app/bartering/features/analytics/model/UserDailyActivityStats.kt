@@ -17,7 +17,6 @@ data class UserDailyActivityStats(
     val transactionsCreatedCount: Int,
     val reviewsSubmittedCount: Int,
     val successfulActionsCount: Int,
-    val failedActionsCount: Int,
     val analyticsConsent: Boolean,
     val consentVersion: String? = null,
     val updatedAt: String? = null

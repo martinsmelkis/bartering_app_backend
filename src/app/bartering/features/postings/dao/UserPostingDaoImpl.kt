@@ -13,6 +13,7 @@ import org.jetbrains.exposed.v1.jdbc.*
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.*
 
@@ -264,7 +265,7 @@ class UserPostingDaoImpl : UserPostingDao {
                 val rs = statement.executeQuery()
                 while (rs.next()) {
                     val postingId = rs.getObject("id") as String
-                    val distanceMeters = rs.getObject("distance_meters") as Double
+                    val distanceMeters = (rs.getObject("distance_meters") as? Number)?.toDouble() ?: 0.0
 
                     val posting = UserPosting(
                         id = postingId,
@@ -272,13 +273,13 @@ class UserPostingDaoImpl : UserPostingDao {
                         title = rs.getObject("title") as String,
                         description = rs.getObject("description") as String,
                         value = rs.getObject("value") as? Double,
-                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        expiresAt = toInstantOrNull(rs.getObject("expires_at")),
                         imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
                         isOffer = rs.getObject("is_offer") as Boolean,
                         status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getObject("created_at") as Instant,
-                        updatedAt = rs.getObject("updated_at") as Instant
+                        createdAt = toInstantOrNull(rs.getObject("created_at")) ?: Instant.EPOCH,
+                        updatedAt = toInstantOrNull(rs.getObject("updated_at")) ?: Instant.EPOCH
                     )
 
                     postings.add(
@@ -422,10 +423,10 @@ class UserPostingDaoImpl : UserPostingDao {
                 val rs = statement.executeQuery()
                 while (rs.next()) {
                     val postingId = rs.getObject("id") as String
-                    val distanceMeters = rs.getObject("distance_meters") as Double
-                    val similarityScore = rs.getObject("similarity_score") as Double
+                    val distanceMeters = (rs.getObject("distance_meters") as? Number)?.toDouble()
+                    val similarityScore = (rs.getObject("similarity_score") as? Number)?.toDouble() ?: 0.0
 
-                    if (similarityScore < 0.5) continue
+                    if (similarityScore < 0.6) continue
 
                     val posting = UserPosting(
                         id = postingId,
@@ -433,19 +434,19 @@ class UserPostingDaoImpl : UserPostingDao {
                         title = rs.getObject("title") as String,
                         description = rs.getObject("description") as String,
                         value = rs.getObject("value") as? Double,
-                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        expiresAt = toInstantOrNull(rs.getObject("expires_at")),
                         imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
                         isOffer = rs.getObject("is_offer") as Boolean,
                         status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getObject("created_at") as Instant,
-                        updatedAt = rs.getObject("updated_at") as Instant
+                        createdAt = toInstantOrNull(rs.getObject("created_at")) ?: Instant.EPOCH,
+                        updatedAt = toInstantOrNull(rs.getObject("updated_at")) ?: Instant.EPOCH
                     )
 
                     postings.add(
                         UserPostingWithDistance(
                             posting = posting,
-                            distanceKm = if (distanceMeters != 0.0) distanceMeters / 1000 else null,
+                            distanceKm = distanceMeters?.takeIf { it != 0.0 }?.div(1000),
                             similarityScore = similarityScore
                         )
                     )
@@ -581,10 +582,10 @@ class UserPostingDaoImpl : UserPostingDao {
                 val rs = statement.executeQuery()
                 while (rs.next()) {
                     val postingId = rs.getObject("id") as String
-                    val distanceMeters = rs.getObject("distance_meters") as Double
-                    val matchScore = rs.getObject("match_score") as Double
+                    val distanceMeters = (rs.getObject("distance_meters") as? Number)?.toDouble()
+                    val matchScore = (rs.getObject("match_score") as? Number)?.toDouble() ?: 0.0
 
-                    if (matchScore < 0.5) continue
+                    if (matchScore < 0.55) continue
 
                     val posting = UserPosting(
                         id = postingId,
@@ -592,19 +593,19 @@ class UserPostingDaoImpl : UserPostingDao {
                         title = rs.getObject("title") as String,
                         description = rs.getObject("description") as String,
                         value = rs.getObject("value") as? Double,
-                        expiresAt = rs.getObject("expires_at") as? Instant,
+                        expiresAt = toInstantOrNull(rs.getObject("expires_at")),
                         imageUrls = parseImageUrls(rs.getObject("image_urls") as String),
                         isOffer = rs.getObject("is_offer") as Boolean,
                         status = PostingStatus.valueOf((rs.getObject("status") as String).uppercase()),
                         attributes = emptyList(),
-                        createdAt = rs.getObject("created_at") as Instant,
-                        updatedAt = rs.getObject("updated_at") as Instant
+                        createdAt = toInstantOrNull(rs.getObject("created_at")) ?: Instant.EPOCH,
+                        updatedAt = toInstantOrNull(rs.getObject("updated_at")) ?: Instant.EPOCH
                     )
 
                     postings.add(
                         UserPostingWithDistance(
                             posting = posting,
-                            distanceKm = if (distanceMeters != 0.0) distanceMeters / 1000 else null,
+                            distanceKm = distanceMeters?.takeIf { it != 0.0 }?.div(1000),
                             matchRelevancyScore = matchScore
                         )
                     )
@@ -819,5 +820,13 @@ class UserPostingDaoImpl : UserPostingDao {
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    private fun toInstantOrNull(value: Any?): Instant? = when (value) {
+        null -> null
+        is Instant -> value
+        is Timestamp -> value.toInstant()
+        is java.util.Date -> value.toInstant()
+        else -> null
     }
 }

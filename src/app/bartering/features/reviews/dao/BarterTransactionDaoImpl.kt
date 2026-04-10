@@ -1,6 +1,7 @@
 package app.bartering.features.reviews.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import app.bartering.features.reviews.db.BarterTransactionsTable
 import app.bartering.features.reviews.model.TransactionStatus
 import org.jetbrains.exposed.v1.core.*
@@ -11,7 +12,9 @@ import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
 
-class BarterTransactionDaoImpl : BarterTransactionDao {
+class BarterTransactionDaoImpl(
+    private val userDailyActivityStatsService: UserDailyActivityStatsService? = null
+) : BarterTransactionDao {
     private val log = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createTransaction(
@@ -27,6 +30,10 @@ class BarterTransactionDaoImpl : BarterTransactionDao {
             it[BarterTransactionsTable.estimatedValue] = estimatedValue
             it[status] = TransactionStatus.PENDING.value
         }
+
+        userDailyActivityStatsService?.recordTransactionCreated(user1Id)
+        userDailyActivityStatsService?.recordSuccessfulAction(user1Id)
+
         transactionId
     }
 
