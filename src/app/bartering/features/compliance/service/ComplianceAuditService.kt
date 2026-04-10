@@ -6,7 +6,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.notInList
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.slf4j.LoggerFactory
@@ -102,6 +106,24 @@ class ComplianceAuditService {
             .where { ComplianceAuditLogTable.createdAt greaterEq since }
             .groupingBy { it[ComplianceAuditLogTable.eventType] }
             .eachCount()
+    }
+
+    suspend fun cleanupOldOperationalEvents(
+        retentionDays: Int,
+        excludedEventTypes: Set<String>
+    ): Int = dbQuery {
+        val cutoff = Instant.now().minusSeconds(retentionDays.toLong() * 24L * 60L * 60L)
+
+        if (excludedEventTypes.isEmpty()) {
+            ComplianceAuditLogTable.deleteWhere {
+                ComplianceAuditLogTable.createdAt less cutoff
+            }
+        } else {
+            ComplianceAuditLogTable.deleteWhere {
+                (ComplianceAuditLogTable.createdAt less cutoff) and
+                    (ComplianceAuditLogTable.eventType notInList excludedEventTypes.toList())
+            }
+        }
     }
 }
 

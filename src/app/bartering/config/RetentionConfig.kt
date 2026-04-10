@@ -31,6 +31,10 @@ object RetentionConfig {
     // SLA = Service Level Agreement (maximum completion window in days).
     val dsarSlaDays: Int = envInt("GDPR_DSAR_SLA_DAYS", 30)
 
+    // Compliance evidence retention
+    val complianceAuditRetentionDays: Int = envInt("RETENTION_COMPLIANCE_AUDIT_DAYS", 365)
+    val dsarRequestRetentionDays: Int = envInt("RETENTION_DSAR_REQUESTS_DAYS", 365)
+
     // Orchestrator cadence
     val retentionOrchestratorIntervalHours: Long =
         System.getenv("RETENTION_ORCHESTRATOR_INTERVAL_HOURS")?.toLongOrNull() ?: 24L

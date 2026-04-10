@@ -24,5 +24,6 @@ data class UserProfileUpdateRequest(
     val aiProcessingConsent: Boolean? = null,
     val analyticsCookiesConsent: Boolean? = null,
     val federationConsent: Boolean? = null,
-    val privacyPolicyVersion: String? = null
+    val privacyPolicyVersion: String? = null,
+    val termsConditionsVersion: String? = null
 )

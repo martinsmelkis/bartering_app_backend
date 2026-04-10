@@ -7,9 +7,13 @@ import app.bartering.features.chat.dao.OfflineMessageDaoImpl
 import app.bartering.features.chat.dao.ReadReceiptDao
 import app.bartering.features.chat.dao.ReadReceiptDaoImpl
 import app.bartering.features.compliance.service.ComplianceAuditService
+import app.bartering.features.compliance.service.ComplianceGovernanceService
 import app.bartering.features.compliance.service.DataSubjectRequestService
+import app.bartering.features.compliance.service.DsarCoverageService
+import app.bartering.features.compliance.service.ErasureTaskService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.features.compliance.service.RetentionOrchestrator
+import app.bartering.features.compliance.service.SecurityIncidentService
 import app.bartering.features.encryptedfiles.dao.EncryptedFileDao
 import app.bartering.features.encryptedfiles.dao.EncryptedFileDaoImpl
 import app.bartering.features.postings.dao.UserPostingDao
@@ -25,6 +29,16 @@ val complianceModule = module {
     single { ComplianceAuditService() }
     single { LegalHoldService() }
     single { DataSubjectRequestService() }
+    single { DsarCoverageService() }
+    single { ErasureTaskService() }
+    single { ComplianceGovernanceService() }
+    single {
+        SecurityIncidentService(
+            notificationPreferencesDao = get(),
+            pushService = get(),
+            emailService = get()
+        )
+    }
 
     single {
         RetentionOrchestrator(
@@ -36,7 +50,8 @@ val complianceModule = module {
             userPostingDao = get<UserPostingDao>(),
             riskPatternDao = get(),
             legalHoldService = get(),
-            complianceAuditService = get()
+            complianceAuditService = get(),
+            dsrService = get()
         )
     }
 }

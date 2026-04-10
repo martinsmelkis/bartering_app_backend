@@ -6,8 +6,10 @@ import app.bartering.features.compliance.db.DataSubjectRequestsTable
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
@@ -119,6 +121,25 @@ class DataSubjectRequestService {
             .orderBy(DataSubjectRequestsTable.dueAt to SortOrder.ASC)
             .limit(limit)
             .map { it.toView() }
+    }
+
+    suspend fun cleanupOldClosedRequests(retentionDays: Int): Int = dbQuery {
+        val cutoff = Instant.now().minusSeconds(retentionDays.toLong() * 24L * 60L * 60L)
+
+        DataSubjectRequestsTable.deleteWhere {
+            (
+                (DataSubjectRequestsTable.status eq "completed") or
+                    (DataSubjectRequestsTable.status eq "rejected") or
+                    (DataSubjectRequestsTable.status eq "cancelled")
+                ) and
+                (
+                    (DataSubjectRequestsTable.completedAt less cutoff) or
+                        (
+                            DataSubjectRequestsTable.completedAt.isNull() and
+                                (DataSubjectRequestsTable.updatedAt less cutoff)
+                            )
+                    )
+        }
     }
 
     private fun org.jetbrains.exposed.v1.core.ResultRow.toView() = DataSubjectRequestView(

@@ -29,7 +29,8 @@ class RetentionOrchestrator(
     private val userPostingDao: UserPostingDao,
     private val riskPatternDao: RiskPatternDao,
     private val legalHoldService: LegalHoldService,
-    private val complianceAuditService: ComplianceAuditService
+    private val complianceAuditService: ComplianceAuditService,
+    private val dsrService: DataSubjectRequestService
 ) {
     private val log = LoggerFactory.getLogger(this::class.java)
 
@@ -214,6 +215,53 @@ class RetentionOrchestrator(
                         )
                     )
 
+                    val protectedComplianceEvents = setOf(
+                        "ACCOUNT_DELETION_REQUESTED",
+                        "ACCOUNT_DELETION_COMPLETED",
+                        "DATA_EXPORT_REQUESTED",
+                        "DATA_EXPORT_COMPLETED",
+                        "LEGAL_HOLD_APPLIED",
+                        "LEGAL_HOLD_RELEASED",
+                        "CONSENT_UPDATED"
+                    )
+
+                    val deletedComplianceAudit = complianceAuditService.cleanupOldOperationalEvents(
+                        retentionDays = RetentionConfig.complianceAuditRetentionDays,
+                        excludedEventTypes = protectedComplianceEvents
+                    )
+                    totalDeleted += deletedComplianceAudit
+
+                    complianceAuditService.logEvent(
+                        actorType = "system",
+                        eventType = "RETENTION_PURGE_TASK_COMPLETED",
+                        entityType = "compliance_audit_log",
+                        outcome = "success",
+                        purpose = "gdpr_data_retention",
+                        details = mapOf(
+                            "task" to "compliance_audit_cleanup",
+                            "deleted" to deletedComplianceAudit.toString(),
+                            "retentionDays" to RetentionConfig.complianceAuditRetentionDays.toString()
+                        )
+                    )
+
+                    val deletedClosedDsar = dsrService.cleanupOldClosedRequests(
+                        retentionDays = RetentionConfig.dsarRequestRetentionDays
+                    )
+                    totalDeleted += deletedClosedDsar
+
+                    complianceAuditService.logEvent(
+                        actorType = "system",
+                        eventType = "RETENTION_PURGE_TASK_COMPLETED",
+                        entityType = "compliance_data_subject_requests",
+                        outcome = "success",
+                        purpose = "gdpr_data_retention",
+                        details = mapOf(
+                            "task" to "dsar_closed_requests_cleanup",
+                            "deleted" to deletedClosedDsar.toString(),
+                            "retentionDays" to RetentionConfig.dsarRequestRetentionDays.toString()
+                        )
+                    )
+
                     val durationMs = System.currentTimeMillis() - cycleStartedAt
                     log.info("Retention cycle completed: totalDeleted={}, durationMs={}", totalDeleted, durationMs)
 
@@ -237,7 +285,9 @@ class RetentionOrchestrator(
                             "deletedDevices" to deletedDevices.toString(),
                             "deletedIps" to deletedIps.toString(),
                             "deletedLocationChanges" to deletedLocation.toString(),
-                            "deletedRiskPatterns" to deletedRiskPatterns.toString()
+                            "deletedRiskPatterns" to deletedRiskPatterns.toString(),
+                            "deletedComplianceAudit" to deletedComplianceAudit.toString(),
+                            "deletedClosedDsar" to deletedClosedDsar.toString()
                         )
                     )
                 } catch (e: Exception) {

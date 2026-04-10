@@ -13,7 +13,6 @@ import app.bartering.features.categories.AttributeCategoriesLinkTable
 import app.bartering.utils.SecurityUtils
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.jdbc.*
-import org.jetbrains.exposed.v1.jdbc.statements.jdbc.JdbcResult
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import kotlin.math.abs
 import kotlin.random.Random
@@ -210,7 +209,7 @@ class AttributesDaoImpl : AttributesDao {
                 .also { statement ->
                     statement.set(1, userId, TextColumnType())
                     statement.set(2, limit, IntegerColumnType())
-                    (statement.executeQuery() as JdbcResult).use { rs ->
+                    statement.executeQuery().use { rs ->
                         while (rs.next()) {
                             val key = rs.getString(1) ?: continue
                             val similarity = (rs.getObject(2) as Number).toDouble()
@@ -433,7 +432,7 @@ class AttributesDaoImpl : AttributesDao {
                     statement.set(1, userId, TextColumnType())
                     statement.set(2, userId, TextColumnType())
                     statement.set(3, limit, IntegerColumnType())
-                    (statement.executeQuery() as JdbcResult).use { rs ->
+                    statement.executeQuery().use { rs ->
                         while (rs.next()) {
                             val key = rs.getString(1) ?: continue
                             val similarity = (rs.getObject(2) as Number).toDouble()

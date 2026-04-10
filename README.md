@@ -143,9 +143,9 @@ git clone https://github.com/martinsmelkis/bartering_app_backend
 cd bartering_app_backend
 ```
 
-1. Configure environment variables (see `CONFIGURATION_GUIDE.md`)
+2. Configure environment variables (see `CONFIGURATION_GUIDE.md`)
 
-2. Start services
+3. Start services
 
 ```bash
 docker-compose up --build
@@ -235,23 +235,6 @@ Main backend default endpoint: `http://0.0.0.0:8081`
 **Server Federation**
 - Audit logging for security compliance
 
-### Compliance admin
-
-- `/api/v1/admin/compliance/legal-holds/*`
-- `/api/v1/admin/compliance/retention/*`
-- `/api/v1/admin/compliance/audit/search`
-- `/api/v1/admin/compliance/dsar/evidence/{userId}`
-- `/api/v1/admin/compliance/evidence/summary`
-
-### Federation
-
-- Server-to-server: `/federation/v1/*`
-- Federation admin: `/api/v1/federation/admin/*`
-
-### WebSocket
-
-- `WS /chat`
-
 ## ⚙️ Configuration
 
 Use the dedicated configuration reference:
@@ -280,6 +263,23 @@ It documents currently active environment variables (database, Ollama, image sto
 - Wallet routes (`/api/v1/wallet*`)
 - Purchases routes (`/api/v1/purchases/*`)
 - Notifications routes (`/api/v1/notifications/*`, `/api/v1/push/*`)
+
+### Compliance admin
+
+- `/api/v1/admin/compliance/legal-holds/*`
+- `/api/v1/admin/compliance/retention/*`
+- `/api/v1/admin/compliance/audit/search`
+- `/api/v1/admin/compliance/dsar/evidence/{userId}`
+- `/api/v1/admin/compliance/evidence/summary`
+
+### Federation
+
+- Server-to-server: `/federation/v1/*`
+- Federation admin: `/api/v1/federation/admin/*`
+
+### WebSocket
+
+- `WS /chat`
 
 ## 🔒 Security Notes
 

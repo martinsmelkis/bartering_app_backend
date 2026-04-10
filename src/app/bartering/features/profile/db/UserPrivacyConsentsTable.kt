@@ -17,6 +17,8 @@ object UserPrivacyConsentsTable : Table("user_privacy_consents") {
     val consentUpdatedAt = timestamp("consent_updated_at").nullable()
     val privacyPolicyVersion = varchar("privacy_policy_version", 50).nullable()
     val privacyPolicyAcceptedAt = timestamp("privacy_policy_accepted_at").nullable()
+    val termsConditionsVersion = varchar("terms_conditions_version", 50).nullable()
+    val termsConditionsAcceptedAt = timestamp("terms_conditions_accepted_at").nullable()
 
     override val primaryKey = PrimaryKey(userId)
 }

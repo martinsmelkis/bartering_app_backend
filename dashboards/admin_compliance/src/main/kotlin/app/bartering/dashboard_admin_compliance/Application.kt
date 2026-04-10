@@ -313,12 +313,30 @@ private fun buildSummaryFragment(snapshot: DashboardSnapshot): String = createHT
     div(classes = "grid gap-4 md:grid-cols-2 lg:grid-cols-4") {
         metricCard("DSAR Total", summary?.dsarTotalRequests?.toString() ?: "-")
         metricCard("DSAR Breached", summary?.dsarBreached?.toString() ?: "-")
+        metricCard("DSAR Overdue Open", summary?.dsarOverdueOpen?.toString() ?: "-")
         metricCard("Data Exports", summary?.dataExportCompletedEvents?.toString() ?: "-")
         metricCard("Deletion Completed", summary?.accountDeletionCompletedEvents?.toString() ?: "-")
         metricCard("Legal Holds Applied", summary?.legalHoldAppliedEvents?.toString() ?: "-")
         metricCard("Legal Holds Released", summary?.legalHoldReleasedEvents?.toString() ?: "-")
         metricCard("Retention Tasks", summary?.retentionTaskCompletedEvents?.toString() ?: "-")
         metricCard("Retention Cycles", summary?.retentionCycleCompletedEvents?.toString() ?: "-")
+        metricCard(
+            "Retention Coverage",
+            if (summary != null) "${summary.retentionCoverageCoveredTables}/${summary.retentionCoverageRequiredTables}" else "-"
+        )
+        metricCard("Retention Missing", summary?.retentionCoverageMissingTables?.toString() ?: "-")
+        metricCard("Retention Incomplete", summary?.retentionCoverageIncompleteTables?.toString() ?: "-")
+        metricCard("ROPA Active", summary?.ropaActiveActivities?.toString() ?: "-")
+        metricCard("ROPA Review Due", summary?.ropaReviewDueActivities?.toString() ?: "-")
+        metricCard("Erasure Pending", summary?.erasurePendingTasks?.toString() ?: "-")
+        metricCard("Erasure Overdue", summary?.erasureOverdueTasks?.toString() ?: "-")
+        metricCard("Backup Due ≤7d", summary?.erasureBackupDueSoonTasks?.toString() ?: "-")
+        metricCard("Security Open", summary?.securityIncidentsOpen?.toString() ?: "-")
+        metricCard("Security Critical", summary?.securityIncidentsCriticalOpen?.toString() ?: "-")
+        metricCard("Regulator Overdue", summary?.securityRegulatorNotificationOverdue?.toString() ?: "-")
+        metricCard("Regulator Due ≤24h", summary?.securityRegulatorNotificationDueWithin24h?.toString() ?: "-")
+        metricCard("Affected Users Pending", summary?.securityAffectedUsersPendingNotification?.toString() ?: "-")
+        metricCard("Affected Users Failed", summary?.securityAffectedUsersFailedNotification?.toString() ?: "-")
     }
 
     if (!snapshot.connectionError.isNullOrBlank()) {

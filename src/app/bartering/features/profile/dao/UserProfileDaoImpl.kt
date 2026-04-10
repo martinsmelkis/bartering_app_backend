@@ -344,7 +344,8 @@ class UserProfileDaoImpl : UserProfileDao {
             request.aiProcessingConsent != null ||
             request.analyticsCookiesConsent != null ||
             request.federationConsent != null ||
-            request.privacyPolicyVersion != null
+            request.privacyPolicyVersion != null ||
+            request.termsConditionsVersion != null
 
         if (consentChanged) {
             UserPrivacyConsentsTable.upsert { consentTable ->
@@ -366,6 +367,11 @@ class UserProfileDaoImpl : UserProfileDao {
                 request.privacyPolicyVersion?.let { version ->
                     consentTable[UserPrivacyConsentsTable.privacyPolicyVersion] = version
                     consentTable[UserPrivacyConsentsTable.privacyPolicyAcceptedAt] = java.time.Instant.now()
+                }
+
+                request.termsConditionsVersion?.let { version ->
+                    consentTable[UserPrivacyConsentsTable.termsConditionsVersion] = version
+                    consentTable[UserPrivacyConsentsTable.termsConditionsAcceptedAt] = java.time.Instant.now()
                 }
             }
 

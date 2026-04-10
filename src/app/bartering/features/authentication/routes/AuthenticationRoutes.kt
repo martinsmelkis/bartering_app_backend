@@ -12,6 +12,7 @@ import app.bartering.features.authentication.model.DeleteUserResponse
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.compliance.service.ComplianceAuditService
 import app.bartering.features.compliance.service.DataSubjectRequestService
+import app.bartering.features.compliance.service.ErasureTaskService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.utils.HashUtils
 import org.koin.java.KoinJavaComponent.inject
@@ -36,6 +37,7 @@ fun Route.deleteUserRoute() {
     val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
     val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
     val dsrService: DataSubjectRequestService by inject(DataSubjectRequestService::class.java)
+    val erasureTaskService: ErasureTaskService by inject(ErasureTaskService::class.java)
 
     delete("/api/v1/authentication/user/{userId}") {
         // --- Authentication using signature verification ---
@@ -194,6 +196,24 @@ fun Route.deleteUserRoute() {
                     requestId = requestId,
                     handledBy = "system",
                     notes = "Account deletion completed successfully"
+                )
+
+                val erasureTaskIds = erasureTaskService.createDefaultErasureTasks(
+                    userId = userIdToDelete,
+                    requestedBy = authenticatedUserId
+                )
+
+                complianceAuditService.logEvent(
+                    actorType = "system",
+                    actorId = authenticatedUserId,
+                    eventType = "ERASURE_TASKS_REGISTERED",
+                    entityType = "compliance_erasure_task",
+                    entityId = userIdToDelete,
+                    purpose = "gdpr_right_to_erasure",
+                    outcome = "success",
+                    requestId = call.request.headers["X-Request-ID"],
+                    dsrRequestId = requestId,
+                    details = mapOf("taskCount" to erasureTaskIds.size.toString())
                 )
 
                 call.respond(

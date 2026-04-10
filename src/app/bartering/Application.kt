@@ -50,6 +50,7 @@ import app.bartering.features.profile.tasks.InactiveUserCleanupTask
 import app.bartering.features.notifications.service.EmailService
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.middleware.installActivityTracking
+import app.bartering.middleware.installComplianceAuditInterceptor
 import app.bartering.config.configureRateLimiting
 import app.bartering.features.federation.di.federationModule
 import app.bartering.features.wallet.di.walletModule
@@ -133,6 +134,9 @@ fun Application.module(testing: Boolean = false) {
     
     // Install activity tracking middleware (tracks user presence)
     installActivityTracking()
+
+    // Install sensitive endpoint access audit middleware (GDPR accountability)
+    installComplianceAuditInterceptor()
 
     install(WebSockets) {
         pingPeriodMillis = 15_000

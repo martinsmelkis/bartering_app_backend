@@ -7,6 +7,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.model.UserRegistrationDataDto
 import app.bartering.features.profile.dao.UserProfileDaoImpl
@@ -266,6 +267,7 @@ fun Route.updateProfileRoute() {
         }
 
         try {
+            val requestJson = Json.parseToJsonElement(requestBody).jsonObject
             val request = Json.decodeFromString<UserProfile>(requestBody)
 
             // Verify that the authenticated user matches the user being updated
@@ -324,7 +326,13 @@ fun Route.updateProfileRoute() {
             }
 
             val oldWorkReferenceImageUrls = currentProfile?.workReferenceImageUrls ?: emptyList()
-            val resolvedWorkReferenceImageUrls = if (isPremiumUser) {
+            val workReferenceImageUrlsPresentInPayload = requestJson.containsKey("workReferenceImageUrls")
+            val hasNonEmptyWorkReferenceUpdate = request.workReferenceImageUrls.isNotEmpty()
+            val resolvedWorkReferenceImageUrls = if (
+                isPremiumUser &&
+                workReferenceImageUrlsPresentInPayload &&
+                hasNonEmptyWorkReferenceUpdate
+            ) {
                 persistProfileWorkReferenceImages(
                     imageStorage = imageStorage,
                     userId = request.userId,
@@ -421,7 +429,8 @@ fun Route.updateUserConsentRoute() {
                     aiProcessingConsent = request.aiProcessingConsent,
                     analyticsCookiesConsent = request.analyticsCookiesConsent,
                     federationConsent = request.federationConsent,
-                    privacyPolicyVersion = request.privacyPolicyVersion
+                    privacyPolicyVersion = request.privacyPolicyVersion,
+                    termsConditionsVersion = request.termsConditionsVersion
                 )
             )
 
@@ -442,7 +451,8 @@ fun Route.updateUserConsentRoute() {
                     "aiProcessingConsent" to (request.aiProcessingConsent?.toString() ?: "unchanged"),
                     "analyticsCookiesConsent" to (request.analyticsCookiesConsent?.toString() ?: "unchanged"),
                     "federationConsent" to (request.federationConsent?.toString() ?: "unchanged"),
-                    "privacyPolicyVersion" to (request.privacyPolicyVersion ?: "unchanged")
+                    "privacyPolicyVersion" to (request.privacyPolicyVersion ?: "unchanged"),
+                    "termsConditionsVersion" to (request.termsConditionsVersion ?: "unchanged")
                 )
             )
 

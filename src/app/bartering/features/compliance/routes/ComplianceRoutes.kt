@@ -171,6 +171,11 @@ fun Route.complianceAdminRoutes() {
     val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
     val legalHoldService: LegalHoldService by inject(LegalHoldService::class.java)
     val complianceAuditService: ComplianceAuditService by inject(ComplianceAuditService::class.java)
+    val dsarCoverageService: DsarCoverageService by inject(DsarCoverageService::class.java)
+    val dsrService: DataSubjectRequestService by inject(DataSubjectRequestService::class.java)
+    val erasureTaskService: ErasureTaskService by inject(ErasureTaskService::class.java)
+    val complianceGovernanceService: ComplianceGovernanceService by inject(ComplianceGovernanceService::class.java)
+    val securityIncidentService: SecurityIncidentService by inject(SecurityIncidentService::class.java)
 
     post("/api/v1/admin/compliance/legal-holds/apply") {
         val adminId = requireComplianceAdmin(
@@ -305,6 +310,232 @@ fun Route.complianceAdminRoutes() {
         )
     }
 
+    post("/api/v1/admin/compliance/security-incidents") {
+        val adminId = requireComplianceAdmin(
+            "security_incident_create",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<SecurityIncidentCreateRequest>()
+
+        if (request.incidentKey.isBlank() || request.incidentType.isBlank() || request.summary.isBlank()) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "incidentKey, incidentType and summary are required"))
+            return@post
+        }
+
+        val severity = request.severity.lowercase().trim()
+        if (severity !in setOf("low", "medium", "high", "critical")) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "severity must be one of: low, medium, high, critical"))
+            return@post
+        }
+
+        val detectedAt = request.detectedAt?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
+
+        val incidentId = securityIncidentService.createIncident(
+            incidentKey = request.incidentKey,
+            incidentType = request.incidentType.lowercase().trim(),
+            severity = severity,
+            summary = request.summary,
+            detectionSource = request.detectionSource,
+            affectedSystems = request.affectedSystems,
+            detectedAt = detectedAt,
+            riskToRights = request.riskToRights,
+            regulatorNotificationRequired = request.regulatorNotificationRequired,
+            likelyConsequences = request.likelyConsequences,
+            mitigationSteps = request.mitigationSteps,
+            createdBy = adminId,
+            affectedUserIds = request.affectedUserIds
+        )
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "SECURITY_INCIDENT_CREATED",
+            entityType = "security_incident",
+            entityId = incidentId.toString(),
+            purpose = "gdpr_article_33_34",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf(
+                "incidentKey" to request.incidentKey,
+                "severity" to severity,
+                "affectedUsersCount" to request.affectedUserIds.size.toString()
+            )
+        )
+
+        call.respond(HttpStatusCode.Created, mapOf("success" to true, "incidentId" to incidentId))
+    }
+
+    post("/api/v1/admin/compliance/security-incidents/update") {
+        val adminId = requireComplianceAdmin(
+            "security_incident_update",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val incidentId = call.request.queryParameters["incidentId"]?.toLongOrNull()
+        if (incidentId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "incidentId query parameter is required"))
+            return@post
+        }
+
+        val request = call.receive<SecurityIncidentUpdateRequest>()
+        val status = request.status.lowercase().trim()
+
+        if (status !in setOf("detected", "triaging", "contained", "notified", "resolved", "closed")) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid status"))
+            return@post
+        }
+
+        val updated = securityIncidentService.updateIncident(
+            incidentId = incidentId,
+            status = status,
+            containedAt = request.containedAt?.let { runCatching { Instant.parse(it) }.getOrNull() },
+            resolvedAt = request.resolvedAt?.let { runCatching { Instant.parse(it) }.getOrNull() },
+            regulatorNotifiedAt = request.regulatorNotifiedAt?.let { runCatching { Instant.parse(it) }.getOrNull() },
+            mitigationSteps = request.mitigationSteps,
+            likelyConsequences = request.likelyConsequences,
+            updatedBy = adminId
+        )
+
+        if (!updated) {
+            call.respond(HttpStatusCode.NotFound, mapOf("success" to false, "error" to "Incident not found"))
+            return@post
+        }
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "SECURITY_INCIDENT_UPDATED",
+            entityType = "security_incident",
+            entityId = incidentId.toString(),
+            purpose = "gdpr_article_33_34",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf("status" to status)
+        )
+
+        call.respond(HttpStatusCode.OK, mapOf("success" to true))
+    }
+
+    get("/api/v1/admin/compliance/security-incidents") {
+        requireComplianceAdmin(
+            "security_incident_list",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val status = call.request.queryParameters["status"]?.lowercase()?.trim()?.takeIf { it.isNotBlank() }
+        val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 200).coerceIn(1, 1000)
+
+        val incidents = securityIncidentService.listIncidents(limit = limit, status = status)
+            .map {
+                SecurityIncidentResponse(
+                    id = it.id,
+                    incidentKey = it.incidentKey,
+                    incidentType = it.incidentType,
+                    severity = it.severity,
+                    status = it.status,
+                    summary = it.summary,
+                    detectionSource = it.detectionSource,
+                    affectedSystems = it.affectedSystems,
+                    detectedAt = it.detectedAt.toString(),
+                    notificationDeadlineAt = it.notificationDeadlineAt.toString(),
+                    regulatorNotificationRequired = it.regulatorNotificationRequired,
+                    regulatorNotifiedAt = it.regulatorNotifiedAt?.toString(),
+                    riskToRights = it.riskToRights,
+                    likelyConsequences = it.likelyConsequences,
+                    mitigationSteps = it.mitigationSteps,
+                    affectedUsersTotal = it.affectedUsersTotal,
+                    affectedUsersPending = it.affectedUsersPending,
+                    affectedUsersSent = it.affectedUsersSent,
+                    affectedUsersFailed = it.affectedUsersFailed,
+                    createdAt = it.createdAt.toString(),
+                    updatedAt = it.updatedAt.toString()
+                )
+            }
+
+        call.respond(HttpStatusCode.OK, incidents)
+    }
+
+    get("/api/v1/admin/compliance/security-incidents/summary") {
+        requireComplianceAdmin(
+            "security_incident_summary",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val summary = securityIncidentService.summarizeIncidentReadiness()
+
+        call.respond(
+            HttpStatusCode.OK,
+            SecurityIncidentSummaryResponse(
+                openIncidents = summary.openIncidents,
+                criticalOpenIncidents = summary.criticalOpenIncidents,
+                regulatorNotificationOverdue = summary.regulatorNotificationOverdue,
+                regulatorNotificationDueWithin24h = summary.regulatorNotificationDueWithin24h,
+                affectedUsersPendingNotification = summary.affectedUsersPendingNotification,
+                affectedUsersFailedNotification = summary.affectedUsersFailedNotification,
+                generatedAt = summary.generatedAt.toString()
+            )
+        )
+    }
+
+    post("/api/v1/admin/compliance/security-incidents/notify-users") {
+        val adminId = requireComplianceAdmin(
+            "security_incident_notify_users",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<SecurityIncidentNotifyUsersRequest>()
+
+        val dispatch = securityIncidentService.notifyAffectedUsers(
+            incidentId = request.incidentId,
+            actorId = adminId,
+            customTitle = request.customTitle,
+            customBody = request.customBody,
+            selectedUserIds = request.userIds
+        )
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "SECURITY_INCIDENT_AFFECTED_USERS_NOTIFIED",
+            entityType = "security_incident",
+            entityId = request.incidentId.toString(),
+            purpose = "gdpr_article_34",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf(
+                "sent" to dispatch.sent.toString(),
+                "failed" to dispatch.failed.toString(),
+                "skipped" to dispatch.skipped.toString()
+            )
+        )
+
+        call.respond(
+            HttpStatusCode.OK,
+            mapOf(
+                "success" to true,
+                "sent" to dispatch.sent,
+                "failed" to dispatch.failed,
+                "skipped" to dispatch.skipped
+            )
+        )
+    }
+
     get("/api/v1/admin/compliance/retention/recent") {
         requireComplianceAdmin(
             "retention_recent",
@@ -407,6 +638,14 @@ fun Route.complianceAdminRoutes() {
             now = now
         )
 
+        val overdueOpenDsar = dsrService.listOverdueRequests(limit = 2000).size
+        val retentionCoverage = complianceGovernanceService.evaluateRetentionCoverage()
+        val ropaReadiness = complianceGovernanceService.summarizeRopaReadiness()
+        val erasureOverdue = erasureTaskService.countOverduePendingTasks(now)
+        val erasureBackupDueSoon = erasureTaskService.countBackupTasksDueSoon(days = 7)
+        val erasurePending = erasureTaskService.listTasks(status = "pending", limit = 2000).size
+        val securitySummary = securityIncidentService.summarizeIncidentReadiness()
+
         call.respond(
             HttpStatusCode.OK,
             ComplianceEvidenceSummaryResponse(
@@ -416,6 +655,7 @@ fun Route.complianceAdminRoutes() {
                 dsarCompletedWithinSla = dsarEvaluation.completedWithinSla,
                 dsarBreached = dsarEvaluation.breached,
                 dsarOpen = dsarEvaluation.open,
+                dsarOverdueOpen = overdueOpenDsar,
                 dsarBreachedActorIds = dsarEvaluation.breachedActorIds,
                 legalHoldAppliedEvents = allEvents.count { it.eventType == "LEGAL_HOLD_APPLIED" },
                 legalHoldReleasedEvents = allEvents.count { it.eventType == "LEGAL_HOLD_RELEASED" },
@@ -424,9 +664,367 @@ fun Route.complianceAdminRoutes() {
                 accountDeletionRequestedEvents = allEvents.count { it.eventType == "ACCOUNT_DELETION_REQUESTED" },
                 accountDeletionCompletedEvents = allEvents.count { it.eventType == "ACCOUNT_DELETION_COMPLETED" },
                 retentionTaskCompletedEvents = allEvents.count { it.eventType == "RETENTION_PURGE_TASK_COMPLETED" },
-                retentionCycleCompletedEvents = allEvents.count { it.eventType == "RETENTION_PURGE_CYCLE_COMPLETED" }
+                retentionCycleCompletedEvents = allEvents.count { it.eventType == "RETENTION_PURGE_CYCLE_COMPLETED" },
+                retentionCoverageRequiredTables = retentionCoverage.requiredTableCount,
+                retentionCoverageCoveredTables = retentionCoverage.coveredTableCount,
+                retentionCoverageMissingTables = retentionCoverage.missingTableCount,
+                retentionCoverageIncompleteTables = retentionCoverage.incompleteTableCount,
+                ropaActiveActivities = ropaReadiness.activeActivities,
+                ropaReviewDueActivities = ropaReadiness.reviewDueActivities,
+                erasurePendingTasks = erasurePending,
+                erasureOverdueTasks = erasureOverdue,
+                erasureBackupDueSoonTasks = erasureBackupDueSoon,
+                securityIncidentsOpen = securitySummary.openIncidents,
+                securityIncidentsCriticalOpen = securitySummary.criticalOpenIncidents,
+                securityRegulatorNotificationOverdue = securitySummary.regulatorNotificationOverdue,
+                securityRegulatorNotificationDueWithin24h = securitySummary.regulatorNotificationDueWithin24h,
+                securityAffectedUsersPendingNotification = securitySummary.affectedUsersPendingNotification,
+                securityAffectedUsersFailedNotification = securitySummary.affectedUsersFailedNotification
             )
         )
+    }
+
+    get("/api/v1/admin/compliance/dsar/coverage/{userId}") {
+        requireComplianceAdmin(
+            "dsar_coverage",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val userId = call.parameters["userId"] ?: return@get call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf("error" to "Missing userId")
+        )
+
+        val now = Instant.now()
+        val coverage = dsarCoverageService.buildLiveCoverage(userId)
+
+        call.respond(
+            HttpStatusCode.OK,
+            DsarCoverageResponse(
+                generatedAt = now.toString(),
+                userId = userId,
+                coverage = coverage
+            )
+        )
+    }
+
+    get("/api/v1/admin/compliance/erasure-tasks") {
+        requireComplianceAdmin(
+            "erasure_tasks_list",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val userId = call.request.queryParameters["userId"]
+        val status = call.request.queryParameters["status"]
+        val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 200).coerceIn(1, 1000)
+
+        val tasks = erasureTaskService.listTasks(userId = userId, status = status, limit = limit)
+            .map {
+                ErasureTaskResponse(
+                    id = it.id,
+                    userId = it.userId,
+                    taskType = it.taskType,
+                    status = it.status,
+                    storageScope = it.storageScope,
+                    targetRef = it.targetRef,
+                    requestedBy = it.requestedBy,
+                    handledBy = it.handledBy,
+                    dueAt = it.dueAt?.toString(),
+                    completedAt = it.completedAt?.toString(),
+                    notes = it.notes,
+                    createdAt = it.createdAt.toString(),
+                    updatedAt = it.updatedAt.toString()
+                )
+            }
+
+        call.respond(HttpStatusCode.OK, tasks)
+    }
+
+    post("/api/v1/admin/compliance/erasure-tasks/complete") {
+        val adminId = requireComplianceAdmin(
+            "erasure_tasks_complete",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<CompleteErasureTaskRequest>()
+        val updated = erasureTaskService.markCompleted(
+            taskId = request.taskId,
+            handledBy = adminId,
+            notes = request.notes
+        )
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = if (updated) "ERASURE_TASK_COMPLETED" else "ERASURE_TASK_COMPLETE_FAILED",
+            entityType = "compliance_erasure_task",
+            entityId = request.taskId.toString(),
+            purpose = "gdpr_right_to_erasure",
+            outcome = if (updated) "success" else "error",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf("notes" to (request.notes ?: "none"))
+        )
+
+        if (!updated) {
+            call.respond(HttpStatusCode.NotFound, mapOf("success" to false, "error" to "Task not found"))
+            return@post
+        }
+
+        call.respond(HttpStatusCode.OK, mapOf("success" to true))
+    }
+
+    post("/api/v1/admin/compliance/erasure-tasks/fail") {
+        val adminId = requireComplianceAdmin(
+            "erasure_tasks_fail",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<FailErasureTaskRequest>()
+        val updated = erasureTaskService.markFailed(
+            taskId = request.taskId,
+            handledBy = adminId,
+            notes = request.notes
+        )
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = if (updated) "ERASURE_TASK_FAILED" else "ERASURE_TASK_FAIL_UPDATE_FAILED",
+            entityType = "compliance_erasure_task",
+            entityId = request.taskId.toString(),
+            purpose = "gdpr_right_to_erasure",
+            outcome = if (updated) "error" else "denied",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf("notes" to (request.notes ?: "none"))
+        )
+
+        if (!updated) {
+            call.respond(HttpStatusCode.NotFound, mapOf("success" to false, "error" to "Task not found"))
+            return@post
+        }
+
+        call.respond(HttpStatusCode.OK, mapOf("success" to true))
+    }
+
+    get("/api/v1/admin/compliance/erasure-tasks/summary") {
+        requireComplianceAdmin(
+            "erasure_tasks_summary",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val overdue = erasureTaskService.countOverduePendingTasks()
+        val backupDueSoon = erasureTaskService.countBackupTasksDueSoon(days = 7)
+
+        call.respond(
+            HttpStatusCode.OK,
+            mapOf(
+                "overduePendingTasks" to overdue,
+                "backupTasksDueWithin7Days" to backupDueSoon,
+                "backupRetentionDays" to RetentionConfig.backupRetentionDays
+            )
+        )
+    }
+
+    post("/api/v1/admin/compliance/retention-policy/upsert") {
+        val adminId = requireComplianceAdmin(
+            "retention_policy_upsert",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<RetentionPolicyUpsertRequest>()
+        val id = complianceGovernanceService.upsertRetentionPolicy(request, actorId = adminId)
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "RETENTION_POLICY_REGISTER_UPSERTED",
+            entityType = "retention_policy_register",
+            entityId = id.toString(),
+            purpose = "gdpr_accountability",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf("tableName" to request.tableName)
+        )
+
+        call.respond(HttpStatusCode.OK, mapOf("success" to true, "id" to id))
+    }
+
+    get("/api/v1/admin/compliance/retention-policy") {
+        requireComplianceAdmin(
+            "retention_policy_list",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val activeOnly = call.request.queryParameters["activeOnly"]?.toBoolean() ?: false
+        val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 500).coerceIn(1, 2000)
+
+        val items = complianceGovernanceService.listRetentionPolicies(activeOnly = activeOnly, limit = limit)
+            .map {
+                RetentionPolicyItemResponse(
+                    id = it.id,
+                    dataDomain = it.dataDomain,
+                    tableName = it.tableName,
+                    processingPurpose = it.processingPurpose,
+                    legalBasis = it.legalBasis,
+                    retentionPeriodDays = it.retentionPeriodDays,
+                    deletionTrigger = it.deletionTrigger,
+                    deletionMethod = it.deletionMethod,
+                    exceptionRules = it.exceptionRules,
+                    ownerRole = it.ownerRole,
+                    enforcementJob = it.enforcementJob,
+                    isActive = it.isActive,
+                    createdBy = it.createdBy,
+                    updatedBy = it.updatedBy,
+                    createdAt = it.createdAt.toString(),
+                    updatedAt = it.updatedAt.toString()
+                )
+            }
+
+        call.respond(HttpStatusCode.OK, items)
+    }
+
+    get("/api/v1/admin/compliance/retention-policy/coverage") {
+        val adminId = requireComplianceAdmin(
+            "retention_policy_coverage",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val coverage = complianceGovernanceService.evaluateRetentionCoverage()
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "RETENTION_POLICY_COVERAGE_VIEWED",
+            entityType = "retention_policy_register",
+            entityId = "coverage",
+            purpose = "gdpr_accountability",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf(
+                "requiredTableCount" to coverage.requiredTableCount.toString(),
+                "coveredTableCount" to coverage.coveredTableCount.toString(),
+                "missingTableCount" to coverage.missingTableCount.toString(),
+                "incompleteTableCount" to coverage.incompleteTableCount.toString()
+            )
+        )
+
+        call.respond(
+            HttpStatusCode.OK,
+            RetentionPolicyCoverageResponse(
+                requiredTableCount = coverage.requiredTableCount,
+                coveredTableCount = coverage.coveredTableCount,
+                missingTableCount = coverage.missingTableCount,
+                incompleteTableCount = coverage.incompleteTableCount,
+                items = coverage.items.map {
+                    RetentionPolicyCoverageItemResponse(
+                        tableName = it.tableName,
+                        dataDomain = it.dataDomain,
+                        present = it.present,
+                        active = it.active,
+                        hasOwner = it.hasOwner,
+                        hasEnforcementJob = it.hasEnforcementJob,
+                        missingFields = it.missingFields
+                    )
+                }
+            )
+        )
+    }
+
+    post("/api/v1/admin/compliance/ropa/upsert") {
+        val adminId = requireComplianceAdmin(
+            "ropa_upsert",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@post
+
+        val request = call.receive<RopaUpsertRequest>()
+        val id = complianceGovernanceService.upsertRopaActivity(request, actorId = adminId)
+
+        complianceAuditService.logEvent(
+            actorType = "admin",
+            actorId = adminId,
+            eventType = "ROPA_REGISTER_UPSERTED",
+            entityType = "ropa_register",
+            entityId = id.toString(),
+            purpose = "gdpr_accountability",
+            outcome = "success",
+            requestId = call.request.headers["X-Request-ID"],
+            details = mapOf("activityKey" to request.activityKey)
+        )
+
+        call.respond(HttpStatusCode.OK, mapOf("success" to true, "id" to id))
+    }
+
+    get("/api/v1/admin/compliance/ropa") {
+        requireComplianceAdmin(
+            "ropa_list",
+            call,
+            authDao,
+            userProfileDao,
+            complianceAuditService
+        ) ?: return@get
+
+        val activeOnly = call.request.queryParameters["activeOnly"]?.toBoolean() ?: false
+        val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 500).coerceIn(1, 2000)
+
+        val items = complianceGovernanceService.listRopaActivities(activeOnly = activeOnly, limit = limit)
+            .map {
+                RopaItemResponse(
+                    id = it.id,
+                    activityKey = it.activityKey,
+                    activityName = it.activityName,
+                    controllerName = it.controllerName,
+                    controllerContact = it.controllerContact,
+                    dpoContact = it.dpoContact,
+                    processingPurposes = it.processingPurposes,
+                    dataSubjectCategories = it.dataSubjectCategories,
+                    personalDataCategories = it.personalDataCategories,
+                    recipientCategories = it.recipientCategories,
+                    thirdCountryTransfers = it.thirdCountryTransfers,
+                    safeguardsDescription = it.safeguardsDescription,
+                    legalBasis = it.legalBasis,
+                    retentionSummary = it.retentionSummary,
+                    tomsSummary = it.tomsSummary,
+                    sourceSystems = it.sourceSystems,
+                    processors = it.processors,
+                    jointControllers = it.jointControllers,
+                    isActive = it.isActive,
+                    reviewDueAt = it.reviewDueAt?.toString(),
+                    lastReviewedAt = it.lastReviewedAt?.toString(),
+                    createdBy = it.createdBy,
+                    updatedBy = it.updatedBy,
+                    createdAt = it.createdAt.toString(),
+                    updatedAt = it.updatedAt.toString()
+                )
+            }
+
+        call.respond(HttpStatusCode.OK, items)
     }
 }
 
