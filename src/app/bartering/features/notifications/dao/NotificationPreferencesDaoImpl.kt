@@ -10,6 +10,8 @@ import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import java.time.Instant
 import java.util.UUID
 
+class DuplicateNotificationEmailException(message: String) : IllegalArgumentException(message)
+
 /**
  * Implementation of NotificationPreferencesDao using Exposed ORM
  */
@@ -37,9 +39,18 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
     }
     
     override suspend fun saveUserContacts(contacts: UserNotificationContacts): UserNotificationContacts = dbQuery {
+        val normalizedEmail = contacts.email?.trim()?.takeIf { it.isNotBlank() }
+
+        if (normalizedEmail != null) {
+            val existingEmailOwner = getUserByEmail(normalizedEmail)
+            if (existingEmailOwner != null && existingEmailOwner.userId != contacts.userId) {
+                throw DuplicateNotificationEmailException("Email is already used by another user")
+            }
+        }
+
         UserNotificationContactsTable.insert {
             it[userId] = contacts.userId
-            it[email] = contacts.email
+            it[email] = normalizedEmail
             it[emailVerified] = contacts.emailVerified
             it[pushTokens] = contacts.pushTokens.map { token ->
                 mapOf(
@@ -57,7 +68,7 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             it[createdAt] = Instant.now()
             it[updatedAt] = Instant.now()
         }
-        contacts
+        contacts.copy(email = normalizedEmail)
     }
     
     override suspend fun updateUserContacts(
@@ -65,11 +76,20 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
         request: UpdateUserNotificationContactsRequest
     ): UserNotificationContacts? = dbQuery {
         val existing = getUserContacts(userId)
+        val normalizedEmail = request.email?.trim()?.takeIf { it.isNotBlank() }
+
+        if (normalizedEmail != null) {
+            val existingEmailOwner = getUserByEmail(normalizedEmail)
+            if (existingEmailOwner != null && existingEmailOwner.userId != userId) {
+                throw DuplicateNotificationEmailException("Email is already used by another user")
+            }
+        }
+
         if (existing == null) {
             // Create new if doesn't exist
             val newContacts = UserNotificationContacts(
                 userId = userId,
-                email = request.email,
+                email = normalizedEmail,
                 notificationsEnabled = request.notificationsEnabled ?: true,
                 quietHoursStart = request.quietHoursStart,
                 quietHoursEnd = request.quietHoursEnd,
@@ -78,9 +98,9 @@ class NotificationPreferencesDaoImpl : NotificationPreferencesDao {
             saveUserContacts(newContacts)
             return@dbQuery newContacts
         }
-        
+
         UserNotificationContactsTable.update({ UserNotificationContactsTable.userId eq userId }) {
-            request.email?.let { email -> it[UserNotificationContactsTable.email] = email }
+            request.email?.let { _ -> it[UserNotificationContactsTable.email] = normalizedEmail }
             request.notificationsEnabled?.let { enabled -> it[notificationsEnabled] = enabled }
             request.quietHoursStart?.let { start -> it[quietHoursStart] = start }
             request.quietHoursEnd?.let { end -> it[quietHoursEnd] = end }

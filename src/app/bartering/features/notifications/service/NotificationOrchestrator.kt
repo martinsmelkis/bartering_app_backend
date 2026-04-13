@@ -4,9 +4,11 @@ import app.bartering.features.notifications.model.*
 import app.bartering.features.notifications.dao.NotificationPreferencesDao
 import app.bartering.features.chat.manager.ConnectionManager
 import app.bartering.features.chat.model.MatchNotificationMessage
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * High-level notification orchestrator
@@ -21,6 +23,8 @@ class NotificationOrchestrator(
     private val connectionManager: ConnectionManager
 ) {
     private val log = LoggerFactory.getLogger(this::class.java)
+    private val publicUrl = (System.getenv("PUBLIC_URL") ?: "https://bartering.app").trimEnd('/')
+    private val unsubscribeTokenSecret = System.getenv("JWT_SECRET") ?: "change-me"
     
     /**
      * Send notification via all enabled channels for the user
@@ -48,11 +52,13 @@ class NotificationOrchestrator(
             return results
         }
         
-        // Send email if available and verified
-        if (emailService != null && contacts.email != null/* && contacts.emailVerified*/) {
+        // Send email only when user has explicitly opted in to marketing communications
+        if (emailService != null && contacts.email != null/* && contacts.emailVerified*/ && contacts.marketingConsent) {
+            val unsubscribeUrl = buildUnsubscribeUrl(userId)
             val email = emailTemplate ?: buildDefaultEmail(
                 to = contacts.email,
-                notification = notification
+                notification = notification,
+                unsubscribeUrl = unsubscribeUrl
             )
             
             try {
@@ -140,19 +146,20 @@ class NotificationOrchestrator(
     
     private fun buildDefaultEmail(
         to: String,
-        notification: NotificationData
+        notification: NotificationData,
+        unsubscribeUrl: String
     ): EmailNotification {
         return EmailNotification(
             to = listOf(to),
             from = "info@bartering.app",
             fromName = "Bartering App",
             subject = notification.title,
-            htmlBody = buildHtmlEmail(notification),
-            textBody = notification.body
+            htmlBody = buildHtmlEmail(notification, unsubscribeUrl),
+            textBody = "${notification.body}\n\nManage notifications: $unsubscribeUrl\nUnsubscribe: $unsubscribeUrl"
         )
     }
     
-    private fun buildHtmlEmail(notification: NotificationData): String {
+    private fun buildHtmlEmail(notification: NotificationData, unsubscribeUrl: String): String {
         return """
             <!DOCTYPE html>
             <html>
@@ -192,11 +199,27 @@ class NotificationOrchestrator(
                     </div>
                     <div class="footer">
                         <p>© 2026 Bartering App. All rights reserved.</p>
-                        <p><a href="#">Unsubscribe</a> | <a href="#">Preferences</a></p>
+                        <p><a href="$unsubscribeUrl">Unsubscribe</a> | <a href="$unsubscribeUrl">Preferences</a></p>
                     </div>
                 </div>
             </body>
             </html>
         """.trimIndent()
+    }
+
+    private fun buildUnsubscribeUrl(userId: String): String {
+        val expiresAtEpochSeconds = (System.currentTimeMillis() / 1000L) + (30L * 24L * 60L * 60L) // 30 days
+        val payload = "$userId:$expiresAtEpochSeconds"
+        val signature = signPayload(payload)
+        val tokenRaw = "$payload:$signature"
+        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenRaw.toByteArray(Charsets.UTF_8))
+        return "$publicUrl/#/notifications/contacts?token=$token"
+    }
+
+    private fun signPayload(payload: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(unsubscribeTokenSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        val signatureBytes = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(signatureBytes)
     }
 }

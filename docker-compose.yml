@@ -141,6 +141,7 @@ services:
       - IMAGE_UPLOAD_DIR=/uploads/images
       - IMAGE_BASE_URL=/api/v1/images
       - IMAGE_STORAGE_TYPE=local
+      - PUBLIC_URL=${PUBLIC_URL:-https://bartering.app}
       - ENVIRONMENT=development
       - LOG_LEVEL=DEBUG
       # Firebase Push Notifications

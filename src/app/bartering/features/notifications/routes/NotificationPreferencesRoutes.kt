@@ -11,8 +11,12 @@ import app.bartering.extensions.normalizeAttributeForDBProcessing
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.notifications.dao.NotificationPreferencesDao
+import app.bartering.features.notifications.dao.DuplicateNotificationEmailException
 import app.bartering.features.notifications.model.*
 import org.koin.java.KoinJavaComponent.inject
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Batch request data classes for attribute preferences
@@ -38,8 +42,81 @@ data class AttributeBatchPreferences(
 fun Application.notificationPreferencesRoutes() {
     val preferencesDao: NotificationPreferencesDao by inject(NotificationPreferencesDao::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val unsubscribeTokenSecret = System.getenv("JWT_SECRET") ?: "change-me"
+
+    fun signPayload(payload: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(unsubscribeTokenSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        val signatureBytes = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(signatureBytes)
+    }
+
+    fun parseUnsubscribeToken(token: String): Pair<String, Long>? {
+        return try {
+            val decoded = String(Base64.getUrlDecoder().decode(token), Charsets.UTF_8)
+            val firstColon = decoded.indexOf(':')
+            val lastColon = decoded.lastIndexOf(':')
+            if (firstColon <= 0 || lastColon <= firstColon + 1) return null
+
+            val userId = decoded.take(firstColon)
+            val expiresAtStr = decoded.substring(firstColon + 1, lastColon)
+            val signature = decoded.substring(lastColon + 1)
+            val expiresAt = expiresAtStr.toLongOrNull() ?: return null
+
+            val payload = "$userId:$expiresAt"
+            val expectedSignature = signPayload(payload)
+            if (signature != expectedSignature) return null
+
+            if ((System.currentTimeMillis() / 1000L) > expiresAt) return null
+
+            Pair(userId, expiresAt)
+        } catch (_: Exception) {
+            null
+        }
+    }
     
     routing {
+        // Public one-click unsubscribe route for email links (no app authentication required)
+        get("/api/v1/notifications/unsubscribe") {
+            val token = call.request.queryParameters["token"]
+            if (token.isNullOrBlank()) {
+                call.respond(HttpStatusCode.BadRequest, NotificationPreferencesResponse(
+                    success = false,
+                    message = "Missing unsubscribe token"
+                ))
+                return@get
+            }
+
+            val parsed = parseUnsubscribeToken(token)
+            if (parsed == null) {
+                call.respond(HttpStatusCode.Unauthorized, NotificationPreferencesResponse(
+                    success = false,
+                    message = "Invalid or expired unsubscribe token"
+                ))
+                return@get
+            }
+
+            val (userId, _) = parsed
+            val updated = preferencesDao.updateUserContacts(
+                userId,
+                UpdateUserNotificationContactsRequest(
+                    marketingConsent = false
+                )
+            )
+
+            if (updated != null) {
+                call.respond(HttpStatusCode.OK, NotificationPreferencesResponse(
+                    success = true,
+                    message = "You have been unsubscribed from email notifications"
+                ))
+            } else {
+                call.respond(HttpStatusCode.NotFound, NotificationPreferencesResponse(
+                    success = false,
+                    message = "Notification contact preferences not found"
+                ))
+            }
+        }
+
         rateLimit(RateLimitName("notification_prefs")) {
             route("/api/v1/notifications") {
             
@@ -77,6 +154,11 @@ fun Application.notificationPreferencesRoutes() {
                             message = "Failed to update contacts"
                         ))
                     }
+                } catch (e: DuplicateNotificationEmailException) {
+                    call.respond(HttpStatusCode.Conflict, NotificationPreferencesResponse(
+                        success = false,
+                        message = e.message ?: "Email is already used by another user"
+                    ))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, NotificationPreferencesResponse(
                         success = false,
