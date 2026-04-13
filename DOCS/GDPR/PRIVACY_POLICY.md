@@ -1,117 +1,128 @@
 ## Privacy Policy
 
-**Effective date:** 2026-03-19  
-**Last updated:** 2026-03-19
+**Effective date:** 2026-04-13  
+**Last updated:** 2026-04-13
 
-This Privacy Policy explains how the Barter App Backend ("Service") processes personal data in connection with barter, messaging, profile discovery, notifications, and federation features.
-
-By using the Service, you acknowledge this Privacy Policy.
+This Privacy Policy explains how Barter processes personal data through its backend services and connected client applications.
 
 ## 1. Controller and Contact
 
-- **Controller:** [Add legal entity / individual owner]
-- **Address:** [Add postal address]
-- **Email:** [Add privacy contact email]
-- **Data Protection Contact (if applicable):** [Add DPO/contact]
+- **Controller:** [Add legal entity / owner name]
+- **Address:** [Add legal address]
+- **Privacy contact:** [Add privacy email]
+- **Data Protection Officer (if appointed):** [Add DPO contact]
 
-## 2. Scope
+## 2. Scope and System Components
 
-This Privacy Policy applies to personal data processed through:
-- account registration and authentication,
-- profile and attribute management,
-- posting and search features,
-- messaging and encrypted file exchange,
-- review/reputation systems,
-- notifications (email/push),
-- optional federation between trusted servers.
+This policy covers processing in:
+- backend APIs,
+- connected client apps (mobile/web),
+- admin/compliance dashboards,
+- optional federation features (if enabled).
 
-## 3. Categories of Personal Data
+## 3. Data We Process
 
-Depending on usage, we may process:
-- **Identity/account data:** user ID, public key, device key metadata.
-- **Profile data:** display name, location coordinates, attributes/interests/offers.
-- **Content data:** postings, images, encrypted files metadata, chat/offline messages.
-- **Interaction data:** relationships (connections/blocks), reviews, reputation, transactions.
-- **Technical/activity data:** timestamps, presence/last activity, security logs, rate-limit/security events.
-- **Notification data:** email contact and push/contact tokens, preference settings.
-- **Federation data (if enabled):** trusted-server metadata, federated profile/posting cache, federation audit logs.
+We may process:
+- **Account and authentication data**: user ID, device/public key metadata, signature verification metadata.
+- **Profile data**: display name, optional coordinates, profile attributes/interests/offers, profile media URLs.
+- **Content and communication data**: postings, chat/offline message data, encrypted file metadata, review/reputation records.
+- **Notification data**: email address, push tokens, notification preferences (including consent flags).
+- **Security/compliance data**: audit events, DSAR/erasure/legal-hold records, incident-management records.
+- **Technical metadata**: timestamps, request metadata, IP/device hashes for security and accountability.
 
-## 4. Purposes and Legal Bases (GDPR Art. 6)
+## 4. Purposes and GDPR Legal Bases
 
-We process data for these purposes:
-- **Service performance** (Art. 6(1)(b)): account operation, matching, messaging, posting, and profile discovery.
-- **Security and abuse prevention** (Art. 6(1)(f)): signature verification, replay protection, fraud/risk controls, system integrity.
-- **Legitimate interests** (Art. 6(1)(f)): improve relevance, inactivity management, reliability, and platform safety.
-- **Consent** (Art. 6(1)(a), where required): optional notifications/communications and similar opt-in processing.
-- **Legal obligations** (Art. 6(1)(c), where applicable): compliance, legal requests, and required records.
+We process data for:
+- **Service delivery** (Art. 6(1)(b)): account, posting, matching, messaging, notifications.
+- **Security and abuse prevention** (Art. 6(1)(f)): signature checks, anti-fraud/risk controls, operational safety.
+- **Compliance/accountability** (Art. 6(1)(c) and 6(1)(f)): audit trails, legal hold enforcement, DSAR management, incident handling.
+- **Consent-based processing** (Art. 6(1)(a)): optional consents (for example, location/federation/notification consent settings where applicable).
 
-## 5. Data Retention
+## 5. SDKs, Processors, and Infrastructure Actually Used
 
-We keep personal data only as long as needed for the above purposes.
+Current backend integrations include:
+- **PostgreSQL** (primary data storage).
+- **Mailjet** (email delivery).
+- **Firebase Admin / FCM** (push notifications, if configured).
+- **Ollama** (local/self-hosted model service for embeddings/search support).
+- **Nginx + Docker hosting stack** (deployment/runtime infrastructure).
+- **Optional federation peers** (only when federation is enabled and trusted).
 
-Current operational behavior includes:
-- **User-initiated deletion:** permanent deletion workflow across user-related data domains.
-- **Inactive account lifecycle:** active/inactive/dormant states; optional auto-delete can be enabled by configuration (default disabled).
-- **Logs and operational records:** retained for security, debugging, and compliance needs for a limited period.
+If a provider acts as a processor, processing is based on a relevant data processing agreement and required safeguards.
 
-If legal obligations require longer retention for specific records, those records are retained only as required.
+## 6. Retention and Deletion
 
-## 6. Account Deletion and Right to Erasure
+The backend implements retention controls and scheduled cleanup, including:
+- configurable retention windows for chat, analytics, read receipts, and risk-tracking data,
+- cleanup of old compliance-operational records,
+- DSAR request lifecycle retention,
+- legal-hold-aware retention (held user data excluded from certain purge actions).
 
-You can request deletion via the authenticated account deletion endpoint. Deletion is designed to be permanent and includes direct and cascade cleanup across core profile, relationship, posting, messaging, and reputation-linked data structures, plus cache cleanup and associated media cleanup flows.
+Retention periods are configured operationally and reviewed as part of governance.
 
-## 7. Recipients and Processors
+## 7. Account Deletion and Right to Erasure
 
-Data may be processed by:
-- infrastructure and hosting providers,
-- email/push service providers,
-- storage providers for uploaded content,
-- analytics/security tooling used for operation and abuse prevention,
-- federation peers (only if federation is enabled and configured).
+Users can request account deletion through authenticated flows.
 
-Where providers act as processors, appropriate contractual safeguards should be in place.
+Deletion workflow includes:
+- DSAR request creation and status tracking,
+- legal hold checks,
+- deletion/cascade cleanup across linked data domains,
+- follow-up erasure task registration for additional storage scopes where needed.
 
-## 8. International Transfers
+## 8. Data Export and Right to Portability
 
-If providers or federation peers are outside your jurisdiction/EEA, personal data may be transferred internationally. Where required, transfers should rely on valid safeguards (e.g., SCCs or equivalent legal mechanisms).
+Users can request data export via authenticated flows.
 
-## 9. Data Subject Rights (GDPR)
+Export workflow includes:
+- DSAR tracking,
+- legal hold checks,
+- export artifact generation (machine-readable JSON in ZIP),
+- export dispatch to configured contact email,
+- compliance event logging for request and completion.
 
-Subject to legal conditions, you may request:
+## 9. Consent Management
+
+Consent-related fields are stored and updated with timestamp/version metadata where applicable (e.g., privacy policy/terms acceptance versions, location/federation/other consent flags).
+
+Consent updates are logged for accountability.
+
+## 10. Security Measures
+
+We apply technical and organizational measures such as:
+- authenticated request-signature verification,
+- access control for privileged/compliance routes,
+- transport security in deployed environments (TLS via reverse proxy),
+- compliance/security audit logging,
+- structured retention and deletion workflows.
+
+No system is perfectly secure, but controls are continuously improved.
+
+## 11. International Data Transfers
+
+Depending on deployment and chosen providers, data may be processed outside the EEA/your country. Where required, transfers rely on legally valid safeguards (for example SCCs or equivalent mechanisms).
+
+## 12. Children
+
+The service is not intended for children below the minimum lawful age in applicable jurisdictions. If unlawful child data processing is identified, contact us for remediation/removal.
+
+## 13. Your GDPR Rights
+
+Subject to law, you may request:
 - access,
 - rectification,
 - erasure,
 - restriction,
 - portability,
 - objection,
-- withdrawal of consent (where processing is based on consent).
+- withdrawal of consent (where consent is the legal basis).
 
-You also have the right to lodge a complaint with your supervisory authority.
+You may also lodge a complaint with your supervisory authority.
 
-## 10. Security Measures
+## 14. Changes to This Policy
 
-We apply technical and organizational measures, including:
-- request signature verification,
-- timestamp checks to reduce replay attacks,
-- authenticated route controls,
-- encrypted transport (TLS in deployment),
-- controlled data access and deletion workflows,
-- monitoring and audit-related logs.
+We may update this policy from time to time. Material changes should be communicated in-app or through another appropriate channel with updated effective dates.
 
-No method of transmission/storage is 100% secure, but we continuously improve safeguards.
+## 15. Contact
 
-## 11. Children
-
-The Service is not intended for children under the age required by applicable law in your jurisdiction. If you believe a child has provided personal data unlawfully, contact us for removal.
-
-## 12. Cookies / Tracking
-
-If frontends or integrated clients use cookies or similar identifiers, they must provide corresponding notices/controls. Backend operational logs may still process technical request metadata for security and reliability.
-
-## 13. Changes to this Policy
-
-We may update this Privacy Policy. Material changes should be communicated through the app/site or another appropriate channel, with updated effective dates.
-
-## 14. Contact
-
-For privacy requests and GDPR rights, contact: **[Add privacy email]**.
+For privacy and GDPR requests, contact: **[Add privacy email]**.
