@@ -47,7 +47,7 @@ private val analyticsRecordingScope = CoroutineScope(SupervisorJob() + Dispatche
 
 private const val MAX_PROFILE_WORK_REFERENCE_IMAGES = 6
 private const val MAX_PROFILE_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
-private const val MAX_PROFILE_AVATAR_ICON_LENGTH = 20_000
+private const val MAX_PROFILE_AVATAR_ICON_LENGTH = 50_000
 private const val MAX_PROFILE_SELF_DESCRIPTION_LENGTH = 128
 
 private fun buildProfileImageStorage(): ImageStorageService {

@@ -3,6 +3,7 @@ package app.bartering.features.analytics.dao
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.analytics.db.UserDailyActivityStatsTable
 import app.bartering.features.analytics.model.UserDailyActivityStats
+import kotlinx.coroutines.delay
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.between
@@ -11,10 +12,15 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 import java.sql.Date
+import java.sql.SQLException
 import java.time.LocalDate
 
 class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
     private val log = LoggerFactory.getLogger(this::class.java)
+
+    private companion object {
+        private const val MAX_SERIALIZATION_RETRIES = 3
+    }
 
     override suspend fun incrementApiRequest(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
         incrementCounter(anonymizedUserId, date, "api_request_count", amount)
@@ -287,8 +293,8 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
         date: LocalDate,
         counterColumn: String,
         amount: Int
-    ): Boolean = dbQuery {
-        if (amount <= 0) return@dbQuery true
+    ): Boolean {
+        if (amount <= 0) return true
 
         val allowedColumns = setOf(
             "api_request_count",
@@ -306,45 +312,62 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
 
         if (counterColumn !in allowedColumns) {
             log.warn("Rejected unknown analytics counter column: {}", counterColumn)
-            return@dbQuery false
+            return false
         }
 
-        try {
-            val sql = """
-                INSERT INTO user_daily_activity_stats (
-                    anonymized_user_id,
-                    activity_date,
-                    $counterColumn,
-                    analytics_consent,
-                    updated_at
-                )
-                VALUES (?, ?, ?, TRUE, NOW())
-                ON CONFLICT (anonymized_user_id, activity_date)
-                DO UPDATE SET
-                    activity_date = EXCLUDED.activity_date,
-                    $counterColumn = user_daily_activity_stats.$counterColumn + EXCLUDED.$counterColumn,
-                    analytics_consent = TRUE,
-                    updated_at = NOW();
-            """.trimIndent()
-
-            (TransactionManager.current().connection.connection as java.sql.Connection)
-                .prepareStatement(sql)
-                .use { statement ->
-                    statement.setString(1, anonymizedUserId)
-                    statement.setDate(2, Date.valueOf(date))
-                    statement.setInt(3, amount)
-                    statement.executeUpdate()
-                }
-            true
-        } catch (e: Exception) {
-            log.warn(
-                "Failed incrementing daily stats counter={} for anonymizedUserId={} date={}: {}",
-                counterColumn,
-                anonymizedUserId,
-                date,
-                e.message
+        val sql = """
+            INSERT INTO user_daily_activity_stats (
+                anonymized_user_id,
+                activity_date,
+                $counterColumn,
+                analytics_consent,
+                updated_at
             )
-            false
+            VALUES (?, ?, ?, TRUE, NOW())
+            ON CONFLICT (anonymized_user_id, activity_date)
+            DO UPDATE SET
+                activity_date = EXCLUDED.activity_date,
+                $counterColumn = user_daily_activity_stats.$counterColumn + EXCLUDED.$counterColumn,
+                analytics_consent = TRUE,
+                updated_at = NOW();
+        """.trimIndent()
+
+        repeat(MAX_SERIALIZATION_RETRIES + 1) { attempt ->
+            try {
+                return dbQuery {
+                    (TransactionManager.current().connection.connection as java.sql.Connection)
+                        .prepareStatement(sql)
+                        .use { statement ->
+                            statement.setString(1, anonymizedUserId)
+                            statement.setDate(2, Date.valueOf(date))
+                            statement.setInt(3, amount)
+                            statement.executeUpdate()
+                        }
+                    true
+                }
+            } catch (e: Exception) {
+                val sqlState = (e as? SQLException)?.sqlState ?: (e.cause as? SQLException)?.sqlState
+                val isSerializationConflict = sqlState == "40001" ||
+                    e.message?.contains("could not serialize access due to concurrent update", ignoreCase = true) == true
+
+                if (isSerializationConflict && attempt < MAX_SERIALIZATION_RETRIES) {
+                    val backoffMs = 10L * (attempt + 1)
+                    delay(backoffMs)
+                    return@repeat
+                }
+
+                log.warn(
+                    "Failed incrementing daily stats counter={} for anonymizedUserId={} date={} after {} attempt(s): {}",
+                    counterColumn,
+                    anonymizedUserId,
+                    date,
+                    attempt + 1,
+                    e.message
+                )
+                return false
+            }
         }
+
+        return false
     }
 }

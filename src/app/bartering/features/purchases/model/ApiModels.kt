@@ -61,3 +61,18 @@ data class PurchaseOperationResponse(
     val message: String? = null,
     val purchase: PurchaseResponse? = null
 )
+
+@Serializable
+data class RevenueCatWebhookResponse(
+    val success: Boolean,
+    val duplicate: Boolean = false,
+    val eventId: String? = null,
+    val message: String
+)
+
+@Serializable
+data class PremiumSyncNowResponse(
+    val success: Boolean,
+    val premiumStatus: PremiumStatusResponse,
+    val source: String = "revenuecat_sync_now"
+)

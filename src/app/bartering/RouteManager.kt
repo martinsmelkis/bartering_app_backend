@@ -89,5 +89,9 @@ fun Application.routes() {
         purchasePremiumLifetimeRoute()
         purchaseCoinPackRoute()
         purchaseVisibilityBoostRoute()
+
+        // RevenueCat premium mirror sync
+        revenueCatWebhookRoute()
+        syncPremiumNowRoute()
     }
 }

@@ -8,8 +8,11 @@ import app.bartering.features.purchases.model.PurchasePremiumLifetimeRequest
 import app.bartering.features.purchases.model.PurchaseResponse
 import app.bartering.features.purchases.model.PurchaseVisibilityBoostRequest
 import app.bartering.features.purchases.model.PremiumStatusResponse
+import app.bartering.features.purchases.model.PremiumSyncNowResponse
+import app.bartering.features.purchases.model.RevenueCatWebhookResponse
 import app.bartering.features.purchases.service.PurchasesService
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -91,6 +94,83 @@ fun Route.getPurchaseHistoryRoute() {
         } catch (e: Exception) {
             log.error("Failed to fetch purchase history for user {}", authenticatedUserId, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to fetch purchase history"))
+        }
+    }
+}
+
+fun Route.revenueCatWebhookRoute() {
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+
+    post("/api/v1/purchases/revenuecat/webhook") {
+        val rawPayload = call.receiveText()
+        val authorizationHeader = call.request.headers["Authorization"]
+
+        try {
+            val result = purchasesService.processRevenueCatWebhook(rawPayload, authorizationHeader)
+            if (!result.accepted) {
+                return@post call.respond(
+                    HttpStatusCode.Unauthorized,
+                    RevenueCatWebhookResponse(
+                        success = false,
+                        duplicate = false,
+                        eventId = result.eventId,
+                        message = result.message
+                    )
+                )
+            }
+
+            call.respond(
+                HttpStatusCode.OK,
+                RevenueCatWebhookResponse(
+                    success = true,
+                    duplicate = result.duplicate,
+                    eventId = result.eventId,
+                    message = result.message
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Failed to process RevenueCat webhook", e)
+            call.respond(
+                HttpStatusCode.BadRequest,
+                RevenueCatWebhookResponse(
+                    success = false,
+                    duplicate = false,
+                    message = "Failed to process RevenueCat webhook"
+                )
+            )
+        }
+    }
+}
+
+fun Route.syncPremiumNowRoute() {
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/purchases/premium/sync-now") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) {
+            return@post
+        }
+
+        try {
+            val premium = purchasesService.syncPremiumFromRevenueCat(authenticatedUserId)
+            call.respond(
+                HttpStatusCode.OK,
+                PremiumSyncNowResponse(
+                    success = true,
+                    premiumStatus = PremiumStatusResponse(
+                        userId = premium.userId,
+                        isPremium = premium.isPremium,
+                        isLifetime = premium.isLifetime,
+                        grantedAt = premium.grantedAt?.toEpochMilli(),
+                        expiresAt = premium.expiresAt?.toEpochMilli(),
+                        updatedAt = premium.updatedAt.toEpochMilli()
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Failed to sync premium status from RevenueCat for user {}", authenticatedUserId, e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to sync premium status"))
         }
     }
 }

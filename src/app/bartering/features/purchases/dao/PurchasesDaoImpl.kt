@@ -1,6 +1,8 @@
 package app.bartering.features.purchases.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.profile.db.UserRegistrationDataTable
+import app.bartering.features.purchases.db.RevenueCatProcessedEventsTable
 import app.bartering.features.purchases.db.UserPremiumEntitlementsTable
 import app.bartering.features.purchases.db.UserPurchasesTable
 import app.bartering.features.purchases.model.PremiumEntitlement
@@ -12,9 +14,11 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
+import java.util.UUID
 
 class PurchasesDaoImpl : PurchasesDao {
     override suspend fun createPurchase(purchase: UserPurchase): Boolean = dbQuery {
@@ -70,7 +74,14 @@ class PurchasesDaoImpl : PurchasesDao {
                 grantedByPurchaseId = null,
                 grantedAt = null,
                 expiresAt = null,
-                updatedAt = Instant.now()
+                updatedAt = Instant.now(),
+                rcCustomerId = null,
+                rcAppUserId = null,
+                rcEntitlementId = null,
+                rcLastEventId = null,
+                rcLastEventType = null,
+                lastEventAt = null,
+                entitlementSource = null
             )
     }
 
@@ -82,6 +93,13 @@ class PurchasesDaoImpl : PurchasesDao {
             it[grantedAt] = entitlement.grantedAt
             it[expiresAt] = entitlement.expiresAt
             it[updatedAt] = entitlement.updatedAt
+            it[rcCustomerId] = entitlement.rcCustomerId
+            it[rcAppUserId] = entitlement.rcAppUserId
+            it[rcEntitlementId] = entitlement.rcEntitlementId
+            it[rcLastEventId] = entitlement.rcLastEventId
+            it[rcLastEventType] = entitlement.rcLastEventType
+            it[lastEventAt] = entitlement.lastEventAt
+            it[entitlementSource] = entitlement.entitlementSource
         }
 
         if (updated > 0) {
@@ -95,6 +113,13 @@ class PurchasesDaoImpl : PurchasesDao {
                 it[grantedAt] = entitlement.grantedAt
                 it[expiresAt] = entitlement.expiresAt
                 it[updatedAt] = entitlement.updatedAt
+                it[rcCustomerId] = entitlement.rcCustomerId
+                it[rcAppUserId] = entitlement.rcAppUserId
+                it[rcEntitlementId] = entitlement.rcEntitlementId
+                it[rcLastEventId] = entitlement.rcLastEventId
+                it[rcLastEventType] = entitlement.rcLastEventType
+                it[lastEventAt] = entitlement.lastEventAt
+                it[entitlementSource] = entitlement.entitlementSource
             }
             true
         }
@@ -117,6 +142,31 @@ class PurchasesDaoImpl : PurchasesDao {
         )
     }
 
+    override suspend fun userExists(userId: String): Boolean = dbQuery {
+        UserRegistrationDataTable
+            .select(UserRegistrationDataTable.id)
+            .where { UserRegistrationDataTable.id eq userId }
+            .limit(1)
+            .empty().not()
+    }
+
+    override suspend fun markRevenueCatEventProcessed(
+        eventId: String,
+        appUserId: String?,
+        eventType: String?,
+        eventAt: Instant?
+    ): Boolean = dbQuery {
+        val inserted = RevenueCatProcessedEventsTable.insertIgnore {
+            it[id] = UUID.randomUUID().toString()
+            it[RevenueCatProcessedEventsTable.eventId] = eventId
+            it[RevenueCatProcessedEventsTable.appUserId] = appUserId
+            it[RevenueCatProcessedEventsTable.eventType] = eventType
+            it[RevenueCatProcessedEventsTable.eventAt] = eventAt
+            it[processedAt] = Instant.now()
+        }
+        inserted.insertedCount > 0
+    }
+
     private fun rowToPremiumEntitlement(row: ResultRow): PremiumEntitlement {
         return PremiumEntitlement(
             userId = row[UserPremiumEntitlementsTable.userId],
@@ -125,7 +175,14 @@ class PurchasesDaoImpl : PurchasesDao {
             grantedByPurchaseId = row[UserPremiumEntitlementsTable.grantedByPurchaseId],
             grantedAt = row[UserPremiumEntitlementsTable.grantedAt],
             expiresAt = row[UserPremiumEntitlementsTable.expiresAt],
-            updatedAt = row[UserPremiumEntitlementsTable.updatedAt]
+            updatedAt = row[UserPremiumEntitlementsTable.updatedAt],
+            rcCustomerId = row[UserPremiumEntitlementsTable.rcCustomerId],
+            rcAppUserId = row[UserPremiumEntitlementsTable.rcAppUserId],
+            rcEntitlementId = row[UserPremiumEntitlementsTable.rcEntitlementId],
+            rcLastEventId = row[UserPremiumEntitlementsTable.rcLastEventId],
+            rcLastEventType = row[UserPremiumEntitlementsTable.rcLastEventType],
+            lastEventAt = row[UserPremiumEntitlementsTable.lastEventAt],
+            entitlementSource = row[UserPremiumEntitlementsTable.entitlementSource]
         )
     }
 }

@@ -30,4 +30,14 @@ interface PurchasesService {
 
     suspend fun getPremiumStatus(userId: String): PremiumEntitlement
     suspend fun getPurchaseHistory(userId: String, limit: Int = 50, offset: Long = 0): List<UserPurchase>
+
+    suspend fun processRevenueCatWebhook(rawPayload: String, authorizationHeader: String?): RevenueCatWebhookProcessResult
+    suspend fun syncPremiumFromRevenueCat(userId: String): PremiumEntitlement
 }
+
+data class RevenueCatWebhookProcessResult(
+    val accepted: Boolean,
+    val duplicate: Boolean = false,
+    val eventId: String? = null,
+    val message: String
+)

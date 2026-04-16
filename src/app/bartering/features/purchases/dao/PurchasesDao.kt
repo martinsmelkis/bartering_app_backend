@@ -13,4 +13,6 @@ interface PurchasesDao {
     suspend fun getPurchasesForUser(userId: String, limit: Int = 50, offset: Long = 0): List<UserPurchase>
     suspend fun getPremiumEntitlement(userId: String): PremiumEntitlement
     suspend fun upsertPremiumEntitlement(entitlement: PremiumEntitlement): Boolean
+    suspend fun userExists(userId: String): Boolean
+    suspend fun markRevenueCatEventProcessed(eventId: String, appUserId: String?, eventType: String?, eventAt: java.time.Instant?): Boolean
 }

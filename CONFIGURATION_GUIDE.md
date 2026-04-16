@@ -119,6 +119,36 @@ Default sender address.
 - `MJ_APIKEY_PUBLIC` (fallback for API key)
 - `MJ_APIKEY_PRIVATE` (fallback for API secret)
 
+### RevenueCat purchases / premium sync
+
+#### `REVENUECAT_API_BASE_URL`
+RevenueCat API base URL.
+- Default: `https://api.revenuecat.com/v2`
+- Usually keep default unless RevenueCat changes API base.
+
+#### `REVENUECAT_PROJECT_ID`
+RevenueCat project identifier used in v2 API path.
+- **Where to find**: RevenueCat dashboard project URL (`/projects/<project_id>/...`) or project settings metadata.
+- Example: in `https://app.revenuecat.com/projects/projf1888888/api-keys`, the project ID is `projf1888888`.
+
+#### `REVENUECAT_API_KEY`
+RevenueCat **Secret API key** used by backend to call RevenueCat v2 API.
+- **Where to find**: Project → **API keys** → **Secret API keys**.
+- Use the key that starts with `sk_...`.
+- Never expose this key to clients.
+
+#### `REVENUECAT_PREMIUM_ENTITLEMENT_ID`
+Entitlement identifier that backend treats as "premium".
+- **Where to find**: RevenueCat → Entitlements.
+- Use the entitlement **identifier** (often looks like `entl...`), not display name.
+- Important: must exactly match `items[].entitlement_id` returned by RevenueCat API.
+
+#### `REVENUECAT_WEBHOOK_AUTH_TOKEN`
+Shared secret token for webhook Authorization header validation.
+- **Where to set**: backend env and RevenueCat webhook auth header value.
+- Backend expects: `Authorization: Bearer <token>`.
+- Generate as a random secret (32+ bytes) and rotate if exposed.
+
 ### Inactive user cleanup
 
 #### `INACTIVE_USER_AUTO_DELETE`
@@ -259,6 +289,13 @@ MAILJET_FROM_EMAIL=info@bartering.app
 PUSH_PROVIDER=firebase
 FIREBASE_CREDENTIALS_PATH=/app
 FIREBASE_CREDENTIALS_FILE=firebase-credentials.json
+
+# RevenueCat (premium sync)
+REVENUECAT_API_BASE_URL=https://api.revenuecat.com/v2
+REVENUECAT_PROJECT_ID=projxxxxxxxx
+REVENUECAT_API_KEY=sk_xxxxxxxxxxxxxxxxxxxxxxxxx
+REVENUECAT_PREMIUM_ENTITLEMENT_ID=entlxxxxxxxxxxxx
+REVENUECAT_WEBHOOK_AUTH_TOKEN=replace_with_long_random_secret
 
 # Image storage (local)
 IMAGE_STORAGE_TYPE=local

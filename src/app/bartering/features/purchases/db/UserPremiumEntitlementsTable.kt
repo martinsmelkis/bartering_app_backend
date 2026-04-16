@@ -14,6 +14,13 @@ object UserPremiumEntitlementsTable : Table("user_premium_entitlements") {
     val grantedAt = timestamp("granted_at").nullable()
     val expiresAt = timestamp("expires_at").nullable()
     val updatedAt = timestamp("updated_at").default(Instant.now())
+    val rcCustomerId = varchar("rc_customer_id", 128).nullable()
+    val rcAppUserId = varchar("rc_app_user_id", 128).nullable()
+    val rcEntitlementId = varchar("rc_entitlement_id", 128).nullable()
+    val rcLastEventId = varchar("rc_last_event_id", 128).nullable()
+    val rcLastEventType = varchar("rc_last_event_type", 64).nullable()
+    val lastEventAt = timestamp("last_event_at").nullable()
+    val entitlementSource = varchar("source", 32).nullable()
 
     override val primaryKey = PrimaryKey(userId)
 }

@@ -7,6 +7,22 @@ import app.bartering.features.purchases.model.PurchaseType
 import app.bartering.features.purchases.model.UserPurchase
 import app.bartering.features.wallet.model.TransactionType
 import app.bartering.features.wallet.service.WalletService
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
+import io.ktor.http.encodeURLPathPart
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Locale
@@ -16,6 +32,34 @@ class PurchasesServiceImpl(
     private val purchasesDao: PurchasesDao,
     private val walletService: WalletService
 ) : PurchasesService {
+
+    private val log = LoggerFactory.getLogger("app.bartering.features.purchases.service.PurchasesServiceImpl")
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
+    private val httpClient = HttpClient {
+        install(ContentNegotiation) {
+            json(json)
+        }
+    }
+
+    private val revenueCatApiBaseUrl: String
+        get() = System.getenv("REVENUECAT_API_BASE_URL")?.trim()?.ifBlank { null } ?: "https://api.revenuecat.com/v2"
+
+    private val revenueCatProjectId: String?
+        get() = System.getenv("REVENUECAT_PROJECT_ID")?.trim()?.ifBlank { null }
+
+    private val revenueCatApiKey: String?
+        get() = System.getenv("REVENUECAT_API_KEY")?.trim()?.ifBlank { null }
+
+    private val revenueCatWebhookAuthToken: String?
+        get() = System.getenv("REVENUECAT_WEBHOOK_AUTH_TOKEN")?.trim()?.ifBlank { null }
+
+    private val revenueCatPremiumEntitlementId: String
+        get() = System.getenv("REVENUECAT_PREMIUM_ENTITLEMENT_ID")?.trim()?.ifBlank { null } ?: "Bartering App Premium"
 
     private data class VisibilityBoostDefinition(
         val canonicalType: String,
@@ -217,7 +261,14 @@ class PurchasesServiceImpl(
             grantedByPurchaseId = purchaseId,
             grantedAt = now,
             expiresAt = if (existingEntitlement.isLifetime) null else effectiveExpiresAt,
-            updatedAt = now
+            updatedAt = now,
+            rcCustomerId = existingEntitlement.rcCustomerId,
+            rcAppUserId = existingEntitlement.rcAppUserId,
+            rcEntitlementId = existingEntitlement.rcEntitlementId,
+            rcLastEventId = existingEntitlement.rcLastEventId,
+            rcLastEventType = existingEntitlement.rcLastEventType,
+            lastEventAt = existingEntitlement.lastEventAt,
+            entitlementSource = existingEntitlement.entitlementSource
         )
         purchasesDao.upsertPremiumEntitlement(updatedEntitlement)
 
@@ -240,5 +291,213 @@ class PurchasesServiceImpl(
 
     override suspend fun getPurchaseHistory(userId: String, limit: Int, offset: Long): List<UserPurchase> {
         return purchasesDao.getPurchasesForUser(userId, limit, offset)
+    }
+
+    override suspend fun processRevenueCatWebhook(rawPayload: String, authorizationHeader: String?): RevenueCatWebhookProcessResult {
+        val configuredWebhookToken = revenueCatWebhookAuthToken
+        if (!configuredWebhookToken.isNullOrBlank()) {
+            val expected = "Bearer $configuredWebhookToken"
+            if (authorizationHeader?.trim() != expected) {
+                return RevenueCatWebhookProcessResult(
+                    accepted = false,
+                    message = "Unauthorized RevenueCat webhook"
+                )
+            }
+        }
+
+        val root = try {
+            json.parseToJsonElement(rawPayload).jsonObject
+        } catch (_: Exception) {
+            return RevenueCatWebhookProcessResult(
+                accepted = false,
+                message = "Invalid JSON payload"
+            )
+        }
+
+        val event = root["event"]?.jsonObject ?: root
+        val eventId = event.stringOrNull("id")
+        val eventType = event.stringOrNull("type")
+        val eventAt = event.longOrNull("event_timestamp_ms")?.let { Instant.ofEpochMilli(it) }
+
+        if (eventId.isNullOrBlank()) {
+            return RevenueCatWebhookProcessResult(
+                accepted = false,
+                message = "Missing event id"
+            )
+        }
+
+        val appUserId = event.stringOrNull("app_user_id")
+            ?: event.stringOrNull("original_app_user_id")
+
+        val targetUserIds = mutableSetOf<String>()
+
+        if (!appUserId.isNullOrBlank()) targetUserIds += appUserId
+        val originalAppUserId = event.stringOrNull("original_app_user_id")
+        if (!originalAppUserId.isNullOrBlank()) targetUserIds += originalAppUserId
+        targetUserIds += event.stringArrayOrEmpty("transferred_from")
+        targetUserIds += event.stringArrayOrEmpty("transferred_to")
+
+        val inserted = purchasesDao.markRevenueCatEventProcessed(
+            eventId = eventId,
+            appUserId = appUserId,
+            eventType = eventType,
+            eventAt = eventAt
+        )
+
+        if (!inserted) {
+            return RevenueCatWebhookProcessResult(
+                accepted = true,
+                duplicate = true,
+                eventId = eventId,
+                message = "Duplicate event ignored"
+            )
+        }
+
+        if (targetUserIds.isEmpty()) {
+            return RevenueCatWebhookProcessResult(
+                accepted = true,
+                duplicate = false,
+                eventId = eventId,
+                message = "Event stored, no app_user_id to sync"
+            )
+        }
+
+        val localTargetUserIds = targetUserIds.filter { userId ->
+            val existsLocally = purchasesDao.userExists(userId)
+            if (!existsLocally) {
+                log.warn("Skipping RevenueCat webhook sync for unknown local user {}", userId)
+            }
+            existsLocally
+        }
+
+        if (localTargetUserIds.isEmpty()) {
+            return RevenueCatWebhookProcessResult(
+                accepted = true,
+                duplicate = false,
+                eventId = eventId,
+                message = "Event stored, no local users to sync"
+            )
+        }
+
+        localTargetUserIds.forEach { userId ->
+            try {
+                refreshPremiumFromRevenueCat(
+                    userId = userId,
+                    entitlementSource = "revenuecat_webhook",
+                    lastEventId = eventId,
+                    lastEventType = eventType,
+                    lastEventAt = eventAt
+                )
+            } catch (e: Exception) {
+                log.error("Failed to sync premium snapshot from RevenueCat webhook for user {}", userId, e)
+            }
+        }
+
+        return RevenueCatWebhookProcessResult(
+            accepted = true,
+            duplicate = false,
+            eventId = eventId,
+            message = "Webhook processed"
+        )
+    }
+
+    override suspend fun syncPremiumFromRevenueCat(userId: String): PremiumEntitlement {
+        return refreshPremiumFromRevenueCat(
+            userId = userId,
+            entitlementSource = "revenuecat_sync_now",
+            lastEventId = null,
+            lastEventType = "SYNC_NOW",
+            lastEventAt = Instant.now()
+        )
+    }
+
+    private suspend fun refreshPremiumFromRevenueCat(
+        userId: String,
+        entitlementSource: String,
+        lastEventId: String?,
+        lastEventType: String?,
+        lastEventAt: Instant?
+    ): PremiumEntitlement {
+        val apiKey = revenueCatApiKey
+            ?: throw IllegalStateException("REVENUECAT_API_KEY is not configured")
+
+        val projectId = revenueCatProjectId
+            ?: throw IllegalStateException("REVENUECAT_PROJECT_ID is not configured for RevenueCat API v2")
+
+        val entitlementId = revenueCatPremiumEntitlementId
+        val encodedProjectId = projectId.encodeURLPathPart()
+        val encodedUserId = userId.encodeURLPathPart()
+
+        val activeEntitlementsUrl = "${revenueCatApiBaseUrl.trimEnd('/')}/projects/$encodedProjectId/customers/$encodedUserId/active_entitlements"
+        val customerUrl = "${revenueCatApiBaseUrl.trimEnd('/')}/projects/$encodedProjectId/customers/$encodedUserId"
+
+        val activeEntitlementsBody = httpClient.get(activeEntitlementsUrl) {
+            header(HttpHeaders.Authorization, "Bearer $apiKey")
+            header(HttpHeaders.Accept, "application/json")
+        }.body<String>()
+
+        val customerBody = httpClient.get(customerUrl) {
+            header(HttpHeaders.Authorization, "Bearer $apiKey")
+            header(HttpHeaders.Accept, "application/json")
+        }.body<String>()
+
+        val activeRoot = json.parseToJsonElement(activeEntitlementsBody).jsonObject
+        val items = activeRoot["items"]?.jsonArray ?: JsonArray(emptyList())
+
+        val matchingEntitlement = items
+            .mapNotNull { it as? JsonObject }
+            .firstOrNull { it.stringOrNull("entitlement_id") == entitlementId }
+
+        val now = Instant.now()
+        val expiresAt = matchingEntitlement
+            ?.longOrNull("expires_at")
+            ?.let { Instant.ofEpochMilli(it) }
+        val isActive = matchingEntitlement != null && (expiresAt == null || expiresAt.isAfter(now))
+
+        val customerRoot = json.parseToJsonElement(customerBody).jsonObject
+        val rcCustomerId = customerRoot.stringOrNull("id") ?: userId
+
+        val updated = PremiumEntitlement(
+            userId = userId,
+            isPremium = isActive,
+            isLifetime = isActive && expiresAt == null,
+            grantedByPurchaseId = null,
+            grantedAt = null,
+            expiresAt = expiresAt,
+            updatedAt = now,
+            rcCustomerId = rcCustomerId,
+            rcAppUserId = userId,
+            rcEntitlementId = entitlementId,
+            rcLastEventId = lastEventId,
+            rcLastEventType = lastEventType,
+            lastEventAt = lastEventAt,
+            entitlementSource = entitlementSource
+        )
+
+        purchasesDao.upsertPremiumEntitlement(updated)
+        return updated
+    }
+
+    private fun JsonObject.stringOrNull(key: String): String? {
+        return (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    }
+
+    private fun JsonObject.longOrNull(key: String): Long? {
+        val primitive = this[key] as? JsonPrimitive ?: return null
+        return primitive.longOrNullOrString()
+    }
+
+    private fun JsonPrimitive.longOrNullOrString(): Long? {
+        return this.contentOrNull?.toLongOrNull()
+    }
+
+    private fun JsonObject.stringArrayOrEmpty(key: String): List<String> {
+        val element = this[key] ?: return emptyList()
+        val array = element as? JsonArray ?: return emptyList()
+        return array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { value -> value.isNotBlank() } }
+    }
+
+    private fun String.toInstantOrNull(): Instant? {
+        return runCatching { Instant.parse(this) }.getOrNull()
     }
 }
