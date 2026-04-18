@@ -36,9 +36,9 @@ enum class ReputationBadge(val value: String, val description: String) {
     COMMUNITY_CONNECTOR("community_connector", "Community Connector"),
 
     /**
-     * User has verified business registration.
+     * User is favorited by 30+ users.
      */
-    VERIFIED_BUSINESS("verified_business", "Verified Business"),
+    LOCAL_LEGEND("local_legend", "Local Legend - Favorited by 30+ Users"),
 
     /**
      * User has never had a disputed transaction.

@@ -7,7 +7,7 @@ A flexible, provider-agnostic notification system supporting multiple email and 
 **Firebase Push Service is FULLY IMPLEMENTED and READY TO USE!**
 
 - **Implementation**: `service/impl/FirebasePushService.kt`
-- **Credentials**: `barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json` (configured at project root)
+- **Credentials**: `bartering-app-e0cca-firebase-adminsdk-fbsvc-d72e9a5b4d.json` (configured at project root)
 - **Quick Start Guide**: [DOCS/FIREBASE_PUSH_QUICK_START.md](../../../DOCS/FIREBASE_PUSH_QUICK_START.md)
 - **Full Documentation**: [DOCS/FIREBASE_PUSH_SERVICE_IMPLEMENTATION.md](../../../DOCS/FIREBASE_PUSH_SERVICE_IMPLEMENTATION.md)
 

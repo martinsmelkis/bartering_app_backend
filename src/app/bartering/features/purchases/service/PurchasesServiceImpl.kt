@@ -61,6 +61,31 @@ class PurchasesServiceImpl(
     private val revenueCatPremiumEntitlementId: String
         get() = System.getenv("REVENUECAT_PREMIUM_ENTITLEMENT_ID")?.trim()?.ifBlank { null } ?: "Bartering App Premium"
 
+    private val revenueCatCoins20ProductId: String
+        get() = System.getenv("REVENUECAT_COINS20_PRODUCT_ID")?.trim()?.ifBlank { null } ?: "web_coins_20"
+
+    private val revenueCatCoins20Amount: Long
+        get() = System.getenv("REVENUECAT_COINS20_AMOUNT")?.trim()?.toLongOrNull() ?: 20L
+
+    private data class RevenueCatCoinRewardDefinition(
+        val productId: String? = null,
+        val coinAmount: Long,
+        val placeholder: Boolean = false
+    )
+
+    private val revenueCatCoinRewardDefinitions: List<RevenueCatCoinRewardDefinition>
+        get() = buildList {
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoins20ProductId,
+                    coinAmount = revenueCatCoins20Amount
+                )
+            )
+
+            // TODO add 2 others
+
+        }
+
     private data class VisibilityBoostDefinition(
         val canonicalType: String,
         val costCoins: Long,
@@ -381,6 +406,12 @@ class PurchasesServiceImpl(
 
         localTargetUserIds.forEach { userId ->
             try {
+                processRevenueCatCoinRewardsFromEvent(
+                    userId = userId,
+                    event = event,
+                    eventId = eventId
+                )
+
                 refreshPremiumFromRevenueCat(
                     userId = userId,
                     entitlementSource = "revenuecat_webhook",
@@ -409,6 +440,81 @@ class PurchasesServiceImpl(
             lastEventType = "SYNC_NOW",
             lastEventAt = Instant.now()
         )
+    }
+
+    private suspend fun processRevenueCatCoinRewardsFromEvent(
+        userId: String,
+        event: JsonObject,
+        eventId: String
+    ) {
+        val eventType = event.stringOrNull("type")?.uppercase(Locale.ROOT)
+        val allowedCoinRewardEventTypes = setOf("NON_RENEWING_PURCHASE")
+        if (eventType !in allowedCoinRewardEventTypes) {
+            log.info("Skipping RevenueCat coin reward for event {} (type={})", eventId, eventType)
+            return
+        }
+
+        val productIds = extractProductIdsFromEvent(event)
+        val transactionRef = event.stringOrNull("transaction_id")
+            ?: event.stringOrNull("original_transaction_id")
+            ?: eventId
+
+        val matchingDefinitions = revenueCatCoinRewardDefinitions.filter { definition ->
+            val productMatch = !definition.productId.isNullOrBlank() && productIds.contains(definition.productId)
+            productMatch
+        }
+
+        if (matchingDefinitions.isEmpty()) return
+
+        matchingDefinitions.forEach { definition ->
+            if (definition.coinAmount <= 0L) {
+                log.info(
+                    "Skipping RevenueCat coin reward for product {} due to non-positive amount {}",
+                    definition.productId,
+                    definition.coinAmount
+                )
+                return@forEach
+            }
+
+            if (definition.placeholder) {
+                log.info(
+                    "RevenueCat coin reward placeholder matched for product {} (amount={}); no-op placeholder processing",
+                    definition.productId,
+                    definition.coinAmount
+                )
+                return@forEach
+            }
+
+            val referenceKey = definition.productId ?: "unknown"
+            val walletCredited = walletService.earnCoins(
+                userId = userId,
+                amount = definition.coinAmount,
+                transactionType = TransactionType.PURCHASE_COIN_PACK,
+                externalRef = "revenuecat:coinpack:$referenceKey:$transactionRef",
+                metadataJson = "{\"source\":\"revenuecat_webhook\",\"eventId\":\"$eventId\",\"eventType\":\"${eventType ?: ""}\",\"transactionRef\":\"$transactionRef\",\"productId\":\"${definition.productId ?: ""}\"}"
+            )
+
+            if (!walletCredited) {
+                log.warn(
+                    "Failed to credit RevenueCat coin reward for user {} product {}",
+                    userId,
+                    definition.productId
+                )
+            }
+        }
+    }
+
+    private fun extractProductIdsFromEvent(event: JsonObject): Set<String> {
+        val ids = mutableSetOf<String>()
+
+        event.stringOrNull("product_id")?.let { ids += it }
+
+        val productIdsArray = event["product_ids"] as? JsonArray
+        productIdsArray
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { value -> value.isNotBlank() } }
+            ?.forEach { ids += it }
+
+        return ids
     }
 
     private suspend fun refreshPremiumFromRevenueCat(
@@ -497,7 +603,4 @@ class PurchasesServiceImpl(
         return array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { value -> value.isNotBlank() } }
     }
 
-    private fun String.toInstantOrNull(): Instant? {
-        return runCatching { Instant.parse(this) }.getOrNull()
-    }
 }

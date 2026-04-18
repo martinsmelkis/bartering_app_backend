@@ -20,7 +20,7 @@ The FirebasePushService is a complete implementation of the PushNotificationServ
 ### Firebase Credentials
 
 The service requires a Firebase Admin SDK service account JSON file. By default, it looks for:
-- **File**: `barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json`
+- **File**: `bartering-app-e0cca-firebase-adminsdk-fbsvc-d72e9a5b4d.json`
 - **Location**: Project root directory
 
 You can customize the location using environment variables:

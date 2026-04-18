@@ -58,7 +58,7 @@ object DatabaseFactory {
             driverClassName = conf.getString("database.MainDatabaseDriver")
             maximumPoolSize = 10
             isAutoCommit = false // Let Exposed manage commits.
-            transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+            transactionIsolation = "TRANSACTION_READ_COMMITTED"
             validate()
         }
         return HikariDataSource(config)

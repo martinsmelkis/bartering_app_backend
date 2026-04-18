@@ -52,7 +52,7 @@ class FirebasePushService : PushNotificationService {
             if (FirebaseApp.getApps().isEmpty()) {
                 val credentialsPath = System.getenv("FIREBASE_CREDENTIALS_PATH") ?: "."
                 val credentialsFile = System.getenv("FIREBASE_CREDENTIALS_FILE") 
-                    ?: "barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json"
+                    ?: "bartering-app-e0cca-firebase-adminsdk-fbsvc-d72e9a5b4d.json"
                 
                 val serviceAccountPath = Paths.get(credentialsPath, credentialsFile).toString()
                 val serviceAccountFile = java.io.File(serviceAccountPath)
@@ -61,7 +61,7 @@ class FirebasePushService : PushNotificationService {
                     log.warn("Firebase credentials file not found at: {}", serviceAccountPath)
                     log.warn("Push notifications will be disabled. Place the credentials file or set environment variables:")
                     log.warn("  - FIREBASE_CREDENTIALS_PATH (default: .)")
-                    log.warn("  - FIREBASE_CREDENTIALS_FILE (default: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json)")
+                    log.warn("  - FIREBASE_CREDENTIALS_FILE (default: bartering-app-e0cca-firebase-adminsdk-fbsvc-d72e9a5b4d.json)")
                     return false
                 }
                 

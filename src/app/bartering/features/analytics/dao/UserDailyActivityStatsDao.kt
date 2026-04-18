@@ -15,6 +15,11 @@ interface UserDailyActivityStatsDao {
     suspend fun incrementTransactionsCreated(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementReviewsSubmitted(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
     suspend fun incrementSuccessfulActions(anonymizedUserId: String, date: LocalDate = LocalDate.now(), amount: Int = 1): Boolean
+    suspend fun incrementCountersBatch(
+        anonymizedUserId: String,
+        date: LocalDate = LocalDate.now(),
+        counters: Map<String, Int>
+    ): Boolean
     suspend fun incrementSearchKeyword(anonymizedUserId: String, keyword: String, date: LocalDate = LocalDate.now()): Boolean
     suspend fun recordSearchKeywordWithResponseTime(
         anonymizedUserId: String,

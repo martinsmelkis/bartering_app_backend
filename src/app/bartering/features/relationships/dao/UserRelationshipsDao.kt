@@ -71,6 +71,11 @@ interface UserRelationshipsDao {
     suspend fun getRelationshipStats(userId: String): RelationshipStats
 
     /**
+     * Gets how many users have favorited the given user.
+     */
+    suspend fun getFavoritesReceivedCount(userId: String): Int
+
+    /**
      * Checks if user A has blocked user B
      */
     suspend fun isBlocked(fromUserId: String, toUserId: String): Boolean

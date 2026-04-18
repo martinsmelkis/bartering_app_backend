@@ -237,7 +237,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-ERROR}
       # Firebase Push Notifications
       FIREBASE_CREDENTIALS_PATH: /app
-      FIREBASE_CREDENTIALS_FILE: barter-app-backend-dev-firebase-adminsdk-fbsvc-393197c88a.json
+      FIREBASE_CREDENTIALS_FILE: bartering-app-e0cca-firebase-adminsdk-fbsvc-d72e9a5b4d.json
       MAILJET_API_KEY: ${MAILJET_API_KEY:-}
       MAILJET_API_SECRET: ${MAILJET_API_SECRET:-}
       PUSH_PROVIDER: firebase

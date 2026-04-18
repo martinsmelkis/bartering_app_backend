@@ -7,6 +7,7 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.chat.dao.ChatAnalyticsDao
 import app.bartering.features.purchases.service.PurchasesService
+import app.bartering.features.relationships.dao.UserRelationshipsDao
 import app.bartering.features.reviews.dao.*
 import app.bartering.features.reviews.model.*
 import app.bartering.features.reviews.service.ReputationCalculationService
@@ -22,6 +23,7 @@ fun Route.getReputationRoute() {
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     val chatAnalyticsDao: ChatAnalyticsDao by inject(ChatAnalyticsDao::class.java)
     val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+    val userRelationshipsDao: UserRelationshipsDao by inject(UserRelationshipsDao::class.java)
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     val reputationService: ReputationCalculationService by inject(ReputationCalculationService::class.java)
 
@@ -114,6 +116,7 @@ fun Route.getReputationRoute() {
                 transactionDao,
                 chatAnalyticsDao,
                 purchasesService,
+                userRelationshipsDao,
                 authDao
             )
 
@@ -201,6 +204,7 @@ private suspend fun updateUserBadges(
     transactionDao: BarterTransactionDao,
     chatAnalyticsDao: ChatAnalyticsDao,
     purchasesService: PurchasesService,
+    userRelationshipsDao: UserRelationshipsDao,
     authDao: AuthenticationDaoImpl
 ) {
     // Get current badges
@@ -216,8 +220,8 @@ private suspend fun updateUserBadges(
                 hasIdentityVerified = { _ ->
                     badge == ReputationBadge.IDENTITY_VERIFIED && currentBadges.contains(badge)
                 },
-                hasBusinessVerified = { _ ->
-                    badge == ReputationBadge.VERIFIED_BUSINESS && currentBadges.contains(badge)
+                getFavoritesReceivedCount = { uid ->
+                    userRelationshipsDao.getFavoritesReceivedCount(uid)
                 },
                 hasPremiumUser = { uid ->
                     purchasesService.getPremiumStatus(uid).isPremium
@@ -247,8 +251,7 @@ private suspend fun updateUserBadges(
                 reputationDao.addBadge(userId, badge)
             } else if (!isEligible && currentBadges.contains(badge)) {
                 // Remove badge if no longer eligible (except for manually awarded badges)
-                if (badge != ReputationBadge.IDENTITY_VERIFIED && 
-                    badge != ReputationBadge.VERIFIED_BUSINESS) {
+                if (badge != ReputationBadge.IDENTITY_VERIFIED) {
                     reputationDao.removeBadge(userId, badge)
                 }
             }

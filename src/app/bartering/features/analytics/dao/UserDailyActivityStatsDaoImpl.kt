@@ -55,6 +55,98 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
     override suspend fun incrementSuccessfulActions(anonymizedUserId: String, date: LocalDate, amount: Int): Boolean =
         incrementCounter(anonymizedUserId, date, "successful_actions_count", amount)
 
+    override suspend fun incrementCountersBatch(
+        anonymizedUserId: String,
+        date: LocalDate,
+        counters: Map<String, Int>
+    ): Boolean {
+        if (counters.isEmpty()) return true
+
+        val allowedColumns = setOf(
+            "api_request_count",
+            "active_minutes",
+            "session_count",
+            "search_count",
+            "nearby_search_count",
+            "profile_update_count",
+            "chat_messages_sent_count",
+            "chat_messages_received_count",
+            "transactions_created_count",
+            "reviews_submitted_count",
+            "successful_actions_count"
+        )
+
+        val normalized = counters
+            .filterValues { it > 0 }
+            .filterKeys { it in allowedColumns }
+
+        if (normalized.isEmpty()) return true
+
+        val columnsSql = normalized.keys.joinToString(", ")
+        val valuesSql = normalized.keys.joinToString(", ") { "?" }
+        val updatesSql = normalized.keys.joinToString(",\n                ") {
+            "$it = user_daily_activity_stats.$it + EXCLUDED.$it"
+        }
+
+        val sql = """
+            INSERT INTO user_daily_activity_stats (
+                anonymized_user_id,
+                activity_date,
+                $columnsSql,
+                analytics_consent,
+                updated_at
+            )
+            VALUES (?, ?, $valuesSql, TRUE, NOW())
+            ON CONFLICT (anonymized_user_id, activity_date)
+            DO UPDATE SET
+                activity_date = EXCLUDED.activity_date,
+                $updatesSql,
+                analytics_consent = TRUE,
+                updated_at = NOW();
+        """.trimIndent()
+
+        repeat(MAX_SERIALIZATION_RETRIES + 1) { attempt ->
+            try {
+                return dbQuery {
+                    (TransactionManager.current().connection.connection as java.sql.Connection)
+                        .prepareStatement(sql)
+                        .use { statement ->
+                            var index = 1
+                            statement.setString(index++, anonymizedUserId)
+                            statement.setDate(index++, Date.valueOf(date))
+                            normalized.values.forEach { amount ->
+                                statement.setInt(index++, amount)
+                            }
+                            statement.executeUpdate()
+                        }
+                    true
+                }
+            } catch (e: Exception) {
+                val sqlState = (e as? SQLException)?.sqlState ?: (e.cause as? SQLException)?.sqlState
+                val isSerializationConflict = sqlState == "40001" ||
+                    e.message?.contains("could not serialize access due to concurrent update", ignoreCase = true) == true
+
+                if (isSerializationConflict && attempt < MAX_SERIALIZATION_RETRIES) {
+                    val backoffMs = 10L * (attempt + 1)
+                    delay(backoffMs)
+                    return@repeat
+                }
+
+                log.warn(
+                    "Failed batch increment for anonymizedUserId={} date={} counters={} after {} attempt(s): {}",
+                    anonymizedUserId,
+                    date,
+                    normalized,
+                    attempt + 1,
+                    e.message
+                )
+                return false
+            }
+        }
+
+        return false
+    }
+
     override suspend fun incrementSearchKeyword(anonymizedUserId: String, keyword: String, date: LocalDate): Boolean = dbQuery {
         val normalizedKeyword = keyword.trim().lowercase().take(100)
         if (normalizedKeyword.isBlank()) return@dbQuery false

@@ -5,7 +5,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.profile.db.UserPresenceTable
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.upsert
 import org.slf4j.LoggerFactory
@@ -50,6 +53,7 @@ object UserActivityCache {
     // Configuration
     private const val SYNC_INTERVAL_SECONDS = 30L
     private const val ONLINE_THRESHOLD_MILLIS = 5 * 60 * 1000L // 5 minutes
+    private const val LAST_SEEN_FALLBACK_WINDOW_MILLIS = 24 * 60 * 60 * 1000L // 24 hours
     private const val CLEANUP_THRESHOLD_MILLIS = 30 * 60 * 1000L // 30 minutes
     private const val COUNTED_ACTION_COOLDOWN_MILLIS = 10 * 3000L // 30 seconds
     
@@ -174,6 +178,63 @@ object UserActivityCache {
     fun getBatchLastSeen(userIds: List<String>): Map<String, Long?> {
         return userIds.associateWith { userId ->
             activityMap[userId]?.timestamp
+        }
+    }
+
+    /**
+     * Batch get last seen timestamps for multiple users with 24h DB fallback.
+     *
+     * Strategy:
+     * 1) Read in-memory cache first (fast path)
+     * 2) For cache misses, query user_presence in a single batched query
+     * 3) Keep only timestamps within last 24h
+     * 4) Backfill cache for fetched users to speed up subsequent reads
+     *
+     * @param userIds List of user IDs
+     * @return Map of userId to last seen timestamp in millis (or null if older than 24h / missing)
+     */
+    fun getBatchLastSeenWithFallback24h(userIds: List<String>): Map<String, Long?> {
+        if (userIds.isEmpty()) return emptyMap()
+
+        val nowInstant = Instant.now()
+        val cutoffInstant = nowInstant.minusMillis(LAST_SEEN_FALLBACK_WINDOW_MILLIS)
+
+        val cached = getBatchLastSeen(userIds)
+        val missedUserIds = userIds.filter { cached[it] == null }
+
+        val dbValues: Map<String, Long> = if (missedUserIds.isNotEmpty()) {
+            UserPresenceTable
+                .selectAll()
+                .where {
+                    (UserPresenceTable.userId inList missedUserIds) and
+                        (UserPresenceTable.lastActivityAt greaterEq cutoffInstant)
+                }
+                .associate { row ->
+                    val userId = row[UserPresenceTable.userId]
+                    val ts = row[UserPresenceTable.lastActivityAt].toEpochMilli()
+                    userId to ts
+                }
+        } else {
+            emptyMap()
+        }
+
+        if (dbValues.isNotEmpty()) {
+            dbValues.forEach { (userId, ts) ->
+                val existing = activityMap[userId]
+                if (existing == null || existing.timestamp < ts) {
+                    activityMap[userId] = ActivityRecord(
+                        timestamp = ts,
+                        activityType = existing?.activityType ?: "active",
+                        isDirty = false,
+                        shouldCountAction = false
+                    )
+                }
+            }
+        }
+
+        return userIds.associateWith { userId ->
+            val ts = cached[userId] ?: dbValues[userId]
+            if (ts != null && ts >= cutoffInstant.toEpochMilli()) ts else null
         }
     }
     

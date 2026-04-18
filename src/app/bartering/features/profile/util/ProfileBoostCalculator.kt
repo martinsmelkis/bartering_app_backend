@@ -42,7 +42,7 @@ object ProfileBoostCalculator {
     private const val DISPUTE_FREE_BADGE_BOOST = 0.04
     private const val FAST_TRADER_BADGE_BOOST = 0.03
     private const val COMMUNITY_CONNECTOR_BADGE_BOOST = 0.03
-    private const val VERIFIED_BUSINESS_BADGE_BOOST = 0.05
+    private const val LOCAL_LEGEND_BADGE_BOOST = 0.05
     private const val IDENTITY_VERIFIED_BADGE_BOOST = 0.04
     private const val TOP_1000_BADGE_BOOST = 0.04
 
@@ -75,7 +75,7 @@ object ProfileBoostCalculator {
      * 
      * BADGES (stackable):
      * - 0.06 boost for TOP_RATED, PREMIUM_USER
-     * - 0.05 boost for VETERAN_TRADER, VERIFIED_BUSINESS
+     * - 0.05 boost for VETERAN_TRADER, LOCAL_LEGEND
      * - 0.04 boost for QUICK_RESPONDER, DISPUTE_FREE, IDENTITY_VERIFIED, TOP_1000
      * - 0.03 boost for FAST_TRADER, COMMUNITY_CONNECTOR
      * 
@@ -143,11 +143,18 @@ object ProfileBoostCalculator {
             }
         }
 
+        val lastSeenByUser = try {
+            UserActivityCache.getBatchLastSeenWithFallback24h(userIds)
+        } catch (e: Exception) {
+            log.warn("Failed to batch fetch last-seen data, continuing with null lastOnlineAt", e)
+            emptyMap()
+        }
+
         // Apply comprehensive boost based on multiple factors
         return profiles.map { profileWithDistance ->
 
             val userId = profileWithDistance.profile.userId
-            val lastOnlineAt = UserActivityCache.getLastSeen(userId)
+            val lastOnlineAt = lastSeenByUser[userId]
 
             // Update the UserProfile with lastOnlineAt timestamp
             val updatedProfile = profileWithDistance.profile.copy(lastOnlineAt = lastOnlineAt)
@@ -248,7 +255,7 @@ object ProfileBoostCalculator {
                     ReputationBadge.TOP_RATED -> TOP_RATED_BADGE_BOOST
                     ReputationBadge.PREMIUM_USER -> PREMIUM_USER_BADGE_BOOST
                     ReputationBadge.VETERAN_TRADER -> VETERAN_TRADER_BADGE_BOOST
-                    ReputationBadge.VERIFIED_BUSINESS -> VERIFIED_BUSINESS_BADGE_BOOST
+                    ReputationBadge.LOCAL_LEGEND -> LOCAL_LEGEND_BADGE_BOOST
                     ReputationBadge.QUICK_RESPONDER -> QUICK_RESPONDER_BADGE_BOOST
                     ReputationBadge.DISPUTE_FREE -> DISPUTE_FREE_BADGE_BOOST
                     ReputationBadge.IDENTITY_VERIFIED -> IDENTITY_VERIFIED_BADGE_BOOST

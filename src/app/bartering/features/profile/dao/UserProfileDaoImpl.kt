@@ -197,9 +197,10 @@ class UserProfileDaoImpl : UserProfileDao {
         // Fetch active posting IDs for this user
         val activePostingIds = fetchActivePostingIds(userId)
 
-        // Get last online timestamp from activity cache
+        // Get last online timestamp with 24h fallback (cache + batched presence query)
         val lastOnlineAt = try {
-            app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
+            app.bartering.features.profile.cache.UserActivityCache
+                .getBatchLastSeenWithFallback24h(listOf(userId))[userId]
         } catch (_: Exception) {
             null
         }
@@ -2452,6 +2453,13 @@ class UserProfileDaoImpl : UserProfileDao {
                 query.limit(pageSize).toList()
             }
 
+            val lastSeenByUser = try {
+                app.bartering.features.profile.cache.UserActivityCache
+                    .getBatchLastSeenWithFallback24h(paginatedResults.map { it[UserProfilesTable.userId] })
+            } catch (_: Exception) {
+                emptyMap()
+            }
+
             // Convert to UserProfile objects
             val profiles = paginatedResults.mapNotNull { row ->
                 try {
@@ -2475,13 +2483,6 @@ class UserProfileDaoImpl : UserProfileDao {
                     val latitude = location?.y
                     val longitude = location?.x
 
-                    // Get last online timestamp from activity cache
-                    val lastOnlineAt = try {
-                        app.bartering.features.profile.cache.UserActivityCache.getLastSeen(userId)
-                    } catch (_: Exception) {
-                        null
-                    }
-
                     UserProfile(
                         userId = userId,
                         name = row[UserProfilesTable.name] ?: "Unknown",
@@ -2491,7 +2492,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         profileKeywordDataMap = row[UserProfilesTable.profileKeywordDataMap],
                         accountType = row[UserProfilesTable.accountType],
                         activePostingIds = emptyList(), // Not needed for federation sync
-                        lastOnlineAt = lastOnlineAt,
+                        lastOnlineAt = lastSeenByUser[userId],
                         preferredLanguage = row[UserProfilesTable.preferredLanguage]
                     )
                 } catch (e: Exception) {

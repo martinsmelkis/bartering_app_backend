@@ -79,7 +79,7 @@ class ReputationCalculationService(
         badge: ReputationBadge,
         reputation: ReputationScore,
         hasIdentityVerified: suspend (String) -> Boolean,
-        hasBusinessVerified: suspend (String) -> Boolean,
+        getFavoritesReceivedCount: suspend (String) -> Int,
         hasPremiumUser: suspend (String) -> Boolean,
         isAmongFirstRegisteredUsers: suspend (String) -> Boolean,
         getAverageResponseTime: suspend (String) -> Long?, // in hours
@@ -95,7 +95,7 @@ class ReputationCalculationService(
                 avgResponseTime != null && avgResponseTime <= 24
             }
             ReputationBadge.COMMUNITY_CONNECTOR -> reputation.tradeDiversityScore >= 0.8
-            ReputationBadge.VERIFIED_BUSINESS -> hasBusinessVerified(userId)
+            ReputationBadge.LOCAL_LEGEND -> getFavoritesReceivedCount(userId) >= 30
             ReputationBadge.PREMIUM_USER -> hasPremiumUser(userId)
             ReputationBadge.TOP_1000 -> isAmongFirstRegisteredUsers(userId)
             ReputationBadge.DISPUTE_FREE -> !hasDisputedTransactions(userId) && reputation.totalReviews >= 10

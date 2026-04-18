@@ -5,7 +5,15 @@ import app.bartering.features.analytics.model.UserDailyActivityStats
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.utils.HashUtils
 import app.bartering.utils.SecurityUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
 import java.time.LocalDate
+import java.util.concurrent.ConcurrentHashMap
 
 class UserDailyActivityStatsService(
     private val statsDao: UserDailyActivityStatsDao,
@@ -13,6 +21,29 @@ class UserDailyActivityStatsService(
 ) {
 
     private val analyticsSalt: String = System.getenv("ANALYTICS_HASH_SALT") ?: "barter-analytics-default-salt"
+    private val log = LoggerFactory.getLogger(this::class.java)
+
+    private companion object {
+        private const val BATCH_FLUSH_INTERVAL_MS = 3_000L
+        private const val BATCH_FLUSH_THRESHOLD = 20
+        private const val API_REQUEST = "api_request_count"
+        private const val ACTIVE_MINUTES = "active_minutes"
+        private const val SESSION_COUNT = "session_count"
+    }
+
+    private data class StatsKey(val anonymizedUserId: String, val date: LocalDate)
+
+    private val bufferedCounters = ConcurrentHashMap<StatsKey, ConcurrentHashMap<String, Int>>()
+    private val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        flushScope.launch {
+            while (isActive) {
+                delay(BATCH_FLUSH_INTERVAL_MS)
+                flushBufferedCounters()
+            }
+        }
+    }
 
     private fun anonymizeUserId(userId: String): String {
         return HashUtils.sha256("$analyticsSalt:$userId")
@@ -33,16 +64,7 @@ class UserDailyActivityStatsService(
         if (!SecurityUtils.isValidUUID(userId)) return false
 
         val anonId = anonymizeUserId(userId)
-        val base = statsDao.incrementApiRequest(anonId)
-
-        /*val specific = when (activityType) {
-            "searching" -> statsDao.incrementSearch(anonId)
-            "browsing" -> statsDao.incrementNearbySearch(anonId)
-            "editing_profile" -> statsDao.incrementProfileUpdate(anonId)
-            else -> true
-        }*/
-
-        return base //&& specific
+        return bufferCounterIncrement(anonId, API_REQUEST, 1)
     }
 
     @Suppress("unused")
@@ -53,7 +75,7 @@ class UserDailyActivityStatsService(
 
     suspend fun recordSessionStartForConsentedUser(userId: String): Boolean {
         if (!SecurityUtils.isValidUUID(userId)) return false
-        return statsDao.incrementSessionCount(anonymizeUserId(userId))
+        return bufferCounterIncrement(anonymizeUserId(userId), SESSION_COUNT, 1)
     }
 
     @Suppress("unused")
@@ -64,7 +86,7 @@ class UserDailyActivityStatsService(
 
     suspend fun recordActiveMinuteForConsentedUser(userId: String): Boolean {
         if (!SecurityUtils.isValidUUID(userId)) return false
-        return statsDao.incrementActiveMinutes(anonymizeUserId(userId))
+        return bufferCounterIncrement(anonymizeUserId(userId), ACTIVE_MINUTES, 1)
     }
 
     suspend fun recordSearchedKeywordWithResponseTime(
@@ -142,5 +164,57 @@ class UserDailyActivityStatsService(
         val toDate = LocalDate.now()
         val fromDate = toDate.minusDays(days)
         return statsDao.getUserStats(anonymizeUserId(userId), fromDate, toDate)
+    }
+
+    private suspend fun bufferCounterIncrement(anonymizedUserId: String, counter: String, amount: Int): Boolean {
+        if (amount <= 0) return true
+
+        val key = StatsKey(anonymizedUserId, LocalDate.now())
+        val perRowMap = bufferedCounters.computeIfAbsent(key) { ConcurrentHashMap() }
+        val updatedValue = perRowMap.merge(counter, amount) { current, delta -> current + delta } ?: amount
+
+        if (updatedValue >= BATCH_FLUSH_THRESHOLD) {
+            return flushKey(key)
+        }
+
+        return true
+    }
+
+    private suspend fun flushBufferedCounters() {
+        if (bufferedCounters.isEmpty()) return
+
+        val keys = bufferedCounters.keys.toList()
+        keys.forEach { key ->
+            try {
+                flushKey(key)
+            } catch (e: Exception) {
+                log.warn("Failed flushing analytics batch for key={}: {}", key, e.message)
+            }
+        }
+    }
+
+    private suspend fun flushKey(key: StatsKey): Boolean {
+        val currentMap = bufferedCounters[key] ?: return true
+        if (currentMap.isEmpty()) return true
+
+        val snapshot = currentMap.entries.associate { it.key to it.value }
+        if (snapshot.isEmpty()) return true
+
+        if (!statsDao.incrementCountersBatch(key.anonymizedUserId, key.date, snapshot)) {
+            return false
+        }
+
+        snapshot.forEach { (counter, flushedAmount) ->
+            currentMap.computeIfPresent(counter) { _, current ->
+                val remaining = current - flushedAmount
+                if (remaining > 0) remaining else null
+            }
+        }
+
+        if (currentMap.isEmpty()) {
+            bufferedCounters.remove(key, currentMap)
+        }
+
+        return true
     }
 }

@@ -247,6 +247,17 @@ class UserRelationshipsDaoImpl : UserRelationshipsDao {
         )
     }
 
+    override suspend fun getFavoritesReceivedCount(userId: String): Int = dbQuery {
+        UserRelationshipsTable
+            .selectAll()
+            .where {
+                (UserRelationshipsTable.userIdTo eq userId) and
+                    (UserRelationshipsTable.relationshipType eq RelationshipType.FAVORITE.value)
+            }
+            .count()
+            .toInt()
+    }
+
     override suspend fun isBlocked(fromUserId: String, toUserId: String): Boolean = dbQuery {
         UserRelationshipsTable
             .selectAll()
