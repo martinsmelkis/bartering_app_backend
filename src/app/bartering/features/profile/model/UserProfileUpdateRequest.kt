@@ -18,6 +18,8 @@ data class UserProfileUpdateRequest(
     val accountType: AccountType? = null,
     // Inline SVG text content for avatar icon
     val profileAvatarIcon: String? = null,
+    // Active purchased/premium catalog icon id
+    val profileAvatarIconId: String? = null,
     val workReferenceImageUrls: List<String>? = null,
     val preferredLanguage: String? = null, // ISO 639-1 code: "en", "fr", "lv", etc.
     val locationConsent: Boolean? = null,

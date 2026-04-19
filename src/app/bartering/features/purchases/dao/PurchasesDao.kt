@@ -11,8 +11,11 @@ interface PurchasesDao {
         fulfillmentRef: String? = null
     ): Boolean
     suspend fun getPurchasesForUser(userId: String, limit: Int = 50, offset: Long = 0): List<UserPurchase>
+    suspend fun getPurchaseByExternalRef(userId: String, externalRef: String): UserPurchase?
     suspend fun getPremiumEntitlement(userId: String): PremiumEntitlement
     suspend fun upsertPremiumEntitlement(entitlement: PremiumEntitlement): Boolean
     suspend fun userExists(userId: String): Boolean
     suspend fun markRevenueCatEventProcessed(eventId: String, appUserId: String?, eventType: String?, eventAt: java.time.Instant?): Boolean
+    suspend fun hasCompletedAvatarIconPurchase(userId: String, iconId: String): Boolean
+    suspend fun getCompletedAvatarIconPurchaseIds(userId: String): List<String>
 }

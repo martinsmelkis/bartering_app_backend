@@ -123,6 +123,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.self_description,
                 up.account_type,
                 up.profile_avatar_icon,
+                up.active_avatar_icon_id,
                 up.work_reference_image_urls::text as work_reference_image_urls,
                 up.preferred_language
             FROM user_profiles up
@@ -134,6 +135,7 @@ class UserProfileDaoImpl : UserProfileDao {
         var selfDescription: String? = null
         var accountType = AccountType.INDIVIDUAL
         var profileAvatarIcon: String? = null
+        var profileAvatarIconId: String? = null
         var workReferenceImageUrls: List<String> = emptyList()
 
         (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(profileQuery)
@@ -149,6 +151,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     selfDescription = rs.getString("self_description")
                     accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL
                     profileAvatarIcon = rs.getString("profile_avatar_icon")
+                    profileAvatarIconId = rs.getString("active_avatar_icon_id")
                     workReferenceImageUrls = try {
                         Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                     } catch (_: Exception) {
@@ -215,6 +218,7 @@ class UserProfileDaoImpl : UserProfileDao {
             selfDescription = selfDescription,
             accountType = accountType,
             profileAvatarIcon = profileAvatarIcon,
+            profileAvatarIconId = profileAvatarIconId,
             workReferenceImageUrls = workReferenceImageUrls,
             activePostingIds = activePostingIds,
             lastOnlineAt = lastOnlineAt,
@@ -330,6 +334,9 @@ class UserProfileDaoImpl : UserProfileDao {
             }
             request.profileAvatarIcon?.let { avatarSvg ->
                 table[UserProfilesTable.profileAvatarIcon] = avatarSvg
+            }
+            request.profileAvatarIconId?.let { avatarIconId ->
+                table[UserProfilesTable.activeAvatarIconId] = avatarIconId.trim().lowercase()
             }
             request.workReferenceImageUrls?.let { imageUrls ->
                 table[UserProfilesTable.workReferenceImageUrls] = imageUrls
@@ -451,6 +458,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.self_description,
                 up.account_type,
                 up.profile_avatar_icon,
+                up.active_avatar_icon_id,
                 up.work_reference_image_urls::text as work_reference_image_urls,
                 ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters
             FROM
@@ -526,6 +534,7 @@ class UserProfileDaoImpl : UserProfileDao {
                                 selfDescription = rs.getString("self_description"),
                                 accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                                 profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                                profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                                 workReferenceImageUrls = try {
                                     Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                                 } catch (_: Exception) {
@@ -767,6 +776,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     other_user_profile.self_description,
                     other_user_profile.account_type,
                     other_user_profile.profile_avatar_icon,
+                    other_user_profile.active_avatar_icon_id,
                     other_user_profile.work_reference_image_urls::text as work_reference_image_urls,
                     $score1Expr as $score1Name,
                     $score2Expr as $score2Name,
@@ -803,6 +813,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 self_description,
                 account_type,
                 profile_avatar_icon,
+                active_avatar_icon_id,
                 work_reference_image_urls,
                 GREATEST($score1Name, $score2Name) as best_match_score,
                 $score1Name,
@@ -888,6 +899,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             selfDescription = rs.getString("self_description"),
                             accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                             profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                            profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                             workReferenceImageUrls = try {
                                 Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                             } catch (_: Exception) {
@@ -954,6 +966,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.self_description,
                 up.account_type,
                 up.profile_avatar_icon,
+                up.active_avatar_icon_id,
                 up.work_reference_image_urls::text as work_reference_image_urls,
                 (1 - (p.embedding::vector <=> (SELECT ${myEmbeddingColumnType.name} FROM current_user_profile))) as posting_similarity
                 ${if (latitude != null && longitude != null) {
@@ -1034,6 +1047,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             selfDescription = rs.getString("self_description"),
                             accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                             profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                            profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                             workReferenceImageUrls = try {
                                 Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                             } catch (_: Exception) {
@@ -1095,6 +1109,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             selfDescription = rs.getString("self_description"),
                             accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                             profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                            profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                             workReferenceImageUrls = try {
                                 Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                             } catch (_: Exception) {
@@ -1155,9 +1170,9 @@ class UserProfileDaoImpl : UserProfileDao {
                     )
                     WHERE u.id != ?
                     ${if (latitude != null && longitude != null && radiusMeters != null) "AND ST_DWithin(up.location::geography, ST_MakePoint(?, ?)::geography, ?)" else ""}
-                    GROUP BY u.id, up.name, up.location, up.profile_keywords_with_weights, up.self_description, up.account_type, up.profile_avatar_icon, up.work_reference_image_urls
+                    GROUP BY u.id, up.name, up.location, up.profile_keywords_with_weights, up.self_description, up.account_type, up.profile_avatar_icon, up.active_avatar_icon_id, up.work_reference_image_urls
                 )
-                SELECT user_id, name, location, profile_keywords_with_weights, self_description, account_type, profile_avatar_icon, work_reference_image_urls, distance_meters
+                SELECT user_id, name, location, profile_keywords_with_weights, self_description, account_type, profile_avatar_icon, active_avatar_icon_id, work_reference_image_urls, distance_meters
                 FROM candidate_scores
                 ORDER BY match_count DESC, RANDOM()
                 LIMIT ?
@@ -1897,6 +1912,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     up.self_description,
                     up.account_type,
                     up.profile_avatar_icon,
+                    up.active_avatar_icon_id,
                     up.work_reference_image_urls::text as work_reference_image_urls,
                     ${if (offering == false) "0.0" else 
                         """COALESCE(
@@ -1950,6 +1966,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 self_description,
                 account_type,
                 profile_avatar_icon,
+                active_avatar_icon_id,
                 work_reference_image_urls,
                 haves_similarity,
                 needs_similarity,
@@ -2023,6 +2040,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             selfDescription = rs.getString("self_description"),
                             accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                             profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                            profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                             workReferenceImageUrls = try {
                                 Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                             } catch (_: Exception) {
@@ -2069,6 +2087,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.self_description,
                 up.account_type,
                 up.profile_avatar_icon,
+                up.active_avatar_icon_id,
                 up.work_reference_image_urls::text as work_reference_image_urls,
                 (1 - (p.embedding::vector <=> (SELECT embedding FROM search_embedding))) as posting_similarity
                 ${
@@ -2150,6 +2169,7 @@ class UserProfileDaoImpl : UserProfileDao {
                             selfDescription = rs.getString("self_description"),
                             accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                             profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                            profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                             workReferenceImageUrls = try {
                                 Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                             } catch (_: Exception) {
@@ -2195,6 +2215,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 up.self_description,
                 up.account_type,
                 up.profile_avatar_icon,
+                up.active_avatar_icon_id,
                 up.work_reference_image_urls::text as work_reference_image_urls
                 ${
             if (latitude != null && longitude != null) {
@@ -2247,6 +2268,7 @@ class UserProfileDaoImpl : UserProfileDao {
                                 selfDescription = rs.getString("self_description"),
                                 accountType = AccountType.fromString(rs.getString("account_type") ?: "individual") ?: AccountType.INDIVIDUAL,
                                 profileAvatarIcon = rs.getString("profile_avatar_icon"),
+                                profileAvatarIconId = rs.getString("active_avatar_icon_id"),
                                 workReferenceImageUrls = try {
                                     Json.decodeFromString<List<String>>(rs.getString("work_reference_image_urls") ?: "[]")
                                 } catch (_: Exception) {

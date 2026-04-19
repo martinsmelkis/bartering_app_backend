@@ -307,31 +307,52 @@ fun Route.updateProfileRoute() {
 
             val isPremiumUser = purchasesService.getPremiumStatus(request.userId).isPremium
 
-            if (isPremiumUser) {
-                if (request.selfDescription != null && request.selfDescription.length > MAX_PROFILE_SELF_DESCRIPTION_LENGTH) {
+            val requestedAvatarIcon = request.profileAvatarIcon?.trim()
+            val wantsToSetAvatarIcon = !requestedAvatarIcon.isNullOrBlank()
+            val requestedAvatarIconId = request.profileAvatarIconId?.trim()?.lowercase()
+            val wantsToChangeAvatarIconId = !requestedAvatarIconId.isNullOrBlank() &&
+                requestedAvatarIconId != currentProfile?.profileAvatarIconId
+
+            if (request.selfDescription != null && request.selfDescription.length > MAX_PROFILE_SELF_DESCRIPTION_LENGTH) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    "selfDescription too long. Max $MAX_PROFILE_SELF_DESCRIPTION_LENGTH characters."
+                )
+            }
+
+            val hasPurchasedRequestedIcon = !requestedAvatarIconId.isNullOrBlank() &&
+                purchasesService.hasPurchasedAvatarIcon(request.userId, requestedAvatarIconId)
+
+            if (wantsToChangeAvatarIconId && !isPremiumUser && !hasPurchasedRequestedIcon) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    "profileAvatarIconId requires premium or a purchased avatar icon entitlement."
+                )
+            }
+
+            if (wantsToSetAvatarIcon) {
+                val avatarIcon = requestedAvatarIcon
+                if (avatarIcon.length > MAX_PROFILE_AVATAR_ICON_LENGTH) {
                     return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        "selfDescription too long. Max $MAX_PROFILE_SELF_DESCRIPTION_LENGTH characters."
+                        "profileAvatarIcon too large."
                     )
                 }
 
-                if (request.profileAvatarIcon != null) {
-                    val avatarIcon = request.profileAvatarIcon.trim()
-                    if (avatarIcon.length > MAX_PROFILE_AVATAR_ICON_LENGTH) {
-                        return@post call.respond(
-                            HttpStatusCode.BadRequest,
-                            "profileAvatarIcon too large."
-                        )
-                    }
+                val isSvg = avatarIcon.startsWith("<svg", ignoreCase = true)
+                        && avatarIcon.contains("</svg>", ignoreCase = true)
+                if (!isSvg || avatarIcon.contains("<script", ignoreCase = true)) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        "profileAvatarIcon must be safe inline SVG content."
+                    )
+                }
 
-                    val isSvg = avatarIcon.startsWith("<svg", ignoreCase = true)
-                            && avatarIcon.contains("</svg>", ignoreCase = true)
-                    if (!isSvg || avatarIcon.contains("<script", ignoreCase = true)) {
-                        return@post call.respond(
-                            HttpStatusCode.BadRequest,
-                            "profileAvatarIcon must be safe inline SVG content."
-                        )
-                    }
+                if (!isPremiumUser && !hasPurchasedRequestedIcon) {
+                    return@post call.respond(
+                        HttpStatusCode.Forbidden,
+                        "profileAvatarIcon requires premium or a purchased avatar icon entitlement."
+                    )
                 }
             }
 
@@ -364,8 +385,9 @@ fun Route.updateProfileRoute() {
                         longitude = newLongitude,
                         attributes = request.attributes,
                         profileKeywordDataMap = request.profileKeywordDataMap,
-                        selfDescription = if (isPremiumUser) request.selfDescription else null,
-                        profileAvatarIcon = if (isPremiumUser) request.profileAvatarIcon else null,
+                        selfDescription = request.selfDescription,
+                        profileAvatarIcon = if (wantsToSetAvatarIcon) requestedAvatarIcon else null,
+                        profileAvatarIconId = if (wantsToChangeAvatarIconId) requestedAvatarIconId else null,
                         workReferenceImageUrls = resolvedWorkReferenceImageUrls,
                         preferredLanguage = request.preferredLanguage
                     )
@@ -720,6 +742,7 @@ private suspend fun searchFederatedProfiles(
                         profileKeywordDataMap = null,
                         selfDescription = remoteProfile.bio,
                         profileAvatarIcon = null,
+                        profileAvatarIconId = null,
                         workReferenceImageUrls = emptyList(),
                         activePostingIds = emptyList(),
                         lastOnlineAt = remoteProfile.lastOnline?.toEpochMilli()

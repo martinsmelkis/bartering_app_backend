@@ -18,6 +18,8 @@ data class UserProfile(
     val accountType: AccountType? = null,
     // Inline SVG text content for avatar icon
     val profileAvatarIcon: String? = null,
+    // Canonical purchased icon ID used for entitlement checks on update
+    val profileAvatarIconId: String? = null,
     val workReferenceImageUrls: List<String> = emptyList(),
     val activePostingIds: List<String> = emptyList(),
     val lastOnlineAt: Long? = null, // Timestamp in milliseconds when user was last online

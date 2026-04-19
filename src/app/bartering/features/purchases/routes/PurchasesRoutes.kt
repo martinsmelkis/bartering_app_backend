@@ -2,6 +2,9 @@ package app.bartering.features.purchases.routes
 
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import app.bartering.features.purchases.model.AvatarOwnershipStatusResponse
+import app.bartering.features.purchases.model.EquipAvatarIconRequest
+import app.bartering.features.purchases.model.PurchaseAvatarIconRequest
 import app.bartering.features.purchases.model.PurchaseCoinPackRequest
 import app.bartering.features.purchases.model.PurchaseOperationResponse
 import app.bartering.features.purchases.model.PurchasePremiumLifetimeRequest
@@ -10,6 +13,8 @@ import app.bartering.features.purchases.model.PurchaseVisibilityBoostRequest
 import app.bartering.features.purchases.model.PremiumStatusResponse
 import app.bartering.features.purchases.model.PremiumSyncNowResponse
 import app.bartering.features.purchases.model.RevenueCatWebhookResponse
+import app.bartering.features.profile.dao.UserProfileDaoImpl
+import app.bartering.features.profile.model.UserProfileUpdateRequest
 import app.bartering.features.purchases.service.PurchasesService
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receiveText
@@ -356,6 +361,156 @@ fun Route.purchaseVisibilityBoostRoute() {
             )
         } catch (e: Exception) {
             log.error("Failed visibility boost purchase for user {}", authenticatedUserId, e)
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request: ${e.message}"))
+        }
+    }
+}
+
+fun Route.purchaseAvatarIconRoute() {
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/purchases/avatar-icon") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val request = Json.decodeFromString<PurchaseAvatarIconRequest>(requestBody)
+            if (request.userId != authenticatedUserId) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "You can only purchase for your own account")
+                )
+            }
+
+            if (request.externalRef.isBlank()) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "externalRef is required for idempotency")
+                )
+            }
+
+            val purchase = purchasesService.purchaseAvatarIconUnlock(
+                userId = request.userId,
+                iconId = request.iconId,
+                costCoins = request.costCoins,
+                externalRef = request.externalRef,
+                metadataJson = request.metadataJson
+            )
+
+            if (purchase == null) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    PurchaseOperationResponse(success = false, message = "Avatar icon purchase failed")
+                )
+            }
+
+            call.respond(
+                HttpStatusCode.OK,
+                PurchaseOperationResponse(
+                    success = true,
+                    message = "Avatar icon purchased",
+                    purchase = PurchaseResponse(
+                        id = purchase.id,
+                        userId = purchase.userId,
+                        purchaseType = purchase.purchaseType.value,
+                        status = purchase.status.value,
+                        currency = purchase.currency,
+                        fiatAmountMinor = purchase.fiatAmountMinor,
+                        coinAmount = purchase.coinAmount,
+                        externalRef = purchase.externalRef,
+                        metadataJson = purchase.metadataJson,
+                        fulfillmentRef = purchase.fulfillmentRef,
+                        createdAt = purchase.createdAt.toEpochMilli(),
+                        updatedAt = purchase.updatedAt.toEpochMilli()
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Failed avatar icon purchase for user {}", authenticatedUserId, e)
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request: ${e.message}"))
+        }
+    }
+}
+
+fun Route.getAvatarIconOwnershipStatusRoute() {
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    get("/api/v1/purchases/avatar-icons") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) {
+            return@get
+        }
+
+        try {
+            val premium = purchasesService.getPremiumStatus(authenticatedUserId)
+            val purchasedIconIds = purchasesService.getPurchasedAvatarIconIds(authenticatedUserId)
+            val activeAvatarIconId = userProfileDao.getProfile(authenticatedUserId)?.profileAvatarIconId
+
+            call.respond(
+                HttpStatusCode.OK,
+                AvatarOwnershipStatusResponse(
+                    userId = authenticatedUserId,
+                    activeAvatarIconId = activeAvatarIconId,
+                    purchasedIconIds = purchasedIconIds,
+                    isPremium = premium.isPremium
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Failed to fetch avatar icon ownership status for user {}", authenticatedUserId, e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to fetch avatar icon status"))
+        }
+    }
+}
+
+fun Route.equipAvatarIconRoute() {
+    val purchasesService: PurchasesService by inject(PurchasesService::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/profile/avatar/equip") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) {
+            return@post
+        }
+
+        try {
+            val request = Json.decodeFromString<EquipAvatarIconRequest>(requestBody)
+            if (request.userId != authenticatedUserId) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "You can only equip avatar icon for your own account")
+                )
+            }
+
+            val normalizedIconId = request.iconId.trim().lowercase()
+            if (normalizedIconId.isBlank()) {
+                return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "iconId is required"))
+            }
+
+            val isPremiumUser = purchasesService.getPremiumStatus(authenticatedUserId).isPremium
+            val hasPurchased = purchasesService.hasPurchasedAvatarIcon(authenticatedUserId, normalizedIconId)
+            if (!isPremiumUser && !hasPurchased) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "Avatar icon not owned")
+                )
+            }
+
+            userProfileDao.updateProfile(
+                authenticatedUserId,
+                UserProfileUpdateRequest(
+                    profileAvatarIconId = normalizedIconId
+                )
+            )
+
+            call.respond(HttpStatusCode.OK, mapOf("success" to true, "activeAvatarIconId" to normalizedIconId))
+        } catch (e: Exception) {
+            log.error("Failed to equip avatar icon for user {}", authenticatedUserId, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request: ${e.message}"))
         }
     }

@@ -28,6 +28,17 @@ interface PurchasesService {
         metadataJson: String? = null
     ): UserPurchase?
 
+    suspend fun purchaseAvatarIconUnlock(
+        userId: String,
+        iconId: String,
+        costCoins: Long,
+        externalRef: String,
+        metadataJson: String? = null
+    ): UserPurchase?
+
+    suspend fun hasPurchasedAvatarIcon(userId: String, iconId: String): Boolean
+    suspend fun getPurchasedAvatarIconIds(userId: String): List<String>
+
     suspend fun getPremiumStatus(userId: String): PremiumEntitlement
     suspend fun getPurchaseHistory(userId: String, limit: Int = 50, offset: Long = 0): List<UserPurchase>
 

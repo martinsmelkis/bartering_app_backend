@@ -92,6 +92,11 @@ class PurchasesServiceImpl(
         val durationHours: Long
     )
 
+    private val avatarIconCatalog = mapOf(
+        // Canonical icon IDs and server-authoritative prices (coins)
+        "avatar_icon" to 100L
+    )
+
     private val visibilityBoostDefinitionsByType = mapOf(
         // Existing backend types
         "single_24h" to VisibilityBoostDefinition("single_24h", costCoins = 50L, durationHours = 24L),
@@ -308,6 +313,92 @@ class PurchasesServiceImpl(
             fulfillmentRef = "boost:$normalizedBoostType",
             updatedAt = Instant.now()
         )
+    }
+
+    override suspend fun purchaseAvatarIconUnlock(
+        userId: String,
+        iconId: String,
+        costCoins: Long,
+        externalRef: String,
+        metadataJson: String?
+    ): UserPurchase? {
+        val normalizedIconId = iconId.trim().lowercase(Locale.ROOT)
+        if (normalizedIconId.isBlank()) return null
+
+        val expectedCostCoins = avatarIconCatalog[normalizedIconId]
+            ?: avatarIconCatalog["avatar_icon"]?.takeIf { normalizedIconId.startsWith("avatar_icon_") }
+            ?: return null
+
+        if (costCoins != expectedCostCoins) return null
+
+        val normalizedExternalRef = externalRef.trim()
+        if (normalizedExternalRef.isBlank()) return null
+
+        // Idempotency guard: unique external reference for client retries/replays
+        val idempotencyRef = "avatar_purchase:$userId:$normalizedExternalRef"
+        val existingByRef = purchasesDao.getPurchaseByExternalRef(userId = userId, externalRef = idempotencyRef)
+        if (existingByRef != null) {
+            return if (existingByRef.status == PurchaseStatus.COMPLETED) existingByRef else null
+        }
+
+        // Prevent duplicate ownership/purchases for same icon
+        if (purchasesDao.hasCompletedAvatarIconPurchase(userId, normalizedIconId)) {
+            return null
+        }
+
+        val now = Instant.now()
+        val purchaseId = UUID.randomUUID().toString()
+        val purchase = UserPurchase(
+            id = purchaseId,
+            userId = userId,
+            purchaseType = PurchaseType.AVATAR_ICON_UNLOCK,
+            status = PurchaseStatus.PENDING,
+            currency = null,
+            fiatAmountMinor = null,
+            coinAmount = expectedCostCoins,
+            externalRef = idempotencyRef,
+            metadataJson = metadataJson,
+            fulfillmentRef = null,
+            createdAt = now,
+            updatedAt = now
+        )
+
+        val created = purchasesDao.createPurchase(purchase)
+        if (!created) return null
+
+        val avatarSpendMetadata = "{\"type\":\"purchase_avatar_icon\",\"iconId\":\"$normalizedIconId\",\"purchaseId\":\"$purchaseId\",\"payload\":${metadataJson ?: "null"}}"
+        val spent = walletService.spendCoins(
+            userId = userId,
+            amount = expectedCostCoins,
+            externalRef = "avatar_icon:$purchaseId:$normalizedIconId",
+            metadataJson = avatarSpendMetadata
+        )
+
+        if (!spent) {
+            purchasesDao.updatePurchaseStatus(purchaseId, PurchaseStatus.FAILED)
+            return null
+        }
+
+        purchasesDao.updatePurchaseStatus(
+            purchaseId,
+            PurchaseStatus.COMPLETED,
+            fulfillmentRef = "avatar_icon:$normalizedIconId"
+        )
+
+        return purchase.copy(
+            status = PurchaseStatus.COMPLETED,
+            fulfillmentRef = "avatar_icon:$normalizedIconId",
+            updatedAt = Instant.now()
+        )
+    }
+
+    override suspend fun hasPurchasedAvatarIcon(userId: String, iconId: String): Boolean {
+        val normalizedIconId = iconId.trim().lowercase(Locale.ROOT)
+        return purchasesDao.hasCompletedAvatarIconPurchase(userId, normalizedIconId)
+    }
+
+    override suspend fun getPurchasedAvatarIconIds(userId: String): List<String> {
+        return purchasesDao.getCompletedAvatarIconPurchaseIds(userId)
     }
 
     override suspend fun getPremiumStatus(userId: String): PremiumEntitlement {

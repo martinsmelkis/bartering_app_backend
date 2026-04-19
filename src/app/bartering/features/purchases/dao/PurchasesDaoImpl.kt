@@ -11,6 +11,7 @@ import app.bartering.features.purchases.model.PurchaseType
 import app.bartering.features.purchases.model.UserPurchase
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
@@ -59,6 +60,19 @@ class PurchasesDaoImpl : PurchasesDao {
             .limit(limit)
             .offset(offset)
             .map(::rowToUserPurchase)
+    }
+
+    override suspend fun getPurchaseByExternalRef(userId: String, externalRef: String): UserPurchase? = dbQuery {
+        UserPurchasesTable
+            .selectAll()
+            .where {
+                (UserPurchasesTable.userId eq userId) and
+                    (UserPurchasesTable.externalRef eq externalRef)
+            }
+            .orderBy(UserPurchasesTable.createdAt, SortOrder.DESC)
+            .limit(1)
+            .map(::rowToUserPurchase)
+            .singleOrNull()
     }
 
     override suspend fun getPremiumEntitlement(userId: String): PremiumEntitlement = dbQuery {
@@ -165,6 +179,39 @@ class PurchasesDaoImpl : PurchasesDao {
             it[processedAt] = Instant.now()
         }
         inserted.insertedCount > 0
+    }
+
+    override suspend fun hasCompletedAvatarIconPurchase(userId: String, iconId: String): Boolean = dbQuery {
+        UserPurchasesTable
+            .select(UserPurchasesTable.id)
+            .where {
+                (UserPurchasesTable.userId eq userId) and
+                    (UserPurchasesTable.purchaseType eq PurchaseType.AVATAR_ICON_UNLOCK.value) and
+                    (UserPurchasesTable.status eq PurchaseStatus.COMPLETED.value) and
+                    (UserPurchasesTable.fulfillmentRef eq "avatar_icon:$iconId")
+            }
+            .limit(1)
+            .empty()
+            .not()
+    }
+
+    override suspend fun getCompletedAvatarIconPurchaseIds(userId: String): List<String> = dbQuery {
+        UserPurchasesTable
+            .select(UserPurchasesTable.fulfillmentRef)
+            .where {
+                (UserPurchasesTable.userId eq userId) and
+                    (UserPurchasesTable.purchaseType eq PurchaseType.AVATAR_ICON_UNLOCK.value) and
+                    (UserPurchasesTable.status eq PurchaseStatus.COMPLETED.value)
+            }
+            .mapNotNull { row ->
+                row[UserPurchasesTable.fulfillmentRef]
+                    ?.takeIf { it.startsWith("avatar_icon:") }
+                    ?.substringAfter("avatar_icon:")
+                    ?.trim()
+                    ?.lowercase()
+                    ?.takeIf { it.isNotBlank() }
+            }
+            .distinct()
     }
 
     private fun rowToPremiumEntitlement(row: ResultRow): PremiumEntitlement {

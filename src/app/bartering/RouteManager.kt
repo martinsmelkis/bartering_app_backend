@@ -83,12 +83,17 @@ fun Application.routes() {
         transferCoinsRoute()
         claimWalletAwardRoute()
 
-        // Purchases (premium + coin packs + boosts)
+        // Purchases (premium + coin packs + boosts + avatar icon unlocks)
         getPremiumStatusRoute()
         getPurchaseHistoryRoute()
+        getAvatarIconOwnershipStatusRoute()
         purchasePremiumLifetimeRoute()
         purchaseCoinPackRoute()
         purchaseVisibilityBoostRoute()
+        rateLimit(RateLimitName("wallet_purchase")) {
+            purchaseAvatarIconRoute()
+            equipAvatarIconRoute()
+        }
 
         // RevenueCat premium mirror sync
         revenueCatWebhookRoute()

@@ -21,6 +21,8 @@ object UserProfilesTable : Table("user_profiles") {
     val accountType = enumerationByName("account_type", 32, AccountType::class).default(AccountType.INDIVIDUAL)
     // Inline SVG text content for profile avatar icon
     val profileAvatarIcon = text("profile_avatar_icon").nullable()
+    // Active catalog avatar icon entitlement ID
+    val activeAvatarIconId = varchar("active_avatar_icon_id", 128).nullable()
 
     // URLs to personal work reference images
     val workReferenceImageUrls = jsonb<List<String>>(

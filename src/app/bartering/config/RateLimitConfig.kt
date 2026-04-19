@@ -95,6 +95,19 @@ fun Application.configureRateLimiting() {
                 "profile:${userId ?: ip}"
             }
         }
+
+        // ====================================================================
+        // COIN PURCHASE/UNLOCK OPERATIONS - STRICT LIMITS
+        // ====================================================================
+        // Prevents rapid spend abuse/replay attempts on wallet-backed purchases
+        register(RateLimitName("wallet_purchase")) {
+            rateLimiter(limit = 8, refillPeriod = 60.seconds)
+            requestKey { call ->
+                val userId = call.request.headers["X-User-ID"]
+                val ip = call.request.origin.remoteAddress
+                "wallet_purchase:${userId ?: ip}"
+            }
+        }
         
         // ====================================================================
         // POSTING CREATION - MODERATE LIMITS

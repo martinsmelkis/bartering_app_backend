@@ -30,6 +30,29 @@ data class PurchaseVisibilityBoostRequest(
 )
 
 @Serializable
+data class PurchaseAvatarIconRequest(
+    val userId: String,
+    val iconId: String,
+    val costCoins: Long,
+    val externalRef: String,
+    val metadataJson: String? = null
+)
+
+@Serializable
+data class EquipAvatarIconRequest(
+    val userId: String,
+    val iconId: String
+)
+
+@Serializable
+data class AvatarOwnershipStatusResponse(
+    val userId: String,
+    val activeAvatarIconId: String? = null,
+    val purchasedIconIds: List<String> = emptyList(),
+    val isPremium: Boolean
+)
+
+@Serializable
 data class PurchaseResponse(
     val id: String,
     val userId: String,
