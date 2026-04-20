@@ -9,9 +9,9 @@ By accessing or using the Service, you agree to these Terms.
 
 ## 1. Provider
 
-- **Provider:** [Add legal entity / individual owner]
-- **Contact:** [Add support/legal email]
-- **Address:** [Add legal address]
+- **Provider:** Mārtiņš Meļķis
+- **Contact:** legal@bartering.app
+- **Address:** Stabu 92-31, Riga, LV-1009, Latvia
 
 ## 2. Eligibility and Account Responsibility
 
@@ -42,7 +42,7 @@ You remain responsible for content and transactions you initiate. We may remove 
 
 ## 6. Privacy and Data Protection
 
-Use of personal data is described in the Privacy Policy (`DOCS/PRIVACY_POLICY.md`). You are responsible for lawful processing of any personal data you submit through the Service.
+Use of personal data is described in the Privacy Policy (`DOCS/GDPR/PRIVACY_POLICY.md`). You are responsible for lawful processing of any personal data you submit through the Service.
 
 ## 7. Security
 
@@ -82,10 +82,11 @@ We may suspend or terminate access for breach, security risk, legal reasons, or 
 
 ## 16. Governing Law and Dispute Resolution
 
-- **Governing law:** [Add governing law/jurisdiction]
-- **Venue/forum:** [Add court/arbitration venue]
+- **Governing law:** The laws of Latvia.
+- **Dispute forum:** The courts of Latvia shall have jurisdiction, unless mandatory consumer protection law provides otherwise.
+- **Consumer rights:** If you are a consumer resident in the EEA/UK, mandatory rights (including rights to bring claims in your country of residence, where applicable) remain unaffected.
 
-Consumer rights that cannot be waived under applicable law remain unaffected.
+Where required by applicable law, you may also use available out-of-court consumer dispute resolution mechanisms.
 
 ## 17. Changes to Terms
 
@@ -93,4 +94,4 @@ We may update these Terms from time to time. Continued use after updates constit
 
 ## 18. Contact
 
-For legal/support matters, contact: **[Add support/legal email]**.
+For legal/support matters, contact: **legal@bartering.app**.

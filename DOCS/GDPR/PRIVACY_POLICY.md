@@ -7,10 +7,10 @@ This Privacy Policy explains how Barter processes personal data through its back
 
 ## 1. Controller and Contact
 
-- **Controller:** [Add legal entity / owner name]
-- **Address:** [Add legal address]
-- **Privacy contact:** [Add privacy email]
-- **Data Protection Officer (if appointed):** [Add DPO contact]
+- **Controller:** Mārtiņš Meļķis
+- **Address:** Stabu 92-31, Riga, LV-1009, Latvia
+- **Privacy contact:** privacy@bartering.app
+- **Data Protection Officer (if appointed):** privacy@bartering.app
 
 ## 2. Scope and System Components
 
@@ -125,4 +125,4 @@ We may update this policy from time to time. Material changes should be communic
 
 ## 15. Contact
 
-For privacy and GDPR requests, contact: **[Add privacy email]**.
+For privacy and GDPR requests, contact: **privacy@bartering.app**.
