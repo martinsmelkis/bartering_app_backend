@@ -1,5 +1,6 @@
 package app.bartering.features.reviews.dao
 
+import app.bartering.features.reviews.model.ReviewAppeal
 import app.bartering.features.reviews.model.TransactionStatus
 import java.time.Instant
 
@@ -78,6 +79,26 @@ interface ReviewDao {
      * Updates review weight
      */
     suspend fun updateReviewWeight(reviewId: String, weight: Double): Boolean
+
+    /**
+     * Creates a review appeal/dispute.
+     */
+    suspend fun createAppeal(appeal: ReviewAppeal): Boolean
+
+    /**
+     * Gets appeal history for a specific user.
+     */
+    suspend fun getUserAppeals(userId: String): List<ReviewAppeal>
+
+    /**
+     * Gets latest review appeals for moderation dashboard.
+     */
+    suspend fun getRecentAppeals(limit: Int = 200): List<ReviewAppeal>
+
+    /**
+     * Returns true if appeal target review exists.
+     */
+    suspend fun reviewExists(reviewId: String): Boolean
 }
 
 /**

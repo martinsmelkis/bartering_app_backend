@@ -9,6 +9,7 @@ import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.features.profile.dao.UserProfileDaoImpl
+import app.bartering.utils.SecurityUtils
 import app.bartering.features.reviews.dao.*
 import app.bartering.features.reviews.model.*
 import app.bartering.features.reviews.service.*
@@ -20,6 +21,28 @@ import java.time.Instant
 import java.util.UUID
 
 private val log = LoggerFactory.getLogger("app.bartering.features.reviews.routes.ReviewRoutes")
+
+private suspend fun requireReviewModerationAdmin(
+    call: io.ktor.server.application.ApplicationCall,
+    authDao: AuthenticationDaoImpl,
+    userProfileDao: UserProfileDaoImpl
+): String? {
+    val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+    if (authenticatedUserId == null) {
+        return null
+    }
+
+    val isAdmin = userProfileDao.isComplianceAdmin(authenticatedUserId)
+    if (!isAdmin) {
+        call.respond(
+            HttpStatusCode.Forbidden,
+            mapOf("error" to "User is not authorized for review moderation endpoints")
+        )
+        return null
+    }
+
+    return authenticatedUserId
+}
 
 /**
  * Submit a review for a transaction
@@ -414,8 +437,207 @@ fun Route.getTransactionReviewsRoute() {
 }
 
 /**
+ * Submit an appeal for a review.
+ */
+fun Route.submitReviewAppealRoute() {
+    val reviewDao: ReviewDao by inject(ReviewDao::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    post("/api/v1/reviews/appeal") {
+        val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null || requestBody == null) return@post
+
+        try {
+            val request = Json.decodeFromString<SubmitReviewAppealRequest>(requestBody)
+
+            if (authenticatedUserId != request.appealedBy) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "You can only submit appeals for yourself")
+                )
+            }
+
+            if (request.reason.isBlank()) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Appeal reason is required")
+                )
+            }
+
+            val reviewExists = reviewDao.reviewExists(request.reviewId)
+            if (!reviewExists) {
+                return@post call.respond(
+                    HttpStatusCode.NotFound,
+                    mapOf("error" to "Review not found")
+                )
+            }
+
+            val appealId = UUID.randomUUID().toString()
+            val appeal = ReviewAppeal(
+                id = appealId,
+                reviewId = request.reviewId,
+                appealedBy = request.appealedBy,
+                reason = request.reason.trim(),
+                evidenceItems = request.evidenceItems,
+                status = AppealStatus.PENDING,
+                appealedAt = Instant.now().toEpochMilli(),
+                resolvedAt = null,
+                moderatorNotes = null
+            )
+
+            val created = reviewDao.createAppeal(appeal)
+            if (!created) {
+                return@post call.respond(
+                    HttpStatusCode.InternalServerError,
+                    mapOf("error" to "Failed to submit appeal")
+                )
+            }
+
+            call.respond(
+                HttpStatusCode.Created,
+                SubmitReviewAppealResponse(
+                    success = true,
+                    appealId = appealId,
+                    message = "Appeal submitted successfully"
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Error submitting review appeal", e)
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid request: ${e.message}")
+            )
+        }
+    }
+}
+
+/**
+ * Get user's review appeal history.
+ */
+fun Route.getUserAppealsRoute() {
+    val reviewDao: ReviewDao by inject(ReviewDao::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+
+    get("/api/v1/reviews/appeals/user/{userId}") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) return@get
+
+        val userId = call.parameters["userId"]
+        if (userId.isNullOrBlank()) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Missing userId parameter")
+            )
+        }
+
+        if (authenticatedUserId != userId) {
+            return@get call.respond(
+                HttpStatusCode.Forbidden,
+                mapOf("error" to "Can only view your own appeal history")
+            )
+        }
+
+        try {
+            val appeals = reviewDao.getUserAppeals(userId)
+            call.respond(
+                HttpStatusCode.OK,
+                UserAppealsResponse(
+                    userId = userId,
+                    appeals = appeals,
+                    totalCount = appeals.size
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Error retrieving review appeals for userId={}", userId, e)
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "Failed to retrieve appeal history")
+            )
+        }
+    }
+}
+
+/**
  * Check if user can review another user
  */
+/**
+ * Moderation endpoint: list latest review appeals.
+ */
+fun Route.getReviewAppealsModerationRoute() {
+    val reviewDao: ReviewDao by inject(ReviewDao::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    get("/api/v1/reviews/appeals/moderation") {
+        requireReviewModerationAdmin(call, authDao, userProfileDao) ?: return@get
+
+        val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 200
+
+        try {
+            val appeals = reviewDao.getRecentAppeals(limit)
+            call.respond(
+                HttpStatusCode.OK,
+                ReviewAppealsModerationResponse(
+                    appeals = appeals,
+                    totalCount = appeals.size
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Error retrieving moderation review appeals", e)
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "Failed to retrieve review appeals")
+            )
+        }
+    }
+}
+
+/**
+ * Moderation endpoint: delete review.
+ */
+fun Route.deleteReviewModerationRoute() {
+    val reviewDao: ReviewDao by inject(ReviewDao::class.java)
+    val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    delete("/api/v1/reviews/moderation/{reviewId}") {
+        requireReviewModerationAdmin(call, authDao, userProfileDao) ?: return@delete
+
+        val reviewId = call.parameters["reviewId"]
+        if (reviewId.isNullOrBlank() || !SecurityUtils.isValidUUID(reviewId)) {
+            return@delete call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid reviewId parameter")
+            )
+        }
+
+        try {
+            val deleted = reviewDao.deleteReview(reviewId)
+            if (!deleted) {
+                return@delete call.respond(
+                    HttpStatusCode.NotFound,
+                    mapOf("error" to "Review not found")
+                )
+            }
+
+            call.respond(
+                HttpStatusCode.OK,
+                DeleteReviewModerationResponse(
+                    success = true,
+                    reviewId = reviewId,
+                    message = "Review deleted successfully"
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Error deleting review {}", reviewId, e)
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "Failed to delete review")
+            )
+        }
+    }
+}
+
 fun Route.checkReviewEligibilityRoute() {
     val transactionDao: BarterTransactionDao by inject(BarterTransactionDao::class.java)
     val reviewDao: ReviewDao by inject(ReviewDao::class.java)

@@ -101,6 +101,41 @@ data class UserReviewsResponse(
     val averageRating: Double
 )
 
+@Serializable
+data class SubmitReviewAppealRequest(
+    val reviewId: String,
+    val appealedBy: String,
+    val reason: String,
+    val evidenceItems: List<EvidenceItem> = emptyList()
+)
+
+@Serializable
+data class SubmitReviewAppealResponse(
+    val success: Boolean,
+    val appealId: String,
+    val message: String
+)
+
+@Serializable
+data class UserAppealsResponse(
+    val userId: String,
+    val appeals: List<ReviewAppeal>,
+    val totalCount: Int
+)
+
+@Serializable
+data class ReviewAppealsModerationResponse(
+    val appeals: List<ReviewAppeal>,
+    val totalCount: Int
+)
+
+@Serializable
+data class DeleteReviewModerationResponse(
+    val success: Boolean,
+    val reviewId: String,
+    val message: String
+)
+
 // ============================================================================
 // REPUTATION API MODELS
 // ============================================================================

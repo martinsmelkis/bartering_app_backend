@@ -1,7 +1,11 @@
 package app.bartering.features.reviews.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
+import app.bartering.features.reviews.db.ReviewAppealsTable
 import app.bartering.features.reviews.db.ReviewsTable
+import app.bartering.features.reviews.model.AppealStatus
+import app.bartering.features.reviews.model.EvidenceItem
+import app.bartering.features.reviews.model.ReviewAppeal
 import app.bartering.features.reviews.model.TransactionStatus
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.jdbc.*
@@ -9,6 +13,7 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 class ReviewDaoImpl : ReviewDao {
 
@@ -217,6 +222,121 @@ class ReviewDaoImpl : ReviewDao {
             e.printStackTrace()
             false
         }
+    }
+
+    override suspend fun createAppeal(appeal: ReviewAppeal): Boolean = dbQuery {
+        try {
+            ReviewAppealsTable.insert {
+                it[id] = appeal.id.ifBlank { UUID.randomUUID().toString() }
+                it[reviewId] = appeal.reviewId
+                it[appealedBy] = appeal.appealedBy
+                it[reason] = appeal.reason
+                it[status] = appeal.status.value
+                it[appealedAt] = Instant.ofEpochMilli(appeal.appealedAt)
+                it[resolvedAt] = appeal.resolvedAt?.let { ts -> Instant.ofEpochMilli(ts) }
+                it[moderatorNotes] = buildEvidenceNotes(appeal.evidenceItems, appeal.moderatorNotes)
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    override suspend fun getUserAppeals(userId: String): List<ReviewAppeal> = dbQuery {
+        ReviewAppealsTable
+            .selectAll()
+            .where { ReviewAppealsTable.appealedBy eq userId }
+            .orderBy(ReviewAppealsTable.appealedAt, SortOrder.DESC)
+            .map { row -> rowToReviewAppeal(row) }
+    }
+
+    override suspend fun getRecentAppeals(limit: Int): List<ReviewAppeal> = dbQuery {
+        ReviewAppealsTable
+            .selectAll()
+            .orderBy(ReviewAppealsTable.appealedAt, SortOrder.DESC)
+            .limit(limit)
+            .map { row -> rowToReviewAppeal(row) }
+    }
+
+    override suspend fun reviewExists(reviewId: String): Boolean = dbQuery {
+        ReviewsTable
+            .selectAll()
+            .where { ReviewsTable.id eq reviewId }
+            .count() > 0
+    }
+
+    private fun rowToReviewAppeal(row: ResultRow): ReviewAppeal {
+        val notes = row[ReviewAppealsTable.moderatorNotes]
+        val (evidenceItems, moderatorNotes) = parseEvidenceAndNotes(notes)
+
+        return ReviewAppeal(
+            id = row[ReviewAppealsTable.id],
+            reviewId = row[ReviewAppealsTable.reviewId],
+            appealedBy = row[ReviewAppealsTable.appealedBy],
+            reason = row[ReviewAppealsTable.reason],
+            evidenceItems = evidenceItems,
+            status = AppealStatus.fromString(row[ReviewAppealsTable.status]) ?: AppealStatus.PENDING,
+            appealedAt = row[ReviewAppealsTable.appealedAt].toEpochMilli(),
+            resolvedAt = row[ReviewAppealsTable.resolvedAt]?.toEpochMilli(),
+            moderatorNotes = moderatorNotes
+        )
+    }
+
+    private fun buildEvidenceNotes(evidenceItems: List<EvidenceItem>, moderatorNotes: String?): String? {
+        if (evidenceItems.isEmpty() && moderatorNotes.isNullOrBlank()) return moderatorNotes
+
+        val evidenceBlob = if (evidenceItems.isEmpty()) {
+            null
+        } else {
+            evidenceItems.joinToString(separator = "\n") { ev ->
+                val desc = ev.description?.takeIf { it.isNotBlank() }?.let { " | desc=$it" } ?: ""
+                "type=${ev.type} | ref=${ev.reference}$desc"
+            }
+        }
+
+        return listOfNotNull(
+            evidenceBlob?.let { "[user_evidence]\n$it" },
+            moderatorNotes?.takeIf { it.isNotBlank() }?.let { "[moderator_notes]\n$it" }
+        ).joinToString("\n\n").ifBlank { null }
+    }
+
+    private fun parseEvidenceAndNotes(storedNotes: String?): Pair<List<EvidenceItem>, String?> {
+        if (storedNotes.isNullOrBlank()) return emptyList<EvidenceItem>() to null
+
+        val evidence = mutableListOf<EvidenceItem>()
+        val lines = storedNotes.lines()
+        var inEvidence = false
+        val moderator = StringBuilder()
+
+        for (line in lines) {
+            when {
+                line.trim() == "[user_evidence]" -> {
+                    inEvidence = true
+                    continue
+                }
+                line.trim() == "[moderator_notes]" -> {
+                    inEvidence = false
+                    continue
+                }
+                inEvidence && line.contains("type=") && line.contains("ref=") -> {
+                    val parts = line.split("|").map { it.trim() }
+                    val type = parts.firstOrNull { it.startsWith("type=") }?.removePrefix("type=")
+                    val ref = parts.firstOrNull { it.startsWith("ref=") }?.removePrefix("ref=")
+                    val desc = parts.firstOrNull { it.startsWith("desc=") }?.removePrefix("desc=")
+                    if (!type.isNullOrBlank() && !ref.isNullOrBlank()) {
+                        evidence.add(EvidenceItem(type = type, reference = ref, description = desc))
+                    }
+                }
+                !inEvidence -> {
+                    if (moderator.isNotEmpty()) moderator.append("\n")
+                    moderator.append(line)
+                }
+            }
+        }
+
+        val moderatorNotes = moderator.toString().trim().ifBlank { null }
+        return evidence to moderatorNotes
     }
 
     private fun rowToDto(row: ResultRow): ReviewDto {

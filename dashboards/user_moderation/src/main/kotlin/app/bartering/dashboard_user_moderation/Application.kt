@@ -211,6 +211,18 @@ fun Application.module() {
                 call.respondText(buildDashboardPage(snapshot), ContentType.Text.Html)
             }
 
+            post("/moderation/reviews/{reviewId}/delete") {
+                val reviewId = call.parameters["reviewId"]?.trim().orEmpty()
+                if (reviewId.isBlank()) {
+                    val snapshot = backendApi.fetchSnapshot()
+                    return@post call.respondText(buildSummaryFragment(snapshot), ContentType.Text.Html)
+                }
+
+                backendApi.deleteReview(reviewId)
+                val snapshot = backendApi.fetchSnapshot()
+                call.respondText(buildSummaryFragment(snapshot), ContentType.Text.Html)
+            }
+
             get("/partials/summary") {
                 val snapshot = backendApi.fetchSnapshot()
                 call.respondText(buildSummaryFragment(snapshot), ContentType.Text.Html)
@@ -341,6 +353,52 @@ private fun buildSummaryFragment(snapshot: ModerationSnapshot): String = createH
                             td(classes = "px-4 py-3 text-right") { +row.pendingReviewModerationCount.toString() }
                             td(classes = "px-4 py-3 text-right") { +row.disputedTransactionCount.toString() }
                             td(classes = "px-4 py-3 text-right") { +row.scamFlagCount.toString() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    div(classes = "mt-6 overflow-x-auto rounded-xl border border-slate-200 bg-white") {
+        div(classes = "px-4 py-3 border-b border-slate-100 flex items-center justify-between") {
+            h2(classes = "text-sm font-semibold text-slate-900") { +"Review Appeals" }
+            span(classes = "text-xs text-slate-500") { +"${snapshot.reviewAppeals.size} items" }
+        }
+        table(classes = "min-w-full text-sm") {
+            thead(classes = "bg-slate-50") {
+                tr {
+                    th(classes = "px-4 py-3 text-left") { +"Appeal ID" }
+                    th(classes = "px-4 py-3 text-left") { +"Review ID" }
+                    th(classes = "px-4 py-3 text-left") { +"Appealed By" }
+                    th(classes = "px-4 py-3 text-left") { +"Status" }
+                    th(classes = "px-4 py-3 text-left") { +"Reason" }
+                    th(classes = "px-4 py-3 text-right") { +"Actions" }
+                }
+            }
+            tbody {
+                if (snapshot.reviewAppeals.isEmpty()) {
+                    tr {
+                        td(classes = "px-4 py-4 text-slate-500") {
+                            attributes["colspan"] = "6"
+                            +"No review appeals found."
+                        }
+                    }
+                } else {
+                    snapshot.reviewAppeals.forEach { appeal ->
+                        tr(classes = "border-t border-slate-100") {
+                            td(classes = "px-4 py-3 font-mono text-xs") { +appeal.id }
+                            td(classes = "px-4 py-3 font-mono text-xs") { +appeal.reviewId }
+                            td(classes = "px-4 py-3 font-mono text-xs") { +appeal.appealedBy }
+                            td(classes = "px-4 py-3") { +appeal.status }
+                            td(classes = "px-4 py-3 max-w-xl") { +appeal.reason }
+                            td(classes = "px-4 py-3 text-right") {
+                                form(action = "/moderation/reviews/${appeal.reviewId}/delete", method = FormMethod.post) {
+                                    button(classes = "rounded-md border border-red-300 text-red-700 px-3 py-1 text-xs font-medium hover:bg-red-50") {
+                                        +"Delete review"
+                                    }
+                                }
+                            }
                         }
                     }
                 }

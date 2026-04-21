@@ -308,7 +308,6 @@ fun Route.updateProfileRoute() {
             val isPremiumUser = purchasesService.getPremiumStatus(request.userId).isPremium
 
             val requestedAvatarIcon = request.profileAvatarIcon?.trim()
-            val wantsToSetAvatarIcon = !requestedAvatarIcon.isNullOrBlank()
             val requestedAvatarIconId = request.profileAvatarIconId?.trim()?.lowercase()
             val wantsToChangeAvatarIconId = !requestedAvatarIconId.isNullOrBlank() &&
                 requestedAvatarIconId != currentProfile?.profileAvatarIconId
@@ -330,18 +329,17 @@ fun Route.updateProfileRoute() {
                 )
             }
 
-            if (wantsToSetAvatarIcon) {
-                val avatarIcon = requestedAvatarIcon
-                if (avatarIcon.length > MAX_PROFILE_AVATAR_ICON_LENGTH) {
+            if (requestedAvatarIcon?.isNotBlank() == true) {
+                if (requestedAvatarIcon.length > MAX_PROFILE_AVATAR_ICON_LENGTH) {
                     return@post call.respond(
                         HttpStatusCode.BadRequest,
                         "profileAvatarIcon too large."
                     )
                 }
 
-                val isSvg = avatarIcon.startsWith("<svg", ignoreCase = true)
-                        && avatarIcon.contains("</svg>", ignoreCase = true)
-                if (!isSvg || avatarIcon.contains("<script", ignoreCase = true)) {
+                val isSvg = requestedAvatarIcon.startsWith("<svg", ignoreCase = true)
+                        && requestedAvatarIcon.contains("</svg>", ignoreCase = true)
+                if (!isSvg || requestedAvatarIcon.contains("<script", ignoreCase = true)) {
                     return@post call.respond(
                         HttpStatusCode.BadRequest,
                         "profileAvatarIcon must be safe inline SVG content."
@@ -386,7 +384,7 @@ fun Route.updateProfileRoute() {
                         attributes = request.attributes,
                         profileKeywordDataMap = request.profileKeywordDataMap,
                         selfDescription = request.selfDescription,
-                        profileAvatarIcon = if (wantsToSetAvatarIcon) requestedAvatarIcon else null,
+                        profileAvatarIcon = requestedAvatarIcon,
                         profileAvatarIconId = if (wantsToChangeAvatarIconId) requestedAvatarIconId else null,
                         workReferenceImageUrls = resolvedWorkReferenceImageUrls,
                         preferredLanguage = request.preferredLanguage

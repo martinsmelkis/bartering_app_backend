@@ -2,6 +2,7 @@ package app.bartering.dashboard_user_moderation.features.network
 
 import app.bartering.dashboard_user_moderation.models.auth.DashboardConfig
 import app.bartering.dashboard_user_moderation.models.auth.ModerationSnapshot
+import app.bartering.dashboard_user_moderation.models.moderation.ReviewAppealsResponse
 import app.bartering.dashboard_user_moderation.models.moderation.UserModerationRow
 import app.bartering.dashboard_user_moderation.models.moderation.UserReportStats
 import app.bartering.dashboard_user_moderation.models.moderation.UserReviewsResponse
@@ -10,6 +11,7 @@ import app.bartering.dashboard_user_moderation.utils.CryptoUtils
 import app.bartering.dashboard_user_moderation.utils.CryptoUtils.signChallenge
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
 import java.security.interfaces.ECPrivateKey
@@ -46,6 +48,7 @@ class BackendModerationApiClient(
                 connected = false,
                 backendStatus = healthStatus,
                 rows = emptyList(),
+                reviewAppeals = emptyList(),
                 connectionError = "Missing dashboard moderation config: ${missingConfig.joinToString(", ")}" 
             )
         }
@@ -55,6 +58,7 @@ class BackendModerationApiClient(
                 connected = false,
                 backendStatus = healthStatus,
                 rows = emptyList(),
+                reviewAppeals = emptyList(),
                 connectionError = "Invalid DASHBOARD_ADMIN_PRIVATE_KEY_HEX (expected secp256r1 private key hex)."
             )
         }
@@ -68,11 +72,19 @@ class BackendModerationApiClient(
             reportedUsers.userIds.map { userId -> fetchRowForUser(activeSigningKey, userId) }
         }
 
+        val appealsResult = runCatching {
+            signedGet<ReviewAppealsResponse>(
+                path = "/api/v1/reviews/appeals/moderation?limit=200",
+                signingKey = activeSigningKey
+            ).appeals
+        }
+
         return ModerationSnapshot(
-            connected = rowsResult.isSuccess,
+            connected = rowsResult.isSuccess && appealsResult.isSuccess,
             backendStatus = healthStatus,
             rows = rowsResult.getOrNull().orEmpty(),
-            connectionError = rowsResult.exceptionOrNull()?.message
+            reviewAppeals = appealsResult.getOrNull().orEmpty(),
+            connectionError = rowsResult.exceptionOrNull()?.message ?: appealsResult.exceptionOrNull()?.message
         )
     }
 
@@ -108,6 +120,22 @@ class BackendModerationApiClient(
             disputedTransactionCount = disputedTransactionCount,
             scamFlagCount = scamFlagCount
         )
+    }
+
+    suspend fun deleteReview(reviewId: String): Boolean {
+        val activeSigningKey = signingKey ?: return false
+        val path = "/api/v1/reviews/moderation/$reviewId"
+        val timestamp = System.currentTimeMillis().toString()
+        val challenge = "$timestamp."
+        val signatureB64 = signChallenge(activeSigningKey, challenge)
+
+        val response = client.delete("${config.backendBaseUrl}$path") {
+            headers.append("X-User-ID", config.adminUserId)
+            headers.append("X-Timestamp", timestamp)
+            headers.append("X-Signature", signatureB64)
+        }
+
+        return response.status == HttpStatusCode.OK
     }
 
     private suspend inline fun <reified T> signedGet(path: String, signingKey: ECPrivateKey): T {

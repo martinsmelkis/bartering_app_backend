@@ -89,16 +89,29 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
 
     override suspend fun registerDeviceKey(deviceKey: DeviceKeyInfo): Boolean = dbQuery {
         try {
-            // Check if device already exists (reactivate or update)
-            val existingDevice = getDeviceKey(deviceKey.userId, deviceKey.deviceId)
-            if (existingDevice != null) {
+            // Check if device already exists (including previously deactivated rows)
+            val existingDeviceRow = UserDeviceKeysTable
+                .select(UserDeviceKeysTable.id)
+                .where {
+                    (UserDeviceKeysTable.userId eq deviceKey.userId) and
+                        (UserDeviceKeysTable.deviceId eq deviceKey.deviceId)
+                }
+                .firstOrNull()
+
+            if (existingDeviceRow != null) {
                 // Update existing device with new key info and reactivate if needed
                 val updated = UserDeviceKeysTable.update({
                     (UserDeviceKeysTable.userId eq deviceKey.userId) and
-                    (UserDeviceKeysTable.deviceId eq deviceKey.deviceId)
+                        (UserDeviceKeysTable.deviceId eq deviceKey.deviceId)
                 }) {
                     it[publicKey] = deviceKey.publicKey
                     it[deviceName] = deviceKey.deviceName
+                    it[deviceType] = deviceKey.deviceType?.lowercase()
+                        ?.takeIf { type -> type in DeviceKeyConstraints.VALID_DEVICE_TYPES }
+                        ?: "other"
+                    it[platform] = deviceKey.platform?.lowercase()
+                        ?.takeIf { p -> p in DeviceKeyConstraints.VALID_PLATFORMS }
+                        ?: "other"
                     it[isActive] = true
                     it[lastUsedAt] = Instant.now()
                     it[deactivatedAt] = null
