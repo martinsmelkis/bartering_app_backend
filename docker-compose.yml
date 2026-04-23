@@ -81,8 +81,8 @@ services:
 
   barter_dashboard_admin_compliance:
     build:
-      context: .
-      dockerfile: dashboards/admin_compliance/Dockerfile
+      context: ./dashboards/admin_compliance
+      dockerfile: Dockerfile
     container_name: barter_dashboard_admin_compliance
     restart: always
     depends_on:
@@ -106,8 +106,8 @@ services:
 
   barter_dashboard_user_moderation:
     build:
-      context: .
-      dockerfile: dashboards/user_moderation/Dockerfile
+      context: ./dashboards/user_moderation
+      dockerfile: Dockerfile
     container_name: barter_dashboard_user_moderation
     restart: always
     depends_on:

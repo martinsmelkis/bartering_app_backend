@@ -5,7 +5,7 @@ object ValidationUtils {
     // Maximum limits to prevent DoS attacks
     const val MAX_ATTRIBUTE_KEY_LENGTH = 50
     const val MAX_DESCRIPTION_LENGTH = 1000
-    const val MAX_ATTRIBUTES_PER_REQUEST = 50
+    const val MAX_ATTRIBUTES_PER_REQUEST = 15
     const val MIN_RELEVANCY = 0.0
     const val MAX_RELEVANCY = 1.0
     

@@ -9,13 +9,10 @@ import app.bartering.features.notifications.db.MatchHistoryTable
 import app.bartering.features.profile.db.UserRegistrationDataTable
 import app.bartering.features.relationships.db.UserRelationshipsTable
 import app.bartering.features.relationships.db.UserReportsTable
-import app.bartering.features.reviews.db.DeviceTrackingTable
-import app.bartering.features.reviews.db.IpTrackingTable
-import app.bartering.features.reviews.db.ModerationQueueTable
+import app.bartering.features.reviews.db.ReviewRiskTrackingTable
+import app.bartering.features.reviews.db.ModerationAuditLogTable
 import app.bartering.features.reviews.db.ReviewAppealsTable
-import app.bartering.features.reviews.db.ReviewAuditLogTable
 import app.bartering.features.reviews.db.ReviewsTable
-import app.bartering.features.reviews.db.UserLocationChangesTable
 import app.bartering.features.authentication.mapper.AuthenticationMapper
 import app.bartering.features.authentication.db.UserDeviceKeysTable
 import app.bartering.features.authentication.model.DeviceKeyConstraints
@@ -490,32 +487,17 @@ class AuthenticationDaoImpl(private val mapper: AuthenticationMapper) : Authenti
                 log.info("Deleted {} migration sessions for user {}", migrationSessionsDeleted, userId)
 
                 // Step 5: Delete review-related auxiliary data that does NOT have FK cascade to user_registration_data
-                val reviewAuditLogsDeleted = ReviewAuditLogTable.deleteWhere {
-                    ReviewAuditLogTable.userId eq userId
+                val moderationAuditLogsDeleted = ModerationAuditLogTable.deleteWhere {
+                    (ModerationAuditLogTable.actorUserId eq userId) or
+                            (ModerationAuditLogTable.targetUserId eq userId) or
+                            (ModerationAuditLogTable.assignedTo eq userId)
                 }
-                log.info("Deleted {} review audit log rows for user {}", reviewAuditLogsDeleted, userId)
+                log.info("Deleted {} moderation audit log rows for user {}", moderationAuditLogsDeleted, userId)
 
-                val deviceTrackingDeleted = DeviceTrackingTable.deleteWhere {
-                    DeviceTrackingTable.userId eq userId
+                val riskTrackingDeleted = ReviewRiskTrackingTable.deleteWhere {
+                    ReviewRiskTrackingTable.userId eq userId
                 }
-                log.info("Deleted {} device tracking rows for user {}", deviceTrackingDeleted, userId)
-
-                val ipTrackingDeleted = IpTrackingTable.deleteWhere {
-                    IpTrackingTable.userId eq userId
-                }
-                log.info("Deleted {} IP tracking rows for user {}", ipTrackingDeleted, userId)
-
-                val locationChangesDeleted = UserLocationChangesTable.deleteWhere {
-                    UserLocationChangesTable.userId eq userId
-                }
-                log.info("Deleted {} location change rows for user {}", locationChangesDeleted, userId)
-
-                val moderationQueueDeleted = ModerationQueueTable.deleteWhere {
-                    (ModerationQueueTable.reviewerId eq userId) or
-                            (ModerationQueueTable.targetUserId eq userId) or
-                            (ModerationQueueTable.assignedTo eq userId)
-                }
-                log.info("Deleted {} moderation queue rows for user {}", moderationQueueDeleted, userId)
+                log.info("Deleted {} unified risk tracking rows for user {}", riskTrackingDeleted, userId)
 
                 val reviewAppealsDeleted = ReviewAppealsTable.deleteWhere {
                     (ReviewAppealsTable.appealedBy eq userId) or

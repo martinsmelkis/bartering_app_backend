@@ -14,6 +14,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
+import org.slf4j.LoggerFactory
 import java.security.interfaces.ECPrivateKey
 
 @Serializable
@@ -25,17 +26,21 @@ class BackendModerationApiClient(
     private val config: DashboardConfig,
     private val client: HttpClient
 ) {
+    private val logger = LoggerFactory.getLogger(BackendModerationApiClient::class.java)
     private val signingKey: ECPrivateKey? = runCatching {
         if (config.adminPrivateKeyHex.isBlank()) null else CryptoUtils.parseEcPrivateKeyFromHex(config.adminPrivateKeyHex)
     }.getOrNull()
 
     suspend fun fetchSnapshot(): ModerationSnapshot {
+        val healthEndpoint = "${config.backendBaseUrl}/public-api/v1/healthCheck"
         val healthStatus = runCatching {
-            val response = client.get("${config.backendBaseUrl}/public-api/v1/healthCheck")
+            val response = client.get(healthEndpoint)
             when (response.status) {
                 HttpStatusCode.OK -> "healthy"
                 else -> "unhealthy (${response.status.value})"
             }
+        }.onFailure { error ->
+            logger.warn("Dashboard backend health check failed. url={}, reason={}", healthEndpoint, error.message)
         }.getOrElse { "unreachable" }
 
         val missingConfig = buildList {
@@ -79,12 +84,24 @@ class BackendModerationApiClient(
             ).appeals
         }
 
+        val rowsError = rowsResult.exceptionOrNull()
+        val appealsError = appealsResult.exceptionOrNull()
+
+        if (rowsError != null || appealsError != null) {
+            logger.warn(
+                "Dashboard moderation snapshot fetch failed. backendBaseUrl={}, rowsError={}, appealsError={}",
+                config.backendBaseUrl,
+                rowsError?.message,
+                appealsError?.message
+            )
+        }
+
         return ModerationSnapshot(
             connected = rowsResult.isSuccess && appealsResult.isSuccess,
             backendStatus = healthStatus,
             rows = rowsResult.getOrNull().orEmpty(),
             reviewAppeals = appealsResult.getOrNull().orEmpty(),
-            connectionError = rowsResult.exceptionOrNull()?.message ?: appealsResult.exceptionOrNull()?.message
+            connectionError = rowsError?.message ?: appealsError?.message
         )
     }
 
@@ -144,13 +161,15 @@ class BackendModerationApiClient(
         val challenge = "$timestamp.$requestBody"
         val signatureB64 = signChallenge(signingKey, challenge)
 
-        val response = client.get("${config.backendBaseUrl}$path") {
+        val fullUrl = "${config.backendBaseUrl}$path"
+        val response = client.get(fullUrl) {
             headers.append("X-User-ID", config.adminUserId)
             headers.append("X-Timestamp", timestamp)
             headers.append("X-Signature", signatureB64)
         }
 
         if (response.status != HttpStatusCode.OK) {
+            logger.warn("Dashboard signed GET failed. url={}, status={}", fullUrl, response.status.value)
             throw IllegalStateException("$path returned HTTP ${response.status.value}")
         }
 

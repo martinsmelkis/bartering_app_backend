@@ -16,7 +16,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-
 dependencies {
     implementation("io.ktor:ktor-server-core-jvm:3.2.3")
     implementation("io.ktor:ktor-server-netty-jvm:3.2.3")
@@ -44,7 +43,3 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
-
-// Compatibility task for IDE Kotlin build script model import.
-// Newer Kotlin/Gradle versions may not create this task automatically.
-tasks.register("prepareKotlinBuildScriptModel")

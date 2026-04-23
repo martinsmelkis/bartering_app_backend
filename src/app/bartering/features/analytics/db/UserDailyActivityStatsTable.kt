@@ -6,7 +6,6 @@ import org.jetbrains.exposed.v1.javatime.timestamp
 import java.time.Instant
 import java.time.LocalDate
 
-@Suppress("unused")
 object UserDailyActivityStatsTable : Table("user_daily_activity_stats") {
     val anonymizedUserId = varchar("anonymized_user_id", 64)
     val activityDate = date("activity_date").default(LocalDate.now())
@@ -29,7 +28,9 @@ object UserDailyActivityStatsTable : Table("user_daily_activity_stats") {
     val consentVersion = varchar("consent_version", 50).nullable()
 
     // searched_keywords is currently updated via raw SQL in DAO (JSONB), not mapped in Exposed model.
+    @Suppress("unused")
     val averageResponseTime = long("average_response_time").default(0)
+    @Suppress("unused")
     val totalResponseTimeMs = long("total_response_time_ms").default(0)
 
     val createdAt = timestamp("created_at").default(Instant.now())

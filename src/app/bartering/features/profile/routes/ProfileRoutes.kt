@@ -30,6 +30,7 @@ import app.bartering.features.compliance.service.ComplianceAuditService
 import app.bartering.features.compliance.service.DataSubjectRequestService
 import app.bartering.features.compliance.service.LegalHoldService
 import app.bartering.utils.HashUtils
+import app.bartering.utils.ValidationUtils.validateDescription
 import io.ktor.client.call.body
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
@@ -296,6 +297,16 @@ fun Route.updateProfileRoute() {
                 )
             }
 
+            val sanitizedName = validateDescription(request.name)
+            if (request.name.isNotBlank() && sanitizedName.isNullOrBlank()) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    "name is required and must be valid."
+                )
+            }
+
+            val sanitizedSelfDescription = validateDescription(request.selfDescription)
+
             // Get current profile to check if location is changing
             val currentProfile = userProfileDao.getProfile(request.userId)
             val oldLatitude = currentProfile?.latitude
@@ -312,7 +323,7 @@ fun Route.updateProfileRoute() {
             val wantsToChangeAvatarIconId = !requestedAvatarIconId.isNullOrBlank() &&
                 requestedAvatarIconId != currentProfile?.profileAvatarIconId
 
-            if (request.selfDescription != null && request.selfDescription.length > MAX_PROFILE_SELF_DESCRIPTION_LENGTH) {
+            if (sanitizedSelfDescription != null && sanitizedSelfDescription.length > MAX_PROFILE_SELF_DESCRIPTION_LENGTH) {
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
                     "selfDescription too long. Max $MAX_PROFILE_SELF_DESCRIPTION_LENGTH characters."
@@ -378,12 +389,12 @@ fun Route.updateProfileRoute() {
                 userProfileDao.updateProfile(
                     request.userId,
                     UserProfileUpdateRequest(
-                        name = request.name,
+                        name = sanitizedName,
                         latitude = newLatitude,
                         longitude = newLongitude,
                         attributes = request.attributes,
                         profileKeywordDataMap = request.profileKeywordDataMap,
-                        selfDescription = request.selfDescription,
+                        selfDescription = sanitizedSelfDescription,
                         profileAvatarIcon = requestedAvatarIcon,
                         profileAvatarIconId = if (wantsToChangeAvatarIconId) requestedAvatarIconId else null,
                         workReferenceImageUrls = resolvedWorkReferenceImageUrls,

@@ -1,10 +1,8 @@
 package app.bartering.features.reviews.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
-import app.bartering.features.reviews.db.DeviceTrackingTable
-import app.bartering.features.reviews.db.IpTrackingTable
+import app.bartering.features.reviews.db.ReviewRiskTrackingTable
 import app.bartering.features.reviews.db.RiskPatternsTable
-import app.bartering.features.reviews.db.UserLocationChangesTable
 import app.bartering.features.reviews.model.*
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.jdbc.*
@@ -24,53 +22,63 @@ class RiskPatternDaoImpl : RiskPatternDao {
     // ========== Device Tracking ==========
     
     override suspend fun trackDevice(data: DeviceTrackingData): Boolean = dbQuery {
-        DeviceTrackingTable.insert {
+        ReviewRiskTrackingTable.insert {
             it[id] = UUID.randomUUID().toString()
+            it[entryType] = "device"
             it[deviceFingerprint] = data.deviceFingerprint
             it[userId] = data.userId
             it[ipAddress] = data.ipAddress
             it[userAgent] = data.userAgent
             it[action] = data.action
-            it[timestamp] = data.timestamp
+            it[occurredAt] = data.timestamp
         }.insertedCount > 0
     }
     
     override suspend fun getUsersByDevice(deviceFingerprint: String): List<String> = dbQuery {
-        DeviceTrackingTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { DeviceTrackingTable.deviceFingerprint eq deviceFingerprint }
-            .map { it[DeviceTrackingTable.userId] }
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "device") and
+                        (ReviewRiskTrackingTable.deviceFingerprint eq deviceFingerprint)
+            }
+            .map { it[ReviewRiskTrackingTable.userId] }
             .distinct()
     }
     
     override suspend fun getDevicesByUser(userId: String): List<String> = dbQuery {
-        DeviceTrackingTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { DeviceTrackingTable.userId eq userId }
-            .map { it[DeviceTrackingTable.deviceFingerprint] }
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "device") and
+                        (ReviewRiskTrackingTable.userId eq userId)
+            }
+            .mapNotNull { it[ReviewRiskTrackingTable.deviceFingerprint] }
             .distinct()
     }
     
     override suspend fun analyzeDevicePattern(deviceFingerprint: String): DevicePatternAnalysis? = dbQuery {
-        val records = DeviceTrackingTable
+        val records = ReviewRiskTrackingTable
             .selectAll()
-            .where { DeviceTrackingTable.deviceFingerprint eq deviceFingerprint }
-            .orderBy(DeviceTrackingTable.timestamp to SortOrder.ASC)
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "device") and
+                        (ReviewRiskTrackingTable.deviceFingerprint eq deviceFingerprint)
+            }
+            .orderBy(ReviewRiskTrackingTable.occurredAt to SortOrder.ASC)
             .toList()
-        
+
         if (records.isEmpty()) return@dbQuery null
-        
-        val associatedUsers = records.map { it[DeviceTrackingTable.userId] }.distinct()
-        val firstSeen = records.first()[DeviceTrackingTable.timestamp]
-        val lastSeen = records.last()[DeviceTrackingTable.timestamp]
+
+        val associatedUsers = records.map { it[ReviewRiskTrackingTable.userId] }.distinct()
+        val firstSeen = records.first()[ReviewRiskTrackingTable.occurredAt]
+        val lastSeen = records.last()[ReviewRiskTrackingTable.occurredAt]
         val totalAccounts = associatedUsers.size
-        
+
         // Suspicious if multiple accounts use same device
         val suspiciousActivity = totalAccounts > 1
-        
+
         // Extract device info from user agent if available
-        val userAgent = records.firstOrNull { it[DeviceTrackingTable.userAgent] != null }
-            ?.get(DeviceTrackingTable.userAgent)
+        val userAgent = records.firstOrNull { it[ReviewRiskTrackingTable.userAgent] != null }
+            ?.get(ReviewRiskTrackingTable.userAgent)
         
         DevicePatternAnalysis(
             deviceFingerprint = deviceFingerprint,
@@ -94,60 +102,70 @@ class RiskPatternDaoImpl : RiskPatternDao {
     // ========== IP Tracking ==========
     
     override suspend fun trackIp(data: IpTrackingData): Boolean = dbQuery {
-        IpTrackingTable.insert {
+        ReviewRiskTrackingTable.insert {
             it[id] = UUID.randomUUID().toString()
+            it[entryType] = "ip"
             it[ipAddress] = data.ipAddress
             it[userId] = data.userId
             it[action] = data.action
-            it[timestamp] = data.timestamp
+            it[occurredAt] = data.timestamp
         }.insertedCount > 0
     }
     
     override suspend fun getUsersByIp(ipAddress: String): List<String> = dbQuery {
-        IpTrackingTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { IpTrackingTable.ipAddress eq ipAddress }
-            .map { it[IpTrackingTable.userId] }
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "ip") and
+                        (ReviewRiskTrackingTable.ipAddress eq ipAddress)
+            }
+            .map { it[ReviewRiskTrackingTable.userId] }
             .distinct()
     }
     
     override suspend fun getIpsByUser(userId: String): List<String> = dbQuery {
-        IpTrackingTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { IpTrackingTable.userId eq userId }
-            .map { it[IpTrackingTable.ipAddress] }
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "ip") and
+                        (ReviewRiskTrackingTable.userId eq userId)
+            }
+            .mapNotNull { it[ReviewRiskTrackingTable.ipAddress] }
             .distinct()
     }
     
     override suspend fun analyzeIpPattern(ipAddress: String): IpPatternAnalysis? = dbQuery {
-        val records = IpTrackingTable
+        val records = ReviewRiskTrackingTable
             .selectAll()
-            .where { IpTrackingTable.ipAddress eq ipAddress }
-            .orderBy(IpTrackingTable.timestamp to SortOrder.ASC)
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "ip") and
+                        (ReviewRiskTrackingTable.ipAddress eq ipAddress)
+            }
+            .orderBy(ReviewRiskTrackingTable.occurredAt to SortOrder.ASC)
             .toList()
-        
+
         if (records.isEmpty()) return@dbQuery null
-        
-        val associatedUsers = records.map { it[IpTrackingTable.userId] }.distinct()
-        val firstSeen = records.first()[IpTrackingTable.timestamp]
-        val lastSeen = records.last()[IpTrackingTable.timestamp]
+
+        val associatedUsers = records.map { it[ReviewRiskTrackingTable.userId] }.distinct()
+        val firstSeen = records.first()[ReviewRiskTrackingTable.occurredAt]
+        val lastSeen = records.last()[ReviewRiskTrackingTable.occurredAt]
         val totalAccounts = associatedUsers.size
-        
+
         val firstRecord = records.first()
-        
+
         IpPatternAnalysis(
             ipAddress = ipAddress,
             associatedUserIds = associatedUsers,
             firstSeenAt = firstSeen,
             lastSeenAt = lastSeen,
             totalAccounts = totalAccounts,
-            isVpn = firstRecord[IpTrackingTable.isVpn],
-            isProxy = firstRecord[IpTrackingTable.isProxy],
-            isTor = firstRecord[IpTrackingTable.isTor],
-            isDataCenter = firstRecord[IpTrackingTable.isDataCenter],
-            country = firstRecord[IpTrackingTable.country],
-            city = firstRecord[IpTrackingTable.city],
-            isp = firstRecord[IpTrackingTable.isp],
+            isVpn = firstRecord[ReviewRiskTrackingTable.isVpn],
+            isProxy = firstRecord[ReviewRiskTrackingTable.isProxy],
+            isTor = firstRecord[ReviewRiskTrackingTable.isTor],
+            isDataCenter = firstRecord[ReviewRiskTrackingTable.isDataCenter],
+            country = firstRecord[ReviewRiskTrackingTable.country],
+            city = firstRecord[ReviewRiskTrackingTable.city],
+            isp = firstRecord[ReviewRiskTrackingTable.isp],
             suspiciousActivity = totalAccounts > 2 // More than 2 accounts is suspicious
         )
     }
@@ -168,22 +186,26 @@ class RiskPatternDaoImpl : RiskPatternDao {
         city: String?,
         isp: String?
     ): Boolean = dbQuery {
-        IpTrackingTable.update({ IpTrackingTable.ipAddress eq ipAddress }) {
-            it[IpTrackingTable.isVpn] = isVpn
-            it[IpTrackingTable.isProxy] = isProxy
-            it[IpTrackingTable.isTor] = isTor
-            it[IpTrackingTable.isDataCenter] = isDataCenter
-            if (country != null) it[IpTrackingTable.country] = country
-            if (city != null) it[IpTrackingTable.city] = city
-            if (isp != null) it[IpTrackingTable.isp] = isp
+        ReviewRiskTrackingTable.update({
+            (ReviewRiskTrackingTable.entryType eq "ip") and
+                    (ReviewRiskTrackingTable.ipAddress eq ipAddress)
+        }) {
+            it[ReviewRiskTrackingTable.isVpn] = isVpn
+            it[ReviewRiskTrackingTable.isProxy] = isProxy
+            it[ReviewRiskTrackingTable.isTor] = isTor
+            it[ReviewRiskTrackingTable.isDataCenter] = isDataCenter
+            if (country != null) it[ReviewRiskTrackingTable.country] = country
+            if (city != null) it[ReviewRiskTrackingTable.city] = city
+            if (isp != null) it[ReviewRiskTrackingTable.isp] = isp
         } > 0
     }
     
     // ========== Location Change Tracking ==========
     
     override suspend fun trackLocationChange(data: LocationChangeData): Boolean = dbQuery {
-        UserLocationChangesTable.insert {
+        ReviewRiskTrackingTable.insert {
             it[id] = UUID.randomUUID().toString()
+            it[entryType] = "location_change"
             it[userId] = data.userId
             // Parse old location if provided
             if (data.oldLatitude != null && data.oldLongitude != null) {
@@ -193,28 +215,31 @@ class RiskPatternDaoImpl : RiskPatternDao {
             // Parse new location
             it[newLocation] = Point(data.newLongitude, data.newLatitude)
                 .also { p -> p.srid = 4326 }
-            it[changedAt] = data.changedAt
+            it[occurredAt] = data.changedAt
         }.insertedCount > 0
     }
     
     override suspend fun getUserLocationChanges(userId: String, limit: Int): List<LocationChange> = dbQuery {
-        UserLocationChangesTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { UserLocationChangesTable.userId eq userId }
-            .orderBy(UserLocationChangesTable.changedAt to SortOrder.DESC)
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "location_change") and
+                        (ReviewRiskTrackingTable.userId eq userId)
+            }
+            .orderBy(ReviewRiskTrackingTable.occurredAt to SortOrder.DESC)
             .limit(limit)
             .map {
-                val oldLocation = it[UserLocationChangesTable.oldLocation]
-                val newLocation = it[UserLocationChangesTable.newLocation]
+                val oldLocation = it[ReviewRiskTrackingTable.oldLocation]
+                val newLocation = it[ReviewRiskTrackingTable.newLocation]
 
                 LocationChange(
-                    id = it[UserLocationChangesTable.id],
-                    userId = it[UserLocationChangesTable.userId],
+                    id = it[ReviewRiskTrackingTable.id],
+                    userId = it[ReviewRiskTrackingTable.userId],
                     oldLatitude = oldLocation?.y, // y is latitude in PostGIS
                     oldLongitude = oldLocation?.x, // x is longitude in PostGIS
                     newLatitude = newLocation?.y ?: 0.0, // newLocation should not be null, but use safe access
                     newLongitude = newLocation?.x ?: 0.0,
-                    changedAt = it[UserLocationChangesTable.changedAt]
+                    changedAt = it[ReviewRiskTrackingTable.occurredAt]
                 )
             }
     }
@@ -312,19 +337,22 @@ class RiskPatternDaoImpl : RiskPatternDao {
         // Note: This requires PostGIS extension and proper spatial queries
         // For now, we'll use a simpler approach and calculate distance manually
         
-        UserLocationChangesTable
+        ReviewRiskTrackingTable
             .selectAll()
-            .where { (UserLocationChangesTable.changedAt greaterEq cutoffTime) }
-            .orderBy(UserLocationChangesTable.changedAt to SortOrder.DESC)
+            .where {
+                (ReviewRiskTrackingTable.entryType eq "location_change") and
+                        (ReviewRiskTrackingTable.occurredAt greaterEq cutoffTime)
+            }
+            .orderBy(ReviewRiskTrackingTable.occurredAt to SortOrder.DESC)
             .forEach {
-                val location = it[UserLocationChangesTable.newLocation] ?: return@forEach
+                val location = it[ReviewRiskTrackingTable.newLocation] ?: return@forEach
 
                 val locLat = location.y
                 val locLon = location.x
                 val distance = calculateHaversineDistance(latitude, longitude, locLat, locLon)
-                
+
                 if (distance <= radiusKm * 1000) {
-                    users.add(it[UserLocationChangesTable.userId])
+                    users.add(it[ReviewRiskTrackingTable.userId])
                 }
             }
         
@@ -493,15 +521,16 @@ class RiskPatternDaoImpl : RiskPatternDao {
     
     override suspend fun cleanupOldDeviceTracking(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
-            val cutoffDate = java.time.Instant.now()
+            val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
-            DeviceTrackingTable.deleteWhere {
-                val baseFilter = DeviceTrackingTable.timestamp less cutoffDate
+            ReviewRiskTrackingTable.deleteWhere {
+                val baseFilter = (ReviewRiskTrackingTable.entryType eq "device") and
+                        (ReviewRiskTrackingTable.occurredAt less cutoffDate)
                 if (excludedUserIds.isEmpty()) {
                     baseFilter
                 } else {
-                    baseFilter and (DeviceTrackingTable.userId notInList excludedUserIds.toList())
+                    baseFilter and (ReviewRiskTrackingTable.userId notInList excludedUserIds.toList())
                 }
             }
         } catch (e: Exception) {
@@ -513,15 +542,16 @@ class RiskPatternDaoImpl : RiskPatternDao {
     
     override suspend fun cleanupOldIpTracking(olderThanDays: Int, excludedUserIds: Set<String>): Int = dbQuery {
         try {
-            val cutoffDate = java.time.Instant.now()
+            val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
-            IpTrackingTable.deleteWhere {
-                val baseFilter = IpTrackingTable.timestamp less cutoffDate
+            ReviewRiskTrackingTable.deleteWhere {
+                val baseFilter = (ReviewRiskTrackingTable.entryType eq "ip") and
+                        (ReviewRiskTrackingTable.occurredAt less cutoffDate)
                 if (excludedUserIds.isEmpty()) {
                     baseFilter
                 } else {
-                    baseFilter and (IpTrackingTable.userId notInList excludedUserIds.toList())
+                    baseFilter and (ReviewRiskTrackingTable.userId notInList excludedUserIds.toList())
                 }
             }
         } catch (e: Exception) {
@@ -536,12 +566,13 @@ class RiskPatternDaoImpl : RiskPatternDao {
             val cutoffDate = Instant.now()
                 .minus(java.time.Duration.ofDays(olderThanDays.toLong()))
             
-            UserLocationChangesTable.deleteWhere {
-                val baseFilter = UserLocationChangesTable.changedAt less cutoffDate
+            ReviewRiskTrackingTable.deleteWhere {
+                val baseFilter = (ReviewRiskTrackingTable.entryType eq "location_change") and
+                        (ReviewRiskTrackingTable.occurredAt less cutoffDate)
                 if (excludedUserIds.isEmpty()) {
                     baseFilter
                 } else {
-                    baseFilter and (UserLocationChangesTable.userId notInList excludedUserIds.toList())
+                    baseFilter and (ReviewRiskTrackingTable.userId notInList excludedUserIds.toList())
                 }
             }
         } catch (e: Exception) {

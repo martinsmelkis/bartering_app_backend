@@ -16,5 +16,6 @@ data class DsarCoverageItem(
     val exportIncluded: Boolean,
     val deletionGuaranteedByCascade: Boolean,
     val retentionControlled: Boolean,
-    val notes: String
+    val notes: String,
+    val trackingType: String? = null
 )

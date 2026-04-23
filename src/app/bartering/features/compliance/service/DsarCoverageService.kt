@@ -21,9 +21,18 @@ class DsarCoverageService {
             userId,
             userId
         )
-        val deviceTrackingRows = countRows("SELECT COUNT(*) FROM review_device_tracking WHERE user_id = ?", userId)
-        val ipTrackingRows = countRows("SELECT COUNT(*) FROM review_ip_tracking WHERE user_id = ?", userId)
-        val locationChangesRows = countRows("SELECT COUNT(*) FROM user_location_changes WHERE user_id = ?", userId)
+        val deviceTrackingRows = countRows(
+            "SELECT COUNT(*) FROM review_risk_tracking WHERE user_id = ? AND entry_type = 'device'",
+            userId
+        )
+        val ipTrackingRows = countRows(
+            "SELECT COUNT(*) FROM review_risk_tracking WHERE user_id = ? AND entry_type = 'ip'",
+            userId
+        )
+        val locationChangesRows = countRows(
+            "SELECT COUNT(*) FROM review_risk_tracking WHERE user_id = ? AND entry_type = 'location_change'",
+            userId
+        )
         val reportsRows = countRows(
             "SELECT COUNT(*) FROM user_reports WHERE reporter_user_id = ? OR reported_user_id = ? OR reviewed_by = ?",
             userId,
@@ -85,27 +94,30 @@ class DsarCoverageService {
             ),
             DsarCoverageItem(
                 domain = "security",
-                table = "review_device_tracking",
+                table = "review_risk_tracking",
                 exportIncluded = false,
                 deletionGuaranteedByCascade = true,
                 retentionControlled = true,
-                notes = "rows=$deviceTrackingRows"
+                notes = "rows=$deviceTrackingRows",
+                trackingType = "device"
             ),
             DsarCoverageItem(
                 domain = "security",
-                table = "review_ip_tracking",
+                table = "review_risk_tracking",
                 exportIncluded = false,
                 deletionGuaranteedByCascade = true,
                 retentionControlled = true,
-                notes = "rows=$ipTrackingRows"
+                notes = "rows=$ipTrackingRows",
+                trackingType = "ip"
             ),
             DsarCoverageItem(
                 domain = "security",
-                table = "user_location_changes",
+                table = "review_risk_tracking",
                 exportIncluded = false,
                 deletionGuaranteedByCascade = true,
                 retentionControlled = true,
-                notes = "rows=$locationChangesRows"
+                notes = "rows=$locationChangesRows",
+                trackingType = "location_change"
             ),
             DsarCoverageItem(
                 domain = "moderation",
