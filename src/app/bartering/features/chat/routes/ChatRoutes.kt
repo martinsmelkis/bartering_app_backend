@@ -10,7 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import app.bartering.features.chat.cache.PublicKeyCache
 import app.bartering.features.chat.dao.ChatAnalyticsDao
 import app.bartering.features.encryptedfiles.dao.EncryptedFileDaoImpl
@@ -331,11 +333,28 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                             }
 
                             break // Exit auth loop
+                        } catch (e: SerializationException) {
+                            // Client can race and send a chat payload before auth after reconnect.
+                            // Ignore non-auth payloads until a valid AuthRequest arrives instead of hard-closing.
+                            log.warn(
+                                "Ignoring non-auth payload during auth phase for connection {}: {}",
+                                currentConnection.id,
+                                e.localizedMessage
+                            )
+                            outgoing.send(
+                                Frame.Text(
+                                    Json.encodeToString<SocketMessage>(
+                                        socketSerializer,
+                                        ErrorMessage("Authentication required before sending messages")
+                                    )
+                                )
+                            )
+                            continue
                         } catch (e: Exception) {
                             log.error("Authentication error", e)
                             outgoing.send(Frame.Text(Json.encodeToString<SocketMessage>(socketSerializer,
-                                ErrorMessage("Invalid auth format: ${e.localizedMessage}"))))
-                            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid auth format"))
+                                ErrorMessage("Authentication error: ${e.localizedMessage}"))))
+                            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Authentication error"))
                             return@webSocket
                         }
                     }
@@ -378,14 +397,15 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                         val receivedText = frame.readText()
                         log.debug("Received from userId={}: {}", currentUserId, receivedText)
                         try {
-                            // Check if this is a read receipt request
-                            if (receivedText.contains("\"messageId\"") && 
-                                receivedText.contains("\"senderId\"") && 
-                                !receivedText.contains("\"data\"")) {
-                                // This is a ReadReceiptRequest
+                            val messageJson = jsonParser.parseToJsonElement(receivedText).jsonObject
+
+                            // Handle read receipt payloads: {"messageId":..., "senderId":...}
+                            if (messageJson.containsKey("messageId") &&
+                                messageJson.containsKey("senderId") &&
+                                !messageJson.containsKey("data")) {
                                 val readReceiptRequest = jsonParser.decodeFromString<ReadReceiptRequest>(receivedText)
                                 log.debug("Read receipt from userId={} for message {}", currentUserId, readReceiptRequest.messageId)
-                                
+
                                 // Store receipt and notify sender
                                 val senderConnection = connectionManager.getConnection(readReceiptRequest.senderId)
                                 ChatUtils.handleReadReceipt(
@@ -400,8 +420,21 @@ fun Application.chatRoutes(connectionManager: ConnectionManager) {
                                 )
                                 continue // Skip to next frame
                             }
-                            
-                            // Otherwise, it's a standard chat message
+
+                            // Handle standard chat message payloads: {"type":"chat_message","data":{...}}
+                            if (!messageJson.containsKey("data")) {
+                                log.warn(
+                                    "Unsupported websocket payload from userId={}: missing 'data' field",
+                                    currentUserId
+                                )
+                                ChatUtils.sendMessage(
+                                    session = currentConnection.session,
+                                    serializer = socketSerializer,
+                                    message = ErrorMessage("Unsupported message format")
+                                )
+                                continue
+                            }
+
                             val clientMessage = jsonParser.decodeFromString<ClientChatMessage>(receivedText)
 
                             log.debug("Client message recipient: {}", clientMessage.data.recipientId)

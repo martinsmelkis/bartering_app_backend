@@ -27,6 +27,7 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.cos
 
 class PurchasesServiceImpl(
     private val purchasesDao: PurchasesDao,
@@ -90,11 +91,6 @@ class PurchasesServiceImpl(
         val canonicalType: String,
         val costCoins: Long,
         val durationHours: Long
-    )
-
-    private val avatarIconCatalog = mapOf(
-        // Canonical icon IDs and server-authoritative prices (coins)
-        "avatar_icon" to 100L
     )
 
     private val visibilityBoostDefinitionsByType = mapOf(
@@ -325,11 +321,7 @@ class PurchasesServiceImpl(
         val normalizedIconId = iconId.trim().lowercase(Locale.ROOT)
         if (normalizedIconId.isBlank()) return null
 
-        val expectedCostCoins = avatarIconCatalog[normalizedIconId]
-            ?: avatarIconCatalog["avatar_icon"]?.takeIf { normalizedIconId.startsWith("avatar_icon_") }
-            ?: return null
-
-        if (costCoins != expectedCostCoins) return null
+        if (costCoins != 100L && costCoins != 150L) return null
 
         val normalizedExternalRef = externalRef.trim()
         if (normalizedExternalRef.isBlank()) return null
@@ -355,7 +347,7 @@ class PurchasesServiceImpl(
             status = PurchaseStatus.PENDING,
             currency = null,
             fiatAmountMinor = null,
-            coinAmount = expectedCostCoins,
+            coinAmount = costCoins,
             externalRef = idempotencyRef,
             metadataJson = metadataJson,
             fulfillmentRef = null,
@@ -369,7 +361,7 @@ class PurchasesServiceImpl(
         val avatarSpendMetadata = "{\"type\":\"purchase_avatar_icon\",\"iconId\":\"$normalizedIconId\",\"purchaseId\":\"$purchaseId\",\"payload\":${metadataJson ?: "null"}}"
         val spent = walletService.spendCoins(
             userId = userId,
-            amount = expectedCostCoins,
+            amount = costCoins,
             externalRef = "avatar_icon:$purchaseId:$normalizedIconId",
             metadataJson = avatarSpendMetadata
         )
