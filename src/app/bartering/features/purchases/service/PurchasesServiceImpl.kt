@@ -27,7 +27,6 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.cos
 
 class PurchasesServiceImpl(
     private val purchasesDao: PurchasesDao,
@@ -48,7 +47,8 @@ class PurchasesServiceImpl(
     }
 
     private val revenueCatApiBaseUrl: String
-        get() = System.getenv("REVENUECAT_API_BASE_URL")?.trim()?.ifBlank { null } ?: "https://api.revenuecat.com/v2"
+        get() = System.getenv("REVENUECAT_API_BASE_URL")?.trim()?.ifBlank { null }
+            ?: "https://api.revenuecat.com/v2"
 
     private val revenueCatProjectId: String?
         get() = System.getenv("REVENUECAT_PROJECT_ID")?.trim()?.ifBlank { null }
@@ -60,13 +60,44 @@ class PurchasesServiceImpl(
         get() = System.getenv("REVENUECAT_WEBHOOK_AUTH_TOKEN")?.trim()?.ifBlank { null }
 
     private val revenueCatPremiumEntitlementId: String
-        get() = System.getenv("REVENUECAT_PREMIUM_ENTITLEMENT_ID")?.trim()?.ifBlank { null } ?: "Bartering App Premium"
+        get() = System.getenv("REVENUECAT_PREMIUM_ENTITLEMENT_ID")?.trim()?.ifBlank { null }
+            ?: "Bartering App Premium"
 
-    private val revenueCatCoins20ProductId: String
-        get() = System.getenv("REVENUECAT_COINS20_PRODUCT_ID")?.trim()?.ifBlank { null } ?: "web_coins_20"
+    private val revenueCatCoinsWeb20ProductId: String
+        get() = System.getenv("REVENUECAT_COINS20_WEB_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "web_coins_20"
 
-    private val revenueCatCoins20Amount: Long
-        get() = System.getenv("REVENUECAT_COINS20_AMOUNT")?.trim()?.toLongOrNull() ?: 20L
+    private val revenueCatCoinsWeb50ProductId: String
+        get() = System.getenv("REVENUECAT_COINS50_WEB_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "web_coins_50"
+
+    private val revenueCatCoinsWeb200ProductId: String
+        get() = System.getenv("REVENUECAT_COINS200_WEB_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "web_coins_200"
+
+    private val revenueCatCoinsPlayStore20ProductId: String
+        get() = System.getenv("REVENUECAT_COINS20_PLAY_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "android_coins_20"
+
+    private val revenueCatCoinsPlayStore50ProductId: String
+        get() = System.getenv("REVENUECAT_COINS50_PLAY_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "android_coins_50"
+
+    private val revenueCatCoinsPlayStore200ProductId: String
+        get() = System.getenv("REVENUECAT_COINS200_PLAY_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "android_coins_200"
+
+    private val revenueCatCoinsAppleStore20ProductId: String
+        get() = System.getenv("REVENUECAT_COINS20_APPLE_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "coins_20_ios"
+
+    private val revenueCatCoinsAppleStore50ProductId: String
+        get() = System.getenv("REVENUECAT_COINS50_APPLE_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "coins_50_ios"
+
+    private val revenueCatCoinsAppleStore200ProductId: String
+        get() = System.getenv("REVENUECAT_COINS200_APPLE_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
+            ?: "coins_200_ios"
 
     private data class RevenueCatCoinRewardDefinition(
         val productId: String? = null,
@@ -78,12 +109,60 @@ class PurchasesServiceImpl(
         get() = buildList {
             add(
                 RevenueCatCoinRewardDefinition(
-                    productId = revenueCatCoins20ProductId,
-                    coinAmount = revenueCatCoins20Amount
+                    productId = revenueCatCoinsWeb20ProductId,
+                    coinAmount = 20L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsPlayStore20ProductId,
+                    coinAmount = 20L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsAppleStore20ProductId,
+                    coinAmount = 20L
                 )
             )
 
-            // TODO add 2 others
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsWeb50ProductId,
+                    coinAmount = 50L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsPlayStore50ProductId,
+                    coinAmount = 50L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsAppleStore50ProductId,
+                    coinAmount = 50L
+                )
+            )
+
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsWeb200ProductId,
+                    coinAmount = 200L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsPlayStore200ProductId,
+                    coinAmount = 200L
+                )
+            )
+            add(
+                RevenueCatCoinRewardDefinition(
+                    productId = revenueCatCoinsAppleStore200ProductId,
+                    coinAmount = 200L
+                )
+            )
 
         }
 
@@ -105,15 +184,15 @@ class PurchasesServiceImpl(
     )
 
     private val premiumLifetimePriceMinorByCurrency = mapOf(
-        "EUR" to 999L,
-        "USD" to 1099L,
-        "GBP" to 899L
+        "EUR" to 888L,
+        "USD" to 88L,
+        "GBP" to 888L
     )
 
     private val coinPackCatalog = mapOf(
-        "coins_100" to CoinPackDefinition(coinAmount = 100L, priceMinor = mapOf("EUR" to 199L, "USD" to 199L, "GBP" to 179L)),
-        "coins_500" to CoinPackDefinition(coinAmount = 500L, priceMinor = mapOf("EUR" to 799L, "USD" to 799L, "GBP" to 699L)),
-        "coins_1200" to CoinPackDefinition(coinAmount = 1200L, priceMinor = mapOf("EUR" to 1499L, "USD" to 1499L, "GBP" to 1299L))
+        "coins_20" to CoinPackDefinition(coinAmount = 20L, priceMinor = mapOf("EUR" to 111L)),
+        "coins_50" to CoinPackDefinition(coinAmount = 50L, priceMinor = mapOf("EUR" to 222L)),
+        "coins_200" to CoinPackDefinition(coinAmount = 200L, priceMinor = mapOf("EUR" to 555L))
     )
 
     private data class CoinPackDefinition(
@@ -176,8 +255,8 @@ class PurchasesServiceImpl(
     ): UserPurchase? {
         val normalizedCurrency = currency.trim().uppercase(Locale.ROOT)
         val selectedPack = coinPackCatalog.values.firstOrNull { it.coinAmount == coinAmount } ?: return null
-        val expectedAmountMinor = selectedPack.priceMinor[normalizedCurrency] ?: return null
-        if (amountMinor != expectedAmountMinor) return null
+        //val expectedAmountMinor = selectedPack.priceMinor[normalizedCurrency] ?: return null
+        //if (amountMinor != expectedAmountMinor) return null
 
         val now = Instant.now()
         val purchaseId = UUID.randomUUID().toString()

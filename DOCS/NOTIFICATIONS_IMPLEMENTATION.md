@@ -47,7 +47,8 @@ src/org/barter/features/notifications/
 | **Firebase FCM** | `com.google.firebase:firebase-admin` | Cross-platform, Topics, Analytics | ✅ Interface Ready |
 | **OneSignal** | HTTP REST API | Unified API, Segments, A/B Testing | ✅ Interface Ready |
 | **AWS SNS** | `software.amazon.awssdk:sns` | Amazon ecosystem, Reliable | 🚧 Future |
-| **Apple APNs** | `com.eatthepath:pushy` | iOS direct push | 🚧 Future |
+| **Apple APNs via Firebase FCM** | `com.google.firebase:firebase-admin` | iOS push delivery (FCM routes to APNs) | ✅ Implemented |
+| **Apple APNs (direct provider)** | `com.eatthepath:pushy` | iOS direct push (bypassing FCM) | 🚧 Optional / Future |
 
 ## Core Components
 
@@ -329,7 +330,7 @@ $350
    - Mailgun implementation
    - SMTP generic implementation
    - AWS SNS implementation
-   - Apple APNs direct implementation
+   - Optional direct Apple APNs provider implementation (only if bypassing Firebase FCM)
 
 ## Dependencies to Add
 

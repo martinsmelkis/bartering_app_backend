@@ -133,7 +133,8 @@ curl -X POST http://localhost:8081/api/v1/notifications/email/send \
 - **Firebase Cloud Messaging (FCM)** - ✅ **FULLY IMPLEMENTED** - Cross-platform (Android/iOS/Web)
 - **OneSignal** - Unified push API with analytics (stub for future)
 - **AWS SNS** - Amazon push service (stub for future)
-- **Apple APNs** - Direct iOS push (stub for future)
+- **Apple APNs via Firebase FCM** - ✅ **SUPPORTED** for iOS delivery (FCM routes through APNs)
+- **Apple APNs (direct provider)** - Optional backend bypass of FCM (not implemented)
 
 ### 🎯 Key Features
 - Provider-agnostic interfaces
@@ -423,7 +424,8 @@ Users can enable/disable notifications per category.
 | Firebase FCM | ✅ **IMPLEMENTED** | `com.google.firebase:firebase-admin` (✅ in project) |
 | OneSignal | ❌ Removed | N/A |
 | AWS SNS | 🚧 Stub | `software.amazon.awssdk:sns` |
-| Apple APNs | 🚧 Stub | `com.eatthepath:pushy` |
+| Apple APNs via Firebase FCM | ✅ Supported | `com.google.firebase:firebase-admin` |
+| Apple APNs (direct provider) | 🚧 Optional / not implemented | `com.eatthepath:pushy` |
 
 ## Next Steps
 

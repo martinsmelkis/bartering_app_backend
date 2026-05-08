@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory
  */
 class FileCleanupTask(
     private val fileDao: EncryptedFileDao,
-    private val intervalHours: Long = 1 // Run cleanup every hour
+    private val intervalHours: Long = 8 // Run cleanup every 8 hours
 ) {
     private val log = LoggerFactory.getLogger(this::class.java)
     /**
