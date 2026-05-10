@@ -252,7 +252,7 @@ fun Route.createProfileRoute() {
     post("/api/v1/profile-create") {
         val user = call.receive<UserRegistrationDataDto>()
         userProfileDao.createProfile(user)
-        log.info("User inserted into db: {}", user.id)
+        log.info("Profile create processed for user: {}", user.id)
         call.respond(HttpStatusCode.OK, "")
     }
 

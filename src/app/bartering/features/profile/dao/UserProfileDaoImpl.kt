@@ -55,7 +55,7 @@ class UserProfileDaoImpl : UserProfileDao {
     )
 
     override suspend fun createProfile(user: UserRegistrationDataDto): Unit = dbQuery {
-        UserRegistrationDataTable.insert {
+        UserRegistrationDataTable.insertIgnore {
             it[id] = user.id!!
             it[publicKey] = user.publicKey
         }
