@@ -89,7 +89,7 @@ class PurchasesServiceImpl(
 
     private val revenueCatCoinsAppleStore20ProductId: String
         get() = System.getenv("REVENUECAT_COINS20_APPLE_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
-            ?: "coins_20_ios"
+            ?: "20_coins_ios"
 
     private val revenueCatCoinsAppleStore50ProductId: String
         get() = System.getenv("REVENUECAT_COINS50_APPLE_STORE_PRODUCT_ID")?.trim()?.ifBlank { null }
