@@ -3,6 +3,7 @@ package app.bartering.features.postings.dao
 import app.bartering.config.AiConfig
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.postings.db.PostingAttributesLinkTable
+import app.bartering.features.postings.db.PostingExpiryRemindersTable
 import app.bartering.features.postings.db.UserPostingsTable
 import app.bartering.features.postings.model.*
 import app.bartering.features.postings.service.ImageStorageService
@@ -15,7 +16,8 @@ import org.koin.java.KoinJavaComponent.inject
 import org.slf4j.LoggerFactory
 import java.sql.Timestamp
 import java.time.Instant
-import java.util.*
+import java.util.Date
+import java.util.UUID
 
 class UserPostingDaoImpl : UserPostingDao {
     private val log = LoggerFactory.getLogger(this::class.java)
@@ -688,6 +690,52 @@ class UserPostingDaoImpl : UserPostingDao {
         }
     }
 
+    override suspend fun getPostingsDueForExpiryReminder(reminderWindowHours: Long, limit: Int): List<UserPosting> = dbQuery {
+        val now = Instant.now()
+        val windowEnd = now.plusSeconds(reminderWindowHours.coerceAtLeast(1) * 60 * 60)
+        val remindersAlias = PostingExpiryRemindersTable.alias("per")
+        val join = UserPostingsTable
+            .join(
+                remindersAlias,
+                JoinType.LEFT,
+                additionalConstraint = {
+                    (UserPostingsTable.id eq remindersAlias[PostingExpiryRemindersTable.postingId]) and
+                        (UserPostingsTable.expiresAt eq remindersAlias[PostingExpiryRemindersTable.expiresAt])
+                }
+            )
+            .join(
+                PostingAttributesLinkTable,
+                JoinType.LEFT,
+                UserPostingsTable.id,
+                PostingAttributesLinkTable.postingId
+            )
+
+        val results = join.selectAll()
+            .where {
+                (UserPostingsTable.status eq PostingStatus.ACTIVE.name.lowercase()) and
+                    (UserPostingsTable.expiresAt.isNotNull()) and
+                    (UserPostingsTable.expiresAt greater now) and
+                    (UserPostingsTable.expiresAt lessEq windowEnd) and
+                    remindersAlias[PostingExpiryRemindersTable.postingId].isNull()
+            }
+            .orderBy(UserPostingsTable.expiresAt, SortOrder.ASC)
+            .limit(limit.coerceAtLeast(1))
+            .toList()
+
+        results.groupBy { it[UserPostingsTable.id] }
+            .map { (_, rows) -> toUserPosting(rows.first(), rows) }
+    }
+
+    override suspend fun markExpiryReminderSent(postingId: String, userId: String, expiresAt: Instant): Boolean = dbQuery {
+        val now = Instant.now()
+        PostingExpiryRemindersTable.insertIgnore {
+            it[PostingExpiryRemindersTable.postingId] = postingId
+            it[PostingExpiryRemindersTable.userId] = userId
+            it[PostingExpiryRemindersTable.expiresAt] = expiresAt
+            it[remindedAt] = now
+        }.insertedCount > 0
+    }
+
     override suspend fun markExpiredPostings(excludedUserIds: Set<String>): Int = dbQuery {
         UserPostingsTable.update({
             val baseFilter = (UserPostingsTable.expiresAt.isNotNull()) and
@@ -826,7 +874,7 @@ class UserPostingDaoImpl : UserPostingDao {
         null -> null
         is Instant -> value
         is Timestamp -> value.toInstant()
-        is java.util.Date -> value.toInstant()
+        is Date -> value.toInstant()
         else -> null
     }
 }

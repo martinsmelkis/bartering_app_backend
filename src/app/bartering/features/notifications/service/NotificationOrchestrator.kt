@@ -33,7 +33,9 @@ class NotificationOrchestrator(
         userId: String,
         notification: NotificationData,
         emailTemplate: EmailNotification? = null,
-        pushNotification: PushNotification? = null
+        pushNotification: PushNotification? = null,
+        includeWebSocket: Boolean = false,
+        requireMarketingConsentForEmail: Boolean = true
     ): Map<String, NotificationResult> {
         val results = mutableMapOf<String, NotificationResult>()
 
@@ -52,8 +54,8 @@ class NotificationOrchestrator(
             return results
         }
         
-        // Send email only when user has explicitly opted in to marketing communications
-        if (emailService != null && contacts.email != null/* && contacts.emailVerified*/ && contacts.marketingConsent) {
+        // Send email when allowed for this notification category and the user has an email contact.
+        if (emailService != null && contacts.email != null/* && contacts.emailVerified*/ && (!requireMarketingConsentForEmail || contacts.marketingConsent)) {
             val unsubscribeUrl = buildUnsubscribeUrl(userId)
             val email = emailTemplate ?: buildDefaultEmail(
                 to = contacts.email,
@@ -72,6 +74,10 @@ class NotificationOrchestrator(
             }
         }
         
+        if (includeWebSocket) {
+            results.putAll(sendWebSocketNotification(userId, notification))
+        }
+
         // Send push if tokens available
         if (contacts.pushTokens.isNotEmpty()) {
             val activeTokens = contacts.pushTokens
@@ -79,7 +85,7 @@ class NotificationOrchestrator(
                 .map { it.token }
             
             if (activeTokens.isNotEmpty()) {
-                val push = pushNotification ?: PushNotification(
+                val push = pushNotification?.copy(tokens = activeTokens) ?: PushNotification(
                     tokens = activeTokens,
                     notification = notification
                 )

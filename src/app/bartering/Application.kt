@@ -43,8 +43,13 @@ import app.bartering.features.postings.di.postingsModule
 import app.bartering.features.profile.di.profilesModule
 import app.bartering.features.relationships.di.relationshipsModule
 import app.bartering.features.notifications.di.notificationsModule
+import app.bartering.features.postings.service.PostingExpiryReminderService
+import app.bartering.features.postings.tasks.PostingExpiryReminderTask
 import app.bartering.features.reviews.di.reviewsModule
 import app.bartering.features.notifications.jobs.DigestNotificationJobManager
+import app.bartering.features.nearbyalerts.di.nearbyAlertsModule
+import app.bartering.features.nearbyalerts.service.NearbyUserAlertService
+import app.bartering.features.nearbyalerts.tasks.NearbyUserAlertTask
 import app.bartering.features.profile.cache.UserActivityCache
 import app.bartering.features.profile.tasks.InactiveUserCleanupTask
 import app.bartering.features.notifications.service.EmailService
@@ -167,7 +172,8 @@ fun Application.module(testing: Boolean = false) {
             federationModule,
             walletModule,
             purchasesModule,
-            complianceModule
+            complianceModule,
+            nearbyAlertsModule
         )
     }
 
@@ -222,6 +228,16 @@ fun Application.module(testing: Boolean = false) {
     val userActivityRewardTask = UserActivityRewardTask(userActivityRewardService)
     userActivityRewardTask.start(appBackgroundScope)
     log.info("✅ User activity reward task started")
+
+    // Start nearby user alert task
+    val nearbyUserAlertService: NearbyUserAlertService by inject(NearbyUserAlertService::class.java)
+    NearbyUserAlertTask(nearbyUserAlertService).start(appBackgroundScope)
+    log.info("✅ Nearby user alert task started")
+
+    // Start posting expiry renewal reminder task
+    val postingExpiryReminderService: PostingExpiryReminderService by inject(PostingExpiryReminderService::class.java)
+    PostingExpiryReminderTask(postingExpiryReminderService).start(appBackgroundScope)
+    log.info("✅ Posting expiry reminder task started")
     
     // Start inactive user cleanup task
     val notificationOrchestrator: NotificationOrchestrator by inject(NotificationOrchestrator::class.java)

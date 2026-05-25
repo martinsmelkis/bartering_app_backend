@@ -88,6 +88,16 @@ interface UserPostingDao {
     suspend fun updatePostingEmbedding(postingId: String): Boolean
 
     /**
+     * Gets active postings expiring within the reminder window that have not yet received an expiry reminder.
+     */
+    suspend fun getPostingsDueForExpiryReminder(reminderWindowHours: Long = 24, limit: Int = 100): List<UserPosting>
+
+    /**
+     * Marks that an expiry reminder was sent for a posting.
+     */
+    suspend fun markExpiryReminderSent(postingId: String, userId: String, expiresAt: java.time.Instant): Boolean
+
+    /**
      * Marks expired postings as expired based on expires_at timestamp
      */
     suspend fun markExpiredPostings(excludedUserIds: Set<String> = emptySet()): Int

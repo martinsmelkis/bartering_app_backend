@@ -29,3 +29,12 @@ object PostingAttributesLinkTable : Table("posting_attributes_link") {
 
     override val primaryKey = PrimaryKey(postingId, attributeId)
 }
+
+object PostingExpiryRemindersTable : Table("posting_expiry_reminders") {
+    val postingId = varchar("posting_id", 36).references(UserPostingsTable.id)
+    val userId = varchar("user_id", 255)
+    val expiresAt = timestamp("expires_at")
+    val remindedAt = timestamp("reminded_at")
+
+    override val primaryKey = PrimaryKey(postingId, expiresAt)
+}

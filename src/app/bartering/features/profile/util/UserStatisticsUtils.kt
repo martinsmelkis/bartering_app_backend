@@ -1,8 +1,5 @@
 package app.bartering.features.profile.util
 
-import org.jetbrains.exposed.v1.core.DoubleColumnType
-import org.jetbrains.exposed.v1.core.IntegerColumnType
-import org.jetbrains.exposed.v1.core.VarCharColumnType
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 
@@ -113,8 +110,7 @@ object UserStatisticsUtils {
             val query = """
                 SELECT COUNT(DISTINCT user_id) as user_count
                 FROM user_presence
-                WHERE last_seen >= NOW() - INTERVAL '$minutesAgo minutes'
-                    AND status IN ('online', 'away')
+                WHERE last_activity_at >= NOW() - INTERVAL '$minutesAgo minutes'
             """.trimIndent()
 
             (TransactionManager.current().connection.connection as java.sql.Connection).prepareStatement(query)
@@ -221,9 +217,9 @@ object UserStatisticsUtils {
             val query = """
                 SELECT
                     COUNT(DISTINCT u.id) as total_users,
-                    COUNT(DISTINCT CASE WHEN p.last_seen >= NOW() - INTERVAL '24 hours' 
+                    COUNT(DISTINCT CASE WHEN p.last_activity_at >= NOW() - INTERVAL '24 hours' 
                                    THEN u.id END) as active_24h,
-                    COUNT(DISTINCT CASE WHEN p.last_seen >= NOW() - INTERVAL '7 days' 
+                    COUNT(DISTINCT CASE WHEN p.last_activity_at >= NOW() - INTERVAL '7 days' 
                                    THEN u.id END) as active_7d,
                     COUNT(DISTINCT CASE WHEN up.location IS NOT NULL 
                                    THEN u.id END) as with_location
