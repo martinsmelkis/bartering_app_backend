@@ -18,6 +18,7 @@ import app.bartering.features.profile.routes.*
 import app.bartering.features.relationships.routes.relationshipsRoutes
 import app.bartering.features.notifications.routes.notificationPreferencesRoutes
 import app.bartering.features.notifications.routes.pushNotificationRoutes
+import app.bartering.features.nearbyalerts.routes.nearbyUserAlertRoutes
 import app.bartering.features.reviews.routes.*
 import app.bartering.features.federation.routes.federationRoutes
 import app.bartering.features.federation.routes.federationAdminRoutes
@@ -41,6 +42,7 @@ fun Application.routes() {
     fileTransferRoutes(connectionManager)
     notificationPreferencesRoutes()
     pushNotificationRoutes()
+    nearbyUserAlertRoutes()
     healthCheckRoutes()
     complianceRoutes()
     routing {

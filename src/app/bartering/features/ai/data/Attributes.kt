@@ -56,7 +56,9 @@ object Attributes {
         "Pet supplies", "Kids toys", "Power tools", "Camping gear",
         "Kitchen appliances", "Device lending", "Computer accessories", "Clothing",
         "Sports equipment", "Bicycle parts", "Errand running", "Phone repair",
-        "Lawn care", "Digital products", "Software accounts", "Reviewing", "Virtual assistance"
+        "Lawn care", "Digital products", "Software accounts", "Reviewing", "Virtual assistance",
+
+        "Hair styling", "Beauty products", "Audio equipment", "Health supplements"
     )
 
 }
