@@ -12,6 +12,7 @@ import io.ktor.serialization.kotlinx.KotlinxSerializationConverter
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
+import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -76,6 +77,14 @@ import java.text.DateFormat
 
 private val log = LoggerFactory.getLogger("app.bartering.Application")
 
+private val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
+    onCall { call ->
+        call.response.headers.append("X-Content-Type-Options", "nosniff", safeOnly = true)
+        call.response.headers.append("X-Frame-Options", "DENY", safeOnly = true)
+        call.response.headers.append("Referrer-Policy", "strict-origin-when-cross-origin", safeOnly = true)
+    }
+}
+
 fun main() {
 
     embeddedServer(
@@ -125,6 +134,8 @@ fun Application.module(testing: Boolean = false) {
     } else {
         log.info("🔒 CORS disabled for production (same-domain nginx setup)")
     }
+
+    install(SecurityHeaders)
 
     Security.addProvider(BouncyCastleProvider())
 

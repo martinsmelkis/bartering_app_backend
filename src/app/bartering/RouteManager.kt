@@ -16,6 +16,7 @@ import app.bartering.features.postings.routes.postingsRoutes
 import app.bartering.features.profile.routes.profileManagementRoutes
 import app.bartering.features.profile.routes.*
 import app.bartering.features.relationships.routes.relationshipsRoutes
+import app.bartering.features.seo.seoRoutes
 import app.bartering.features.notifications.routes.notificationPreferencesRoutes
 import app.bartering.features.notifications.routes.pushNotificationRoutes
 import app.bartering.features.nearbyalerts.routes.nearbyUserAlertRoutes
@@ -46,6 +47,7 @@ fun Application.routes() {
     healthCheckRoutes()
     complianceRoutes()
     routing {
+        seoRoutes()
         federationRoutes()
         federationAdminRoutes()
         relationshipsRoutes()
