@@ -4,6 +4,7 @@ import app.bartering.dashboard_user_moderation.features.network.BackendModeratio
 import app.bartering.dashboard_user_moderation.models.auth.DashboardConfig
 import app.bartering.dashboard_user_moderation.models.auth.DashboardSession
 import app.bartering.dashboard_user_moderation.models.auth.ModerationSnapshot
+import app.bartering.dashboard_user_moderation.models.moderation.DashboardStatsSnapshot
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
@@ -211,6 +212,12 @@ fun Application.module() {
                 call.respondText(buildDashboardPage(snapshot), ContentType.Text.Html)
             }
 
+            get("/stats") {
+                val days = call.request.queryParameters["days"]?.toIntOrNull()?.coerceIn(1, 365) ?: 30
+                val snapshot = backendApi.fetchDashboardStats(days)
+                call.respondText(buildStatsPage(snapshot, days), ContentType.Text.Html)
+            }
+
             post("/moderation/reviews/{reviewId}/delete") {
                 val reviewId = call.parameters["reviewId"]?.trim().orEmpty()
                 if (reviewId.isBlank()) {
@@ -284,7 +291,13 @@ private fun buildDashboardPage(snapshot: ModerationSnapshot): String = createHTM
     body(classes = "bg-slate-100 min-h-screen") {
         header(classes = "bg-white border-b border-slate-200") {
             div(classes = "max-w-7xl mx-auto px-6 py-4 flex items-center justify-between") {
-                h1(classes = "text-xl font-bold text-slate-900") { +"Barter User Moderation Dashboard" }
+                div {
+                    h1(classes = "text-xl font-bold text-slate-900") { +"Barter User Moderation Dashboard" }
+                    nav(classes = "mt-2 flex gap-3 text-sm") {
+                        a(href = "/dashboard", classes = "font-semibold text-indigo-700") { +"Moderation" }
+                        a(href = "/stats", classes = "text-slate-600 hover:text-indigo-700") { +"Stats" }
+                    }
+                }
                 form(action = "/logout", method = FormMethod.post) {
                     button(classes = "rounded-lg border border-slate-300 px-4 py-2 text-sm") { +"Logout" }
                 }
@@ -298,6 +311,120 @@ private fun buildDashboardPage(snapshot: ModerationSnapshot): String = createHTM
                 attributes["hx-swap"] = "innerHTML"
                 unsafe {
                     +buildSummaryFragment(snapshot)
+                }
+            }
+        }
+    }
+}
+}
+
+private fun buildStatsPage(snapshot: DashboardStatsSnapshot, selectedDays: Int): String = createHTML().run {
+    html {
+    head {
+        title("Barter User Stats Dashboard")
+        meta(charset = "UTF-8")
+        meta(name = "viewport", content = "width=device-width, initial-scale=1")
+        script(src = "https://cdn.tailwindcss.com") {}
+    }
+    body(classes = "bg-slate-100 min-h-screen") {
+        header(classes = "bg-white border-b border-slate-200") {
+            div(classes = "max-w-7xl mx-auto px-6 py-4 flex items-center justify-between") {
+                div {
+                    h1(classes = "text-xl font-bold text-slate-900") { +"Barter User Moderation Dashboard" }
+                    nav(classes = "mt-2 flex gap-3 text-sm") {
+                        a(href = "/dashboard", classes = "text-slate-600 hover:text-indigo-700") { +"Moderation" }
+                        a(href = "/stats", classes = "font-semibold text-indigo-700") { +"Stats" }
+                    }
+                }
+                form(action = "/logout", method = FormMethod.post) {
+                    button(classes = "rounded-lg border border-slate-300 px-4 py-2 text-sm") { +"Logout" }
+                }
+            }
+        }
+
+        main(classes = "max-w-7xl mx-auto px-6 py-6") {
+            div(classes = "mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between") {
+                div {
+                    h2(classes = "text-lg font-semibold text-slate-900") { +"Basic User Stats" }
+                    p(classes = "text-sm text-slate-600") { +"Daily activity, sessions, API requests, and new registrations." }
+                }
+                form(action = "/stats", method = FormMethod.get, classes = "flex items-center gap-2") {
+                    label(classes = "text-sm text-slate-600") { +"Range" }
+                    select(classes = "rounded-lg border border-slate-300 px-3 py-2 text-sm") {
+                        name = "days"
+                        listOf(7, 14, 30, 90, 365).forEach { days ->
+                            option {
+                                value = days.toString()
+                                selected = selectedDays == days
+                                +"Last $days days"
+                            }
+                        }
+                    }
+                    button(classes = "rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white") { +"Apply" }
+                }
+            }
+
+            val stats = snapshot.stats
+            div(classes = "grid gap-4 md:grid-cols-3 mb-4") {
+                metricCard("Backend Status", snapshot.backendStatus, if (snapshot.backendStatus == "healthy") "green" else "amber")
+                metricCard("Stats Data Link", if (snapshot.connected) "Connected" else "Disconnected", if (snapshot.connected) "green" else "red")
+                metricCard("Total Users", stats?.summary?.totalUsers?.toString() ?: "--")
+            }
+
+            if (stats != null) {
+                div(classes = "grid gap-4 md:grid-cols-5 mb-6") {
+                    metricCard("Active User-Days", stats.summary.totalActiveUsers.toString())
+                    metricCard("New Registrations", stats.summary.totalNewRegistrations.toString())
+                    metricCard("API Requests", stats.summary.totalApiRequests.toString())
+                    metricCard("Sessions", stats.summary.totalSessions.toString())
+                    metricCard("Active Minutes", stats.summary.totalActiveMinutes.toString())
+                }
+
+                div(classes = "overflow-x-auto rounded-xl border border-slate-200 bg-white") {
+                    table(classes = "min-w-full text-sm") {
+                        thead(classes = "bg-slate-50") {
+                            tr {
+                                th(classes = "px-4 py-3 text-left") { +"Date" }
+                                th(classes = "px-4 py-3 text-right") { +"Active Users" }
+                                th(classes = "px-4 py-3 text-right") { +"New Registrations" }
+                                th(classes = "px-4 py-3 text-right") { +"API Requests" }
+                                th(classes = "px-4 py-3 text-right") { +"Sessions" }
+                                th(classes = "px-4 py-3 text-right") { +"Active Minutes" }
+                                th(classes = "px-4 py-3 text-right") { +"Searches" }
+                                th(classes = "px-4 py-3 text-right") { +"Nearby" }
+                                th(classes = "px-4 py-3 text-right") { +"Profile Updates" }
+                                th(classes = "px-4 py-3 text-right") { +"Chats Sent" }
+                                th(classes = "px-4 py-3 text-right") { +"Chats Received" }
+                                th(classes = "px-4 py-3 text-right") { +"Transactions" }
+                                th(classes = "px-4 py-3 text-right") { +"Reviews" }
+                            }
+                        }
+                        tbody {
+                            stats.daily.forEach { row ->
+                                tr(classes = "border-t border-slate-100") {
+                                    td(classes = "px-4 py-3 font-medium") { +row.date }
+                                    td(classes = "px-4 py-3 text-right") { +row.activeUsers.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.newRegistrations.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.apiRequestCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.sessionCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.activeMinutes.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.searchCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.nearbySearchCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.profileUpdateCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.chatMessagesSentCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.chatMessagesReceivedCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.transactionsCreatedCount.toString() }
+                                    td(classes = "px-4 py-3 text-right") { +row.reviewsSubmittedCount.toString() }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!snapshot.connectionError.isNullOrBlank()) {
+                div(classes = "mt-4 rounded-lg bg-amber-100 px-4 py-3 text-sm text-amber-800") {
+                    +"Stats API warning: ${snapshot.connectionError}"
                 }
             }
         }

@@ -2,7 +2,11 @@ package app.bartering.features.analytics.dao
 
 import app.bartering.extensions.DatabaseFactory.dbQuery
 import app.bartering.features.analytics.db.UserDailyActivityStatsTable
+import app.bartering.features.analytics.model.DashboardDailyStats
+import app.bartering.features.analytics.model.DashboardStatsResponse
+import app.bartering.features.analytics.model.DashboardStatsSummary
 import app.bartering.features.analytics.model.UserDailyActivityStats
+import app.bartering.features.profile.db.UserRegistrationDataTable
 import kotlinx.coroutines.delay
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -378,6 +382,111 @@ class UserDailyActivityStatsDaoImpl : UserDailyActivityStatsDao {
                     updatedAt = row[UserDailyActivityStatsTable.updatedAt].toString()
                 )
             }
+    }
+
+    override suspend fun getDashboardStats(days: Int): DashboardStatsResponse = dbQuery {
+        val boundedDays = days.coerceIn(1, 365)
+        val sql = """
+            WITH date_series AS (
+                SELECT generate_series(
+                    CURRENT_DATE - (?::int - 1),
+                    CURRENT_DATE,
+                    INTERVAL '1 day'
+                )::date AS activity_date
+            ), activity AS (
+                SELECT
+                    activity_date,
+                    COUNT(DISTINCT anonymized_user_id)::int AS active_users,
+                    COALESCE(SUM(active_minutes), 0)::int AS active_minutes,
+                    COALESCE(SUM(session_count), 0)::int AS session_count,
+                    COALESCE(SUM(api_request_count), 0)::int AS api_request_count,
+                    COALESCE(SUM(search_count), 0)::int AS search_count,
+                    COALESCE(SUM(nearby_search_count), 0)::int AS nearby_search_count,
+                    COALESCE(SUM(profile_update_count), 0)::int AS profile_update_count,
+                    COALESCE(SUM(chat_messages_sent_count), 0)::int AS chat_messages_sent_count,
+                    COALESCE(SUM(chat_messages_received_count), 0)::int AS chat_messages_received_count,
+                    COALESCE(SUM(transactions_created_count), 0)::int AS transactions_created_count,
+                    COALESCE(SUM(reviews_submitted_count), 0)::int AS reviews_submitted_count,
+                    COALESCE(SUM(successful_actions_count), 0)::int AS successful_actions_count
+                FROM user_daily_activity_stats
+                WHERE activity_date BETWEEN CURRENT_DATE - (?::int - 1) AND CURRENT_DATE
+                GROUP BY activity_date
+            ), registrations AS (
+                SELECT
+                    created_at::date AS activity_date,
+                    COUNT(*)::int AS new_registrations
+                FROM user_registration_data
+                WHERE created_at::date BETWEEN CURRENT_DATE - (?::int - 1) AND CURRENT_DATE
+                GROUP BY created_at::date
+            )
+            SELECT
+                ds.activity_date,
+                COALESCE(a.active_users, 0) AS active_users,
+                COALESCE(r.new_registrations, 0) AS new_registrations,
+                COALESCE(a.active_minutes, 0) AS active_minutes,
+                COALESCE(a.session_count, 0) AS session_count,
+                COALESCE(a.api_request_count, 0) AS api_request_count,
+                COALESCE(a.search_count, 0) AS search_count,
+                COALESCE(a.nearby_search_count, 0) AS nearby_search_count,
+                COALESCE(a.profile_update_count, 0) AS profile_update_count,
+                COALESCE(a.chat_messages_sent_count, 0) AS chat_messages_sent_count,
+                COALESCE(a.chat_messages_received_count, 0) AS chat_messages_received_count,
+                COALESCE(a.transactions_created_count, 0) AS transactions_created_count,
+                COALESCE(a.reviews_submitted_count, 0) AS reviews_submitted_count,
+                COALESCE(a.successful_actions_count, 0) AS successful_actions_count
+            FROM date_series ds
+            LEFT JOIN activity a ON a.activity_date = ds.activity_date
+            LEFT JOIN registrations r ON r.activity_date = ds.activity_date
+            ORDER BY ds.activity_date DESC;
+        """.trimIndent()
+
+        val daily = mutableListOf<DashboardDailyStats>()
+        (TransactionManager.current().connection.connection as java.sql.Connection)
+            .prepareStatement(sql)
+            .use { statement ->
+                statement.setInt(1, boundedDays)
+                statement.setInt(2, boundedDays)
+                statement.setInt(3, boundedDays)
+                statement.executeQuery().use { rs ->
+                    while (rs.next()) {
+                        daily.add(
+                            DashboardDailyStats(
+                                date = rs.getDate("activity_date").toLocalDate().toString(),
+                                activeUsers = rs.getInt("active_users"),
+                                newRegistrations = rs.getInt("new_registrations"),
+                                activeMinutes = rs.getInt("active_minutes"),
+                                sessionCount = rs.getInt("session_count"),
+                                apiRequestCount = rs.getInt("api_request_count"),
+                                searchCount = rs.getInt("search_count"),
+                                nearbySearchCount = rs.getInt("nearby_search_count"),
+                                profileUpdateCount = rs.getInt("profile_update_count"),
+                                chatMessagesSentCount = rs.getInt("chat_messages_sent_count"),
+                                chatMessagesReceivedCount = rs.getInt("chat_messages_received_count"),
+                                transactionsCreatedCount = rs.getInt("transactions_created_count"),
+                                reviewsSubmittedCount = rs.getInt("reviews_submitted_count"),
+                                successfulActionsCount = rs.getInt("successful_actions_count")
+                            )
+                        )
+                    }
+                }
+            }
+
+        val totalUsers = UserRegistrationDataTable.selectAll().count().toInt()
+        val summary = DashboardStatsSummary(
+            totalUsers = totalUsers,
+            totalActiveUsers = daily.sumOf { it.activeUsers },
+            totalNewRegistrations = daily.sumOf { it.newRegistrations },
+            totalApiRequests = daily.sumOf { it.apiRequestCount },
+            totalSessions = daily.sumOf { it.sessionCount },
+            totalActiveMinutes = daily.sumOf { it.activeMinutes }
+        )
+
+        DashboardStatsResponse(
+            success = true,
+            days = boundedDays,
+            summary = summary,
+            daily = daily
+        )
     }
 
     private suspend fun incrementCounter(

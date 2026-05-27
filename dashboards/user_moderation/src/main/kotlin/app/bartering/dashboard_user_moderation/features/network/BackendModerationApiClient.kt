@@ -2,6 +2,8 @@ package app.bartering.dashboard_user_moderation.features.network
 
 import app.bartering.dashboard_user_moderation.models.auth.DashboardConfig
 import app.bartering.dashboard_user_moderation.models.auth.ModerationSnapshot
+import app.bartering.dashboard_user_moderation.models.moderation.DashboardStatsResponse
+import app.bartering.dashboard_user_moderation.models.moderation.DashboardStatsSnapshot
 import app.bartering.dashboard_user_moderation.models.moderation.ReviewAppealsResponse
 import app.bartering.dashboard_user_moderation.models.moderation.UserModerationRow
 import app.bartering.dashboard_user_moderation.models.moderation.UserReportStats
@@ -32,16 +34,7 @@ class BackendModerationApiClient(
     }.getOrNull()
 
     suspend fun fetchSnapshot(): ModerationSnapshot {
-        val healthEndpoint = "${config.backendBaseUrl}/public-api/v1/healthCheck"
-        val healthStatus = runCatching {
-            val response = client.get(healthEndpoint)
-            when (response.status) {
-                HttpStatusCode.OK -> "healthy"
-                else -> "unhealthy (${response.status.value})"
-            }
-        }.onFailure { error ->
-            logger.warn("Dashboard backend health check failed. url={}, reason={}", healthEndpoint, error.message)
-        }.getOrElse { "unreachable" }
+        val healthStatus = fetchHealthStatus()
 
         val missingConfig = buildList {
             if (config.adminUserId.isBlank()) add("DASHBOARD_ADMIN_USER_ID")
@@ -105,6 +98,54 @@ class BackendModerationApiClient(
         )
     }
 
+    suspend fun fetchDashboardStats(days: Int = 30): DashboardStatsSnapshot {
+        val healthStatus = fetchHealthStatus()
+        val boundedDays = days.coerceIn(1, 365)
+
+        val missingConfig = buildList {
+            if (config.adminUserId.isBlank()) add("DASHBOARD_ADMIN_USER_ID")
+            if (config.adminPrivateKeyHex.isBlank()) add("DASHBOARD_ADMIN_PRIVATE_KEY_HEX")
+        }
+
+        if (missingConfig.isNotEmpty()) {
+            return DashboardStatsSnapshot(
+                connected = false,
+                backendStatus = healthStatus,
+                stats = null,
+                connectionError = "Missing dashboard moderation config: ${missingConfig.joinToString(", ")}"
+            )
+        }
+
+        val activeSigningKey = signingKey ?: return DashboardStatsSnapshot(
+            connected = false,
+            backendStatus = healthStatus,
+            stats = null,
+            connectionError = "Invalid DASHBOARD_ADMIN_PRIVATE_KEY_HEX (expected secp256r1 private key hex)."
+        )
+
+        val statsResult = runCatching {
+            signedGet<DashboardStatsResponse>(
+                path = "/api/v1/analytics/dashboard-stats?days=$boundedDays",
+                signingKey = activeSigningKey
+            )
+        }
+
+        statsResult.exceptionOrNull()?.let { error ->
+            logger.warn(
+                "Dashboard stats fetch failed. backendBaseUrl={}, error={}",
+                config.backendBaseUrl,
+                error.message
+            )
+        }
+
+        return DashboardStatsSnapshot(
+            connected = statsResult.isSuccess,
+            backendStatus = healthStatus,
+            stats = statsResult.getOrNull(),
+            connectionError = statsResult.exceptionOrNull()?.message
+        )
+    }
+
     private suspend fun fetchRowForUser(signingKey: ECPrivateKey, userId: String): UserModerationRow {
         val reportStats = signedGet<UserReportStats>(
             path = "/api/v1/reports/stats/$userId",
@@ -137,6 +178,19 @@ class BackendModerationApiClient(
             disputedTransactionCount = disputedTransactionCount,
             scamFlagCount = scamFlagCount
         )
+    }
+
+    private suspend fun fetchHealthStatus(): String {
+        val healthEndpoint = "${config.backendBaseUrl}/public-api/v1/healthCheck"
+        return runCatching {
+            val response = client.get(healthEndpoint)
+            when (response.status) {
+                HttpStatusCode.OK -> "healthy"
+                else -> "unhealthy (${response.status.value})"
+            }
+        }.onFailure { error ->
+            logger.warn("Dashboard backend health check failed. url={}, reason={}", healthEndpoint, error.message)
+        }.getOrElse { "unreachable" }
     }
 
     suspend fun deleteReview(reviewId: String): Boolean {

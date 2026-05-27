@@ -4,6 +4,7 @@ import app.bartering.features.analytics.model.UserDailyActivityStatsResponse
 import app.bartering.features.analytics.service.UserDailyActivityStatsService
 import app.bartering.features.authentication.dao.AuthenticationDaoImpl
 import app.bartering.features.authentication.utils.verifyRequestSignature
+import app.bartering.features.profile.dao.UserProfileDaoImpl
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -13,6 +14,33 @@ import org.koin.java.KoinJavaComponent.inject
 fun Route.getDailyActivityStatsRoute() {
     val authDao: AuthenticationDaoImpl by inject(AuthenticationDaoImpl::class.java)
     val statsService: UserDailyActivityStatsService by inject(UserDailyActivityStatsService::class.java)
+    val userProfileDao: UserProfileDaoImpl by inject(UserProfileDaoImpl::class.java)
+
+    get("/api/v1/analytics/dashboard-stats") {
+        val (authenticatedUserId, _) = verifyRequestSignature(call, authDao)
+        if (authenticatedUserId == null) {
+            return@get
+        }
+
+        if (!userProfileDao.isComplianceAdmin(authenticatedUserId)) {
+            call.respond(
+                HttpStatusCode.Forbidden,
+                mapOf("error" to "User is not authorized for analytics dashboard endpoints")
+            )
+            return@get
+        }
+
+        val days = call.request.queryParameters["days"]?.toIntOrNull() ?: 30
+        if (days !in 1..365) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "days must be between 1 and 365")
+            )
+            return@get
+        }
+
+        call.respond(HttpStatusCode.OK, statsService.getDashboardStats(days))
+    }
 
     get("/api/v1/analytics/daily-stats") {
         val (authenticatedUserId, requestBody) = verifyRequestSignature(call, authDao)

@@ -2357,7 +2357,9 @@ class UserProfileDaoImpl : UserProfileDao {
         dbQuery {
             if (attributeIds.isEmpty()) return@dbQuery emptyMap()
 
-            val inClause = attributeIds.joinToString(", ") { "'$it'" }
+            val distinctAttributeIds = attributeIds.distinct()
+            val placeholders = distinctAttributeIds.joinToString(", ") { "?" }
+            val args = distinctAttributeIds.map { AttributesMasterTable.attributeNameKey.columnType to it }
 
             val sql = """
             SELECT
@@ -2368,13 +2370,13 @@ class UserProfileDaoImpl : UserProfileDao {
             FROM attributes am
             JOIN attribute_categories_link acl ON am.id = acl.attribute_id
             JOIN categories c ON acl.category_id = c.id
-            WHERE am.attribute_key IN ($inClause)
+            WHERE am.attribute_key IN ($placeholders)
                 AND c.ui_style_hint IS NOT NULL
         """.trimIndent()
 
             val result = mutableMapOf<String, String?>()
 
-            TransactionManager.current().exec(sql) { rs ->
+            TransactionManager.current().exec(sql, args) { rs ->
                 while (rs.next()) {
                     val rowNum = rs.getInt("rn")
                     // Only take the first row (highest relevancy) for each attribute

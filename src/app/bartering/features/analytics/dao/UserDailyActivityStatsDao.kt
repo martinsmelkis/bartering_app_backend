@@ -1,5 +1,6 @@
 package app.bartering.features.analytics.dao
 
+import app.bartering.features.analytics.model.DashboardStatsResponse
 import app.bartering.features.analytics.model.UserDailyActivityStats
 import java.time.LocalDate
 
@@ -30,4 +31,5 @@ interface UserDailyActivityStatsDao {
     suspend fun recordResponseTime(anonymizedUserId: String, responseTimeMs: Long, date: LocalDate = LocalDate.now()): Boolean
 
     suspend fun getUserStats(anonymizedUserId: String, fromDate: LocalDate, toDate: LocalDate): List<UserDailyActivityStats>
+    suspend fun getDashboardStats(days: Int): DashboardStatsResponse
 }

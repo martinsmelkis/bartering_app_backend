@@ -1,32 +1,6 @@
-package app.bartering.features.analytics.model
+package app.bartering.dashboard_user_moderation.models.moderation
 
 import kotlinx.serialization.Serializable
-
-@Serializable
-data class UserDailyActivityStats(
-    val userId: String,
-    val activityDate: String,
-    val activeMinutes: Int,
-    val sessionCount: Int,
-    val apiRequestCount: Int,
-    val searchCount: Int,
-    val nearbySearchCount: Int,
-    val profileUpdateCount: Int,
-    val chatMessagesSentCount: Int,
-    val chatMessagesReceivedCount: Int,
-    val transactionsCreatedCount: Int,
-    val reviewsSubmittedCount: Int,
-    val successfulActionsCount: Int,
-    val analyticsConsent: Boolean,
-    val consentVersion: String? = null,
-    val updatedAt: String? = null
-)
-
-@Serializable
-data class UserDailyActivityStatsResponse(
-    val success: Boolean,
-    val stats: List<UserDailyActivityStats>
-)
 
 @Serializable
 data class DashboardDailyStats(
@@ -62,4 +36,11 @@ data class DashboardStatsResponse(
     val days: Int,
     val summary: DashboardStatsSummary,
     val daily: List<DashboardDailyStats>
+)
+
+data class DashboardStatsSnapshot(
+    val connected: Boolean,
+    val backendStatus: String,
+    val stats: DashboardStatsResponse?,
+    val connectionError: String? = null
 )

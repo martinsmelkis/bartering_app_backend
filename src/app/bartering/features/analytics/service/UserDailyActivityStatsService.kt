@@ -1,6 +1,7 @@
 package app.bartering.features.analytics.service
 
 import app.bartering.features.analytics.dao.UserDailyActivityStatsDao
+import app.bartering.features.analytics.model.DashboardStatsResponse
 import app.bartering.features.analytics.model.UserDailyActivityStats
 import app.bartering.features.profile.dao.UserProfileDao
 import app.bartering.utils.HashUtils
@@ -164,6 +165,10 @@ class UserDailyActivityStatsService(
         val toDate = LocalDate.now()
         val fromDate = toDate.minusDays(days)
         return statsDao.getUserStats(anonymizeUserId(userId), fromDate, toDate)
+    }
+
+    suspend fun getDashboardStats(days: Int = 30): DashboardStatsResponse {
+        return statsDao.getDashboardStats(days.coerceIn(1, 365))
     }
 
     private suspend fun bufferCounterIncrement(anonymizedUserId: String, counter: String, amount: Int): Boolean {
