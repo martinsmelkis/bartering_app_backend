@@ -55,9 +55,22 @@ class UserProfileDaoImpl : UserProfileDao {
     )
 
     override suspend fun createProfile(user: UserRegistrationDataDto): Unit = dbQuery {
+        val userId = user.id ?: return@dbQuery
+
         UserRegistrationDataTable.insertIgnore {
-            it[id] = user.id!!
+            it[id] = userId
             it[publicKey] = user.publicKey
+        }
+
+        UserProfilesTable.insertIgnore {
+            it[UserProfilesTable.userId] = userId
+            it[name] = user.name.takeIf { name -> name.isNotBlank() }
+            it[profileKeywordDataMap] = linkedMapOf<String, Double>()
+            it[updatedAt] = java.time.Instant.now()
+        }
+
+        UserPrivacyConsentsTable.insertIgnore {
+            it[UserPrivacyConsentsTable.userId] = userId
         }
     }
 
@@ -270,16 +283,15 @@ class UserProfileDaoImpl : UserProfileDao {
         val existingName = existingProfile?.getOrNull(UserProfilesTable.name)
         val existingProfileKeywordDataMap = existingProfile?.getOrNull(UserProfilesTable.profileKeywordDataMap)
 
-        // Generate default username if needed (new user with no name provided)
+        // Generate default username if needed (new/minimal profile with no name provided)
         val finalName = when {
             !request.name.isNullOrBlank() -> request.name
             !existingName.isNullOrBlank() -> existingName
-            isNewProfile -> {
+            else -> {
                 // Generate a default username based on current user count
                 val userCount = UserProfilesTable.selectAll().count()
-                "User_${userCount + 1}"
+                "User_${userCount + if (isNewProfile) 1 else 0}"
             }
-            else -> existingName
         }
 
         // Use LinkedHashMap to preserve insertion order from sorted categories

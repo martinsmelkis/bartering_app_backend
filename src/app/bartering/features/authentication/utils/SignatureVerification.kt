@@ -15,6 +15,7 @@ import java.util.Base64
 import kotlin.math.abs
 
 private val log = LoggerFactory.getLogger("SignatureVerification")
+private const val REQUEST_TIMESTAMP_WINDOW_MS = 15 * 60 * 1000L
 
 /**
  * Verifies the client's request signature.
@@ -56,8 +57,17 @@ suspend fun verifyRequestSignature(
         return Pair(null, null)
     }
     val currentTime = System.currentTimeMillis()
-    // Allow a time window of 5 minutes (300,000 ms)
-    if (abs(currentTime - timestamp) > 300000) {
+    val timestampSkewMs = abs(currentTime - timestamp)
+    // Allow a wider window for mobile clients whose device clocks can be skewed during App Review/device setup.
+    if (timestampSkewMs > REQUEST_TIMESTAMP_WINDOW_MS) {
+        log.warn(
+            "Request timestamp expired for user {}: skewMs={}, allowedMs={}, serverTime={}, clientTime={}",
+            userId,
+            timestampSkewMs,
+            REQUEST_TIMESTAMP_WINDOW_MS,
+            currentTime,
+            timestamp
+        )
         call.respond(HttpStatusCode.Unauthorized, "Request has expired")
         return Pair(null, null)
     }

@@ -9,11 +9,13 @@ import app.bartering.features.notifications.model.NotificationData
 import app.bartering.features.notifications.model.UpdateUserNotificationContactsRequest
 import app.bartering.features.notifications.service.NotificationOrchestrator
 import app.bartering.features.profile.dao.UserProfileDao
+import app.bartering.localization.Localization
 import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.slf4j.LoggerFactory
 import java.sql.Connection
 import java.time.Duration
 import java.time.Instant
+import java.util.Locale
 
 class NearbyUserAlertService(
     private val alertsDao: NearbyUserAlertsDao,
@@ -155,9 +157,10 @@ class NearbyUserAlertService(
     }
 
     private suspend fun sendThresholdReachedNotification(alert: NearbyUserAlert, nearbyUserCount: Int) {
+        val userLocale = getUserLocale(alert.userId)
         val notification = NotificationData(
-            title = "More people are nearby",
-            body = "There are now $nearbyUserCount users near your selected area.",
+            title = Localization.getString("nearby_alert.threshold_reached.title", userLocale),
+            body = Localization.getString("nearby_alert.threshold_reached.body", userLocale, nearbyUserCount),
             actionUrl = "/nearby",
             data = mapOf(
                 "type" to "nearby_user_alert",
@@ -169,6 +172,16 @@ class NearbyUserAlertService(
         )
 
         notificationOrchestrator.sendNotification(alert.userId, notification)
+    }
+
+    private suspend fun getUserLocale(userId: String): Locale {
+        return try {
+            val profile = profileDao.getProfile(userId)
+            Locale.forLanguageTag(profile?.preferredLanguage ?: "en")
+        } catch (e: Exception) {
+            log.warn("Failed to get locale for nearby user alert recipient {}: {}", userId, e.message)
+            Locale.ENGLISH
+        }
     }
 
     private fun isValidLatitude(latitude: Double): Boolean = latitude in -90.0..90.0
