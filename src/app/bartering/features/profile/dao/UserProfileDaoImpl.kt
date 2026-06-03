@@ -48,6 +48,18 @@ class UserProfileDaoImpl : UserProfileDao {
     )
     private val purchasesDao: PurchasesDao by inject(PurchasesDao::class.java)
 
+    private val uuidBasedPlaceholderNameRegex = Regex("^User_[0-9a-fA-F]{8}$")
+
+    private fun normalizedProvidedName(name: String?): String? {
+        val trimmedName = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return trimmedName.takeUnless { uuidBasedPlaceholderNameRegex.matches(it) }
+    }
+
+    private fun generateCountBasedDefaultName(isNewProfile: Boolean): String {
+        val userCount = UserProfilesTable.selectAll().count()
+        return "User_${userCount + if (isNewProfile) 1 else 0}"
+    }
+
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
         maxSize = 1000,
@@ -64,7 +76,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         UserProfilesTable.insertIgnore {
             it[UserProfilesTable.userId] = userId
-            it[name] = user.name.takeIf { name -> name.isNotBlank() }
+            it[name] = normalizedProvidedName(user.name) ?: generateCountBasedDefaultName(isNewProfile = true)
             it[profileKeywordDataMap] = linkedMapOf<String, Double>()
             it[updatedAt] = java.time.Instant.now()
         }
@@ -283,16 +295,10 @@ class UserProfileDaoImpl : UserProfileDao {
         val existingName = existingProfile?.getOrNull(UserProfilesTable.name)
         val existingProfileKeywordDataMap = existingProfile?.getOrNull(UserProfilesTable.profileKeywordDataMap)
 
-        // Generate default username if needed (new/minimal profile with no name provided)
-        val finalName = when {
-            !request.name.isNullOrBlank() -> request.name
-            !existingName.isNullOrBlank() -> existingName
-            else -> {
-                // Generate a default username based on current user count
-                val userCount = UserProfilesTable.selectAll().count()
-                "User_${userCount + if (isNewProfile) 1 else 0}"
-            }
-        }
+        // Generate default username if needed (new/minimal profile with no real name provided)
+        val finalName = normalizedProvidedName(request.name)
+            ?: normalizedProvidedName(existingName)
+            ?: generateCountBasedDefaultName(isNewProfile)
 
         // Use LinkedHashMap to preserve insertion order from sorted categories
         val extendedMap: LinkedHashMap<String, Double> = linkedMapOf()
