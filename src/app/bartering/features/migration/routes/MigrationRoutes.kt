@@ -256,7 +256,7 @@ fun Route.completeMigrationRoute() {
     post("/api/v1/migration/complete") {
         try {
             val request = call.receive<CompleteMigrationRequest>()
-            val clientIP = call.request.headers["X-Forwarded-For"] ?: call.request.headers["X-Real-IP"] ?: "unknown"
+            //val clientIP = call.request.headers["X-Forwarded-For"] ?: call.request.headers["X-Real-IP"] ?: "unknown"
 
             val session = migrationDao.getSession(request.sessionId)
                 ?: return@post call.respond(HttpStatusCode.NotFound, CompleteMigrationResponse(
@@ -360,7 +360,7 @@ fun Route.cancelMigrationRoute() {
             call.respond(HttpStatusCode.OK, CancelMigrationResponse(
                 success = cancelled, message = if (cancelled) "Cancelled" else "Session not found"
             ))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             call.respond(HttpStatusCode.BadRequest, CancelMigrationResponse(success = false, message = "Invalid request"))
         }
     }
@@ -382,15 +382,19 @@ fun Application.migrationRoutes() {
             verifyRecoveryCodeRoute()
         }
 
-        // Device-to-device
+        // Device-to-device writes stay strict because they create/register/complete migration sessions.
         rateLimit(RateLimitName("authentication")) {
             initiateDeviceMigrationRoute()
             registerMigrationTargetRoute()
             sendMigrationPayloadRoute()
-            getMigrationPayloadRoute()
             completeMigrationRoute()
-            getMigrationStatusRoute()
             cancelMigrationRoute()
+        }
+
+        // Polling endpoints need a higher limit because clients check readiness repeatedly.
+        rateLimit(RateLimitName("migration_polling")) {
+            getMigrationPayloadRoute()
+            getMigrationStatusRoute()
         }
     }
 }

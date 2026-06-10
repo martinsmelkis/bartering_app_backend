@@ -1175,6 +1175,7 @@ class UserProfileDaoImpl : UserProfileDao {
                         up.self_description,
                         up.account_type,
                         up.profile_avatar_icon,
+                        up.active_avatar_icon_id,
                         up.work_reference_image_urls::text as work_reference_image_urls,
                         COUNT(DISTINCT ma.attribute_id) as match_count,
                         ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
@@ -1237,6 +1238,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     up.self_description,
                     up.account_type,
                     up.profile_avatar_icon,
+                    up.active_avatar_icon_id,
                     up.work_reference_image_urls::text as work_reference_image_urls,
                     ${if (latitude != null && longitude != null) "ST_Distance(up.location::geography, ST_MakePoint(?, ?)::geography) as distance_meters" else "NULL as distance_meters"}
                 FROM user_registration_data u

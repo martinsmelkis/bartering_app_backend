@@ -49,6 +49,21 @@ fun Application.configureRateLimiting() {
                 "auth:$ip"
             }
         }
+
+        // ====================================================================
+        // MIGRATION POLLING - LENIENT LIMITS
+        // ====================================================================
+        // Device migration status/payload endpoints are intentionally polled while
+        // waiting for the other device. Keep write/auth endpoints strict, but allow
+        // normal polling loops without tripping authentication limits.
+        register(RateLimitName("migration_polling")) {
+            rateLimiter(limit = 120, refillPeriod = 60.seconds)
+            requestKey { call ->
+                val sessionId = call.request.queryParameters["sessionId"]
+                val ip = call.request.origin.remoteAddress
+                "migration_poll:${sessionId ?: ip}"
+            }
+        }
         
         // ====================================================================
         // FILE UPLOAD ENDPOINTS - VERY STRICT LIMITS
