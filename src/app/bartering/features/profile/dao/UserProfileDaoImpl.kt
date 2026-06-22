@@ -328,7 +328,7 @@ class UserProfileDaoImpl : UserProfileDao {
             table[UserProfilesTable.userId] = userId
             table[UserProfilesTable.name] = finalName
 
-            if (!effectiveLocationConsent) {
+            if (!effectiveLocationConsent || (request.latitude == null && request.longitude == null)) {
                 table[location] = null
             } else if (request.latitude != null && request.longitude != null
                 && request.latitude != 0.0 && request.longitude != 0.0) {
