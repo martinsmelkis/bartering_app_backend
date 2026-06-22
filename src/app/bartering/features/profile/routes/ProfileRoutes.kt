@@ -51,6 +51,9 @@ private const val MAX_PROFILE_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 private const val MAX_PROFILE_AVATAR_ICON_LENGTH = 50_000
 private const val MAX_PROFILE_SELF_DESCRIPTION_LENGTH = 128
 
+private fun List<UserProfileExtended>.filterProfilesWithLocation(): List<UserProfileExtended> =
+    filter { it.profile.latitude != null && it.profile.longitude != null }
+
 private fun buildProfileImageStorage(): ImageStorageService {
     val storageType = System.getenv("IMAGE_STORAGE_TYPE") ?: "local"
     return when (storageType.lowercase()) {
@@ -617,9 +620,9 @@ fun Route.searchProfilesByKeywordRoute() {
             } else {
                 // Privacy fallback: no AI ranking, randomized attribute-based profiles
                 userProfileDao.getSimilarProfiles(authenticatedUserId, lat, lon, radius).shuffled().take(limit)
-            }
+            }.filterProfilesWithLocation()
 
-            log.info("Local search returned {} profiles for query: '{}'", 
+            log.info("Local search returned {} location-visible profiles for query: '{}'", 
                 matchingProfiles.size, searchText)
 
             // Second: If few results and federated search enabled, query trusted servers
@@ -630,10 +633,10 @@ fun Route.searchProfilesByKeywordRoute() {
                     federationService = federationService,
                     federationDao = federationDao,
                     federatedUserDao = federatedUserDao
-                )
+                ).filterProfilesWithLocation()
 
                 if (federatedResults.isNotEmpty()) {
-                    log.info("Federated search added {} profiles from remote servers", 
+                    log.info("Federated search added {} location-visible profiles from remote servers", 
                         federatedResults.size)
                     
                     // Combine local and federated results
@@ -873,8 +876,9 @@ fun Route.similarProfilesRoute() {
         }
 
         val profiles = userProfileDao.getSimilarProfiles(userId, lat, lon, radius)
+            .filterProfilesWithLocation()
         
-        log.debug("Returning {} similar profiles for user {} (location filter: {})", 
+        log.debug("Returning {} location-visible similar profiles for user {} (location filter: {})", 
             profiles.size, userId, if (lat != null) "enabled" else "disabled")
         
         call.respond(HttpStatusCode.OK, profiles)
@@ -924,8 +928,9 @@ fun Route.complementaryProfilesRoute() {
         }
 
         val profiles = userProfileDao.getHelpfulProfiles(userId, lat, lon, radius)
+            .filterProfilesWithLocation()
 
-        log.debug("Returning {} complementary profiles for user {} (location filter: {})",
+        log.debug("Returning {} location-visible complementary profiles for user {} (location filter: {})",
             profiles.size, userId, if (lat != null) "enabled" else "disabled")
 
         analyticsRecordingScope.launch {
