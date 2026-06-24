@@ -60,6 +60,34 @@ class UserProfileDaoImpl : UserProfileDao {
         return "User_${userCount + if (isNewProfile) 1 else 0}"
     }
 
+    private fun getRegisteredUserCount(): Long = UserRegistrationDataTable.selectAll().count()
+
+    private fun getDiscoveryRadiusMultiplier(registeredUserCount: Long): Double = when {
+        registeredUserCount < 1_000 -> 1.5
+        registeredUserCount < 10_000 -> 1.3
+        else -> 1.0
+    }
+
+    private fun adjustedDiscoveryRadius(radiusMeters: Double?): Double? {
+        if (radiusMeters == null) return null
+
+        val registeredUserCount = getRegisteredUserCount()
+        val multiplier = getDiscoveryRadiusMultiplier(registeredUserCount)
+        val adjustedRadiusMeters = radiusMeters * multiplier
+
+        if (multiplier > 1.0) {
+            log.debug(
+                "Expanded discovery search radius from {} to {} meters for {} registered users (multiplier={})",
+                radiusMeters,
+                adjustedRadiusMeters,
+                registeredUserCount,
+                multiplier
+            )
+        }
+
+        return adjustedRadiusMeters
+    }
+
     // Embedding cache for frequent searches - stores up to 1000 embeddings, 24 h expiry
     private val embeddingCache = SearchEmbeddingCache(
         maxSize = 1000,
@@ -599,6 +627,8 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileExtended> = dbQuery {
+        val adjustedRadiusMeters = adjustedDiscoveryRadius(radiusMeters)
+
         val hasAiConsent = UserPrivacyConsentsTable
             .select(UserPrivacyConsentsTable.aiProcessingConsent)
             .where { UserPrivacyConsentsTable.userId eq userId }
@@ -607,11 +637,11 @@ class UserProfileDaoImpl : UserProfileDao {
             ?: true
 
         if (!hasAiConsent) {
-            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, radiusMeters, 20)
+            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, adjustedRadiusMeters, 20)
         }
         // Adjust threshold multiplier based on user density
-        val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
-            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
+        val nearbyUserCount = if (latitude != null && longitude != null && adjustedRadiusMeters != null) {
+            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, adjustedRadiusMeters)
         } else {
             UserStatisticsUtils.countTotalActiveUsers(userId)
         }
@@ -630,7 +660,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Combined bidirectional search: users with similar haves AND similar needs
         val similarMatches = findBidirectionalMatches(
-            userId, latitude, longitude, radiusMeters,
+            userId, latitude, longitude, adjustedRadiusMeters,
             matchType = BidirectionalMatchType.SIMILAR,
             score1MatchTypeLabel = "similar_haves",
             score2MatchTypeLabel = "similar_needs",
@@ -639,7 +669,7 @@ class UserProfileDaoImpl : UserProfileDao {
         
         // Search active postings for similar offerings
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.PROVIDING, latitude, longitude, radiusMeters
+            userId, UserAttributeType.PROVIDING, latitude, longitude, adjustedRadiusMeters
         )
         
         // Combine results with weighted scoring
@@ -668,6 +698,8 @@ class UserProfileDaoImpl : UserProfileDao {
         longitude: Double?,
         radiusMeters: Double?
     ): List<UserProfileExtended> = dbQuery {
+        val adjustedRadiusMeters = adjustedDiscoveryRadius(radiusMeters)
+
         val hasAiConsent = UserPrivacyConsentsTable
             .select(UserPrivacyConsentsTable.aiProcessingConsent)
             .where { UserPrivacyConsentsTable.userId eq userId }
@@ -676,11 +708,11 @@ class UserProfileDaoImpl : UserProfileDao {
             ?: true
 
         if (!hasAiConsent) {
-            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, radiusMeters, 20)
+            return@dbQuery getRandomizedAttributeProfiles(userId, latitude, longitude, adjustedRadiusMeters, 20)
         }
         // Adjust threshold multiplier based on user density
-        val nearbyUserCount = if (latitude != null && longitude != null && radiusMeters != null) {
-            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, radiusMeters)
+        val nearbyUserCount = if (latitude != null && longitude != null && adjustedRadiusMeters != null) {
+            UserStatisticsUtils.countNearbyUsers(userId, latitude, longitude, adjustedRadiusMeters)
         } else {
             UserStatisticsUtils.countTotalActiveUsers(userId)
         }
@@ -699,7 +731,7 @@ class UserProfileDaoImpl : UserProfileDao {
         
         // Combined bidirectional search: users providing what I seek AND users seeking what I provide
         val bidirectionalMatches = findBidirectionalMatches(
-            userId, latitude, longitude, radiusMeters,
+            userId, latitude, longitude, adjustedRadiusMeters,
             matchType = BidirectionalMatchType.COMPLEMENTARY,
             score1MatchTypeLabel = "providing_to_me",
             score2MatchTypeLabel = "seeking_from_me",
@@ -708,7 +740,7 @@ class UserProfileDaoImpl : UserProfileDao {
         
         // Search active postings for relevant offers
         val postingMatches = findPostingsByUserSemanticSimilarity(
-            userId, UserAttributeType.SEEKING, latitude, longitude, radiusMeters
+            userId, UserAttributeType.SEEKING, latitude, longitude, adjustedRadiusMeters
         )
         
         // Combine results with weighted scoring
@@ -1473,6 +1505,7 @@ class UserProfileDaoImpl : UserProfileDao {
 
         // Sanitize the search text
         val sanitizedSearchText = SecurityUtils.sanitizeSqlString(searchText)
+        val adjustedRadiusMeters = adjustedDiscoveryRadius(radiusMeters)
 
         // Calculate weight multiplier: customWeight 10-100 maps to multiplier 0.5-1.2
         // Formula: multiplier = 0.5 + (customWeight - 10) * (1.2 - 0.5) / (100 - 10)
@@ -1488,7 +1521,7 @@ class UserProfileDaoImpl : UserProfileDao {
             sanitizedSearchText,
             latitude,
             longitude,
-            radiusMeters,
+            adjustedRadiusMeters,
             limit,
             weightMultiplier,
             seeking,
@@ -1504,7 +1537,7 @@ class UserProfileDaoImpl : UserProfileDao {
                 searchText = sanitizedSearchText,
                 latitude = latitude,
                 longitude = longitude,
-                radiusMeters = radiusMeters,
+                radiusMeters = adjustedRadiusMeters,
                 limit = limit,
                 weightMultiplier = weightMultiplier,
                 seeking = seeking,
@@ -1534,7 +1567,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     searchEmbedding,
                     latitude,
                     longitude,
-                    radiusMeters,
+                    adjustedRadiusMeters,
                     weightMultiplier,
                     seeking,
                     offering
@@ -1559,7 +1592,7 @@ class UserProfileDaoImpl : UserProfileDao {
                     searchEmbedding,
                     latitude,
                     longitude,
-                    radiusMeters,
+                    adjustedRadiusMeters,
                     weightMultiplier
                 )
 
